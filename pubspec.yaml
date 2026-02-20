@@ -1,0 +1,76 @@
+name: hozyain_barin
+description: "Мобильное приложение для магазина Хозяин Барин"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.10.4 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  onesignal_flutter: ^5.3.5
+  url_launcher: ^6.3.2
+  app_links: ^6.3.2
+  flutter_svg: ^2.0.10+1
+  carousel_slider: ^5.0.0
+  # Кэширование изображений для слайдеров и списков
+  cached_network_image: ^3.4.1
+  share_plus: ^12.0.1
+  flutter_html: ^3.0.0
+  image_picker: ^1.2.1
+  permission_handler: ^12.0.1
+  photo_view: ^0.15.0
+  dio: ^5.9.1
+  cookie_jar: ^4.0.8
+  dio_cookie_manager: ^3.3.0
+  mask_text_input_formatter: ^2.9.0
+  yandex_mapkit_lite: ^2.0.2
+
+  image_picker_android: ^0.8.13+13
+  image_picker_platform_interface: ^2.11.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
+
+# Настройки иконки приложения
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/icon.png"
+  adaptive_icon_background: "#000000" 
+  adaptive_icon_foreground: "assets/images/icon.png"
+
+# Настройки заставки (Splash Screen)
+flutter_native_splash:
+  color: "#000000"
+  image: "assets/images/splash.png"
+  android_12:
+    image: "assets/images/splash.png"
+    color: "#000000"
+  fullscreen: true
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/categories/
+
+  # Добавление шрифтов локально, чтобы убрать фризы при первой отрисовке текста
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+    - family: georgia
+      fonts:
+        - asset: assets/fonts/georgia.ttf

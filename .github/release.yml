@@ -1,0 +1,19 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - chore
+  categories:
+    - title: New Features
+      labels:
+        - feature
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Refactoring
+      labels:
+        - refactor
+    - title: Other Changes
+      labels:
+        - "*"
