@@ -13332,9 +13332,8 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   ) async {
     if (!Platform.isIOS) return null;
     try {
-      final response = await _iosLocationPermissionChannel.invokeMethod<dynamic>(
-        method,
-      );
+      final response = await _iosLocationPermissionChannel
+          .invokeMethod<dynamic>(method);
       if (response is Map) {
         return response.map((key, value) => MapEntry(key.toString(), value));
       }
@@ -13406,8 +13405,10 @@ class _PickupPointsPageState extends State<PickupPointsPage>
 
     // Request when not granted. On map open we request if notDetermined so
     // the iOS prompt appears and the Location setting becomes available.
-    final shouldRequestPermission = !status.isGranted &&
-        (triggeredByUser || (!Platform.isIOS || !_didRequestLocationPermission));
+    final shouldRequestPermission =
+        !status.isGranted &&
+        (triggeredByUser ||
+            (!Platform.isIOS || !_didRequestLocationPermission));
     if (shouldRequestPermission) {
       _didRequestLocationPermission = true;
       try {
@@ -13468,9 +13469,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     final status = _locationPermissionStatus;
     if (status == null) return false;
     if (status.isPermanentlyDenied || status.isRestricted) return true;
-    return Platform.isIOS &&
-        status.isDenied &&
-        _didRequestLocationPermission;
+    return Platform.isIOS && status.isDenied && _didRequestLocationPermission;
   }
 
   String get _locationPermissionHintText {
@@ -19552,8 +19551,8 @@ class _ReviewGalleryPageState extends State<_ReviewGalleryPage> {
     );
 
     final dragOffset = _dismissDragOffset;
-    final bgOpacity =
-        (1.0 - (dragOffset / _dismissMaxFadeDrag).clamp(0.0, 0.5)).toDouble();
+    final bgOpacity = (1.0 - (dragOffset / _dismissMaxFadeDrag).clamp(0.0, 0.5))
+        .toDouble();
     final contentTransformDuration = _isDismissDragging
         ? Duration.zero
         : const Duration(milliseconds: 180);
@@ -19565,7 +19564,9 @@ class _ReviewGalleryPageState extends State<_ReviewGalleryPage> {
         body: Stack(
           children: [
             Positioned.fill(
-              child: Container(color: Colors.black.withValues(alpha: bgOpacity)),
+              child: Container(
+                color: Colors.black.withValues(alpha: bgOpacity),
+              ),
             ),
             AnimatedContainer(
               duration: contentTransformDuration,
