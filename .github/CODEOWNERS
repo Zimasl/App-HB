@@ -1,20 +1,20 @@
-# Replace placeholders with real GitHub usernames.
+# Add second developer's @username when collaborator is added to the repo.
 
 # Default owner for all files
-* @owner-a @owner-b
+* @Zimasl
 
 # Core app shell and project config
-/pubspec.yaml @owner-a @owner-b
-/analysis_options.yaml @owner-a
-/README.md @owner-a @owner-b
-/CONTRIBUTING.md @owner-a @owner-b
+/pubspec.yaml @Zimasl
+/analysis_options.yaml @Zimasl
+/README.md @Zimasl
+/CONTRIBUTING.md @Zimasl
 
 # Main app code (temporary until extraction from main.dart is done)
-/lib/main.dart @owner-a @owner-b
+/lib/main.dart @Zimasl
 
 # CI and repo automation
-/.github/ @owner-b
+/.github/ @Zimasl
 
 # Platform-specific areas (adjust as team prefers)
-/ios/ @owner-a
-/android/ @owner-b
+/ios/ @Zimasl
+/android/ @Zimasl
