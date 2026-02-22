@@ -13327,38 +13327,10 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     caseSensitive: false,
     unicode: true,
   );
-  static const List<Map<String, dynamic>> _fallbackPoints = [
-    {
-      'id': 'pvz_1',
-      'stock_id': 'pvz_1',
-      'name': 'ПВЗ Hozyain Barin - Центр',
-      'address': 'ул. Ленина, 15',
-      'worktime': 'Ежедневно 09:00-21:00',
-      'eta': 'Сегодня',
-      'lat': 55.751244,
-      'lng': 37.618423,
-    },
-    {
-      'id': 'pvz_2',
-      'stock_id': 'pvz_2',
-      'name': 'ПВЗ Hozyain Barin - Север',
-      'address': 'пр-т Победы, 48',
-      'worktime': 'Ежедневно 10:00-22:00',
-      'eta': 'Завтра',
-      'lat': 55.782354,
-      'lng': 37.609124,
-    },
-    {
-      'id': 'pvz_3',
-      'stock_id': 'pvz_3',
-      'name': 'ПВЗ Hozyain Barin - Юг',
-      'address': 'ул. Гагарина, 102',
-      'worktime': 'Пн-Вс 09:00-20:00',
-      'eta': 'Сегодня',
-      'lat': 55.707437,
-      'lng': 37.585022,
-    },
-  ];
+  static const Point _defaultMapCenter = Point(
+    latitude: 55.751244,
+    longitude: 37.618423,
+  );
 
   YandexMapController? _mapController;
   late int _deliveryMethod;
@@ -13397,9 +13369,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
       DraggableScrollableController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  List<Map<String, dynamic>> _points = List<Map<String, dynamic>>.from(
-    _fallbackPoints,
-  );
+  List<Map<String, dynamic>> _points = [];
   List<MapObject> _pickupMapObjects = const [];
 
   @override
@@ -13658,10 +13628,9 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     return Point(latitude: lat, longitude: lng);
   }
 
-  Point get _mapCenter => _toPoint(
-    _selectedPoint ??
-        (_points.isNotEmpty ? _points.first : _fallbackPoints.first),
-  );
+  Point get _mapCenter => _selectedPoint != null
+      ? _toPoint(_selectedPoint!)
+      : (_points.isNotEmpty ? _toPoint(_points.first) : _defaultMapCenter);
 
   void _selectPoint(Map<String, dynamic> point) {
     setState(() {
@@ -14351,7 +14320,8 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     }
 
     for (final interval in intervals) {
-      if (!pointNow.isBefore(interval.open) && pointNow.isBefore(interval.close)) {
+      if (!pointNow.isBefore(interval.open) &&
+          pointNow.isBefore(interval.close)) {
         final left = interval.close.difference(pointNow);
         return 'до закрытия ${_formatDurationRu(left)}';
       }
@@ -14408,7 +14378,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
         _rebuildMapObjects();
       }
     } catch (_) {
-      // Keep fallback points if API is temporarily unavailable.
+      if (mounted) setState(() => _points = []);
     } finally {
       if (mounted) setState(() => _isLoadingPoints = false);
     }
@@ -14436,7 +14406,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
       var movedToUser = false;
       for (var i = 0; i < 8; i++) {
         final camera = await controller.getUserCameraPosition();
-          if (camera != null) {
+        if (camera != null) {
           _userPinBytes ??= await _buildUserPinBytes();
           if (mounted) {
             setState(() {
@@ -14837,8 +14807,9 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     final visiblePoints = _resolveVisiblePoints(points);
     final isFocusedPointMode = _isFocusedPointMode;
     final selectedId = _selectedPoint?['id']?.toString();
-    final focusedPoint =
-        isFocusedPointMode && visiblePoints.isNotEmpty ? visiblePoints.first : null;
+    final focusedPoint = isFocusedPointMode && visiblePoints.isNotEmpty
+        ? visiblePoints.first
+        : null;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -15167,434 +15138,448 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                 ),
                 if (!isFocusedPointMode)
                   NotificationListener<DraggableScrollableNotification>(
-                  onNotification: (notification) {
-                    if (notification.depth != 0) return false;
-                    final nextMapPause = _computeMapPauseBySheetExtent(
-                      notification.extent,
-                    );
-                    if (nextMapPause != _isMapPausedBySheet) {
-                      _isMapPausedBySheet = nextMapPause;
-                      _isMapPausedBySheetNotifier.value = nextMapPause;
-                    }
-                    final shouldFlattenTop =
-                        notification.extent >= _sheetTopFlatExtent;
-                    if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
-                      _isSheetTopFlatNotifier.value = shouldFlattenTop;
-                    }
-                    return false;
-                  },
-                  child: DraggableScrollableSheet(
-                    controller: _sheetController,
-                    initialChildSize: _sheetInitialChildSize,
-                    minChildSize: _sheetMinChildSize,
-                    maxChildSize: _sheetMaxChildSize,
-                    snap: true,
-                    snapSizes: const [_sheetMinChildSize, _sheetMaxChildSize],
-                    snapAnimationDuration: _sheetSnapDuration,
-                    builder: (context, scrollController) {
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: _isSheetTopFlatNotifier,
-                        builder: (context, isTopFlat, _) {
-                          return AnimatedContainer(
-                            duration: const Duration(milliseconds: 90),
-                            curve: Curves.easeOutCubic,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: isTopFlat
-                                  ? BorderRadius.zero
-                                  : const BorderRadius.vertical(
-                                      top: Radius.circular(16),
-                                    ),
-                            ),
-                            child: Stack(
-                              children: [
-                                CustomScrollView(
-                                  controller: scrollController,
-                                  cacheExtent: 560,
-                                  physics: const AlwaysScrollableScrollPhysics(
-                                    parent: BouncingScrollPhysics(),
-                                  ),
-                                  slivers: [
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(
-                                          top: 8,
-                                          bottom: 10,
-                                        ),
-                                        child: Center(
-                                          child: Container(
-                                            width: 34,
-                                            height: 4,
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey.shade400,
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                          ),
-                                        ),
+                    onNotification: (notification) {
+                      if (notification.depth != 0) return false;
+                      final nextMapPause = _computeMapPauseBySheetExtent(
+                        notification.extent,
+                      );
+                      if (nextMapPause != _isMapPausedBySheet) {
+                        _isMapPausedBySheet = nextMapPause;
+                        _isMapPausedBySheetNotifier.value = nextMapPause;
+                      }
+                      final shouldFlattenTop =
+                          notification.extent >= _sheetTopFlatExtent;
+                      if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
+                        _isSheetTopFlatNotifier.value = shouldFlattenTop;
+                      }
+                      return false;
+                    },
+                    child: DraggableScrollableSheet(
+                      controller: _sheetController,
+                      initialChildSize: _sheetInitialChildSize,
+                      minChildSize: _sheetMinChildSize,
+                      maxChildSize: _sheetMaxChildSize,
+                      snap: true,
+                      snapSizes: const [_sheetMinChildSize, _sheetMaxChildSize],
+                      snapAnimationDuration: _sheetSnapDuration,
+                      builder: (context, scrollController) {
+                        return ValueListenableBuilder<bool>(
+                          valueListenable: _isSheetTopFlatNotifier,
+                          builder: (context, isTopFlat, _) {
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 90),
+                              curve: Curves.easeOutCubic,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: isTopFlat
+                                    ? BorderRadius.zero
+                                    : const BorderRadius.vertical(
+                                        top: Radius.circular(16),
                                       ),
-                                    ),
-                                    if (!isFocusedPointMode)
-                                      SliverPersistentHeader(
-                                        pinned: true,
-                                        delegate: _PinnedSheetHeaderDelegate(
-                                          height: 46,
-                                          child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                              5,
-                                              0,
-                                              5,
-                                              10,
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Expanded(
-                                                  child: SizedBox(
-                                                    height: 36,
-                                                    child: TextField(
-                                                      controller:
-                                                          _searchController,
-                                                      focusNode:
-                                                          _searchFocusNode,
-                                                      onTap: _expandSheetToTop,
-                                                      onChanged: (value) {
-                                                        setState(
-                                                          () => _query = value,
-                                                        );
-                                                        if (value
-                                                            .trim()
-                                                            .isNotEmpty) {
-                                                          _expandSheetToTop();
-                                                        }
-                                                      },
-                                                      style: const TextStyle(
-                                                        fontSize: 14,
-                                                      ),
-                                                      textAlignVertical:
-                                                          TextAlignVertical
-                                                              .center,
-                                                      decoration: InputDecoration(
-                                                        hintText: "Поиск",
-                                                        hintStyle:
-                                                            const TextStyle(
-                                                              fontSize: 14,
-                                                              color: Colors
-                                                                  .black54,
-                                                            ),
-                                                        prefixIcon: const Icon(
-                                                          Icons.search,
-                                                          size: 18,
-                                                          color: Colors.black45,
-                                                        ),
-                                                        prefixIconConstraints:
-                                                            const BoxConstraints(
-                                                              minWidth: 34,
-                                                              minHeight: 34,
-                                                            ),
-                                                        suffixIcon: _query
-                                                                .trim()
-                                                                .isEmpty
-                                                            ? null
-                                                            : IconButton(
-                                                                onPressed: () {
-                                                                  _searchController
-                                                                      .clear();
-                                                                  setState(
-                                                                    () =>
-                                                                        _query =
-                                                                            '',
-                                                                  );
-                                                                },
-                                                                icon: const Icon(
-                                                                  Icons.cancel,
-                                                                  size: 18,
-                                                                  color: Colors
-                                                                      .black38,
-                                                                ),
-                                                              ),
-                                                        filled: true,
-                                                        fillColor: const Color(
-                                                          0xFFF2F2F6,
-                                                        ),
-                                                        contentPadding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 10,
-                                                              vertical: 0,
-                                                            ),
-                                                        border:
-                                                            OutlineInputBorder(
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    18,
-                                                                  ),
-                                                              borderSide:
-                                                                  BorderSide
-                                                                      .none,
-                                                            ),
-                                                        enabledBorder:
-                                                            OutlineInputBorder(
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    18,
-                                                                  ),
-                                                              borderSide:
-                                                                  BorderSide
-                                                                      .none,
-                                                            ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 6),
-                                                TextButton(
-                                                  onPressed: () {
-                                                    _searchController.clear();
-                                                    _searchFocusNode.unfocus();
-                                                    setState(() => _query = '');
-                                                  },
-                                                  style: TextButton.styleFrom(
-                                                    minimumSize: const Size(
-                                                      0,
-                                                      36,
-                                                    ),
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 2,
-                                                        ),
-                                                    tapTargetSize:
-                                                        MaterialTapTargetSize
-                                                            .shrinkWrap,
-                                                  ),
-                                                  child: const Text(
-                                                    "Отмена",
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      color: Color(0xFF606067),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
+                              ),
+                              child: Stack(
+                                children: [
+                                  CustomScrollView(
+                                    controller: scrollController,
+                                    cacheExtent: 560,
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(
+                                          parent: BouncingScrollPhysics(),
                                         ),
-                                      ),
-                                    if (!isFocusedPointMode)
-                                      SliverPersistentHeader(
-                                        pinned: true,
-                                        delegate: _PinnedSheetHeaderDelegate(
-                                          height: 38,
-                                          child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                              5,
-                                              0,
-                                              5,
-                                              10,
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Expanded(
-                                                  child: SizedBox(
-                                                    height: 28,
-                                                    child: OutlinedButton(
-                                                      onPressed: () {
-                                                        setState(() {
-                                                          _pickupFilter =
-                                                              _pickupFilter ==
-                                                                  'today'
-                                                              ? 'all'
-                                                              : 'today';
-                                                        });
-                                                      },
-                                                      style: OutlinedButton.styleFrom(
-                                                        backgroundColor:
-                                                            _pickupFilter ==
-                                                                'today'
-                                                            ? Colors.black
-                                                            : Colors.white,
-                                                        foregroundColor:
-                                                            _pickupFilter ==
-                                                                'today'
-                                                            ? Colors.white
-                                                            : Colors.black87,
-                                                        side: BorderSide(
-                                                          color: Colors
-                                                              .grey
-                                                              .shade300,
-                                                        ),
-                                                        shape: RoundedRectangleBorder(
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                14,
-                                                              ),
-                                                        ),
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 6,
-                                                            ),
-                                                        tapTargetSize:
-                                                            MaterialTapTargetSize
-                                                                .shrinkWrap,
-                                                      ),
-                                                      child: const Text(
-                                                        "Забрать сегодня",
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                          fontSize: 13,
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: SizedBox(
-                                                    height: 28,
-                                                    child: OutlinedButton(
-                                                      onPressed: () {
-                                                        setState(() {
-                                                          _pickupFilter =
-                                                              _pickupFilter ==
-                                                                  'preorder'
-                                                              ? 'all'
-                                                              : 'preorder';
-                                                        });
-                                                      },
-                                                      style: OutlinedButton.styleFrom(
-                                                        backgroundColor:
-                                                            _pickupFilter ==
-                                                                'preorder'
-                                                            ? Colors.black
-                                                            : Colors.white,
-                                                        foregroundColor:
-                                                            _pickupFilter ==
-                                                                'preorder'
-                                                            ? Colors.white
-                                                            : Colors.black87,
-                                                        side: BorderSide(
-                                                          color: Colors
-                                                              .grey
-                                                              .shade300,
-                                                        ),
-                                                        shape: RoundedRectangleBorder(
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                14,
-                                                              ),
-                                                        ),
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 6,
-                                                            ),
-                                                        tapTargetSize:
-                                                            MaterialTapTargetSize
-                                                                .shrinkWrap,
-                                                      ),
-                                                      child: const Text(
-                                                        "Под заказ",
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                          fontSize: 13,
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    if (_isLoadingPoints &&
-                                        visiblePoints.isEmpty)
-                                      const SliverToBoxAdapter(
-                                        child: Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            vertical: 36,
-                                          ),
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    else if (visiblePoints.isEmpty)
+                                    slivers: [
                                       SliverToBoxAdapter(
                                         child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 36,
+                                          padding: const EdgeInsets.only(
+                                            top: 8,
+                                            bottom: 10,
                                           ),
                                           child: Center(
-                                            child: Text(
-                                              "Ничего не найдено",
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                color: Colors.grey.shade700,
+                                            child: Container(
+                                              width: 34,
+                                              height: 4,
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey.shade400,
+                                                borderRadius:
+                                                    BorderRadius.circular(999),
                                               ),
                                             ),
                                           ),
                                         ),
-                                      )
-                                    else
-                                      SliverPadding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          5,
-                                          4,
-                                          5,
-                                          12,
-                                        ),
-                                        sliver: SliverList(
-                                          delegate: SliverChildBuilderDelegate(
-                                            (context, index) {
-                                              final point =
-                                                  visiblePoints[index];
-                                              final id = point['id']
-                                                  ?.toString();
-                                              final isSelected =
-                                                  id == selectedId;
-                                              return Padding(
-                                                key: ValueKey<String>(
-                                                  id ?? 'point_$index',
-                                                ),
-                                                padding: EdgeInsets.only(
-                                                  bottom:
-                                                      index ==
-                                                          visiblePoints.length -
-                                                              1
-                                                      ? 0
-                                                      : 10,
-                                                ),
-                                                child: _buildPickupPointCard(
-                                                  point,
-                                                  isSelected,
-                                                ),
-                                              );
-                                            },
-                                            childCount: visiblePoints.length,
-                                            addAutomaticKeepAlives: false,
-                                            addRepaintBoundaries: true,
-                                            addSemanticIndexes: false,
+                                      ),
+                                      if (!isFocusedPointMode)
+                                        SliverPersistentHeader(
+                                          pinned: true,
+                                          delegate: _PinnedSheetHeaderDelegate(
+                                            height: 46,
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    5,
+                                                    0,
+                                                    5,
+                                                    10,
+                                                  ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 36,
+                                                      child: TextField(
+                                                        controller:
+                                                            _searchController,
+                                                        focusNode:
+                                                            _searchFocusNode,
+                                                        onTap:
+                                                            _expandSheetToTop,
+                                                        onChanged: (value) {
+                                                          setState(
+                                                            () =>
+                                                                _query = value,
+                                                          );
+                                                          if (value
+                                                              .trim()
+                                                              .isNotEmpty) {
+                                                            _expandSheetToTop();
+                                                          }
+                                                        },
+                                                        style: const TextStyle(
+                                                          fontSize: 14,
+                                                        ),
+                                                        textAlignVertical:
+                                                            TextAlignVertical
+                                                                .center,
+                                                        decoration: InputDecoration(
+                                                          hintText: "Поиск",
+                                                          hintStyle:
+                                                              const TextStyle(
+                                                                fontSize: 14,
+                                                                color: Colors
+                                                                    .black54,
+                                                              ),
+                                                          prefixIcon:
+                                                              const Icon(
+                                                                Icons.search,
+                                                                size: 18,
+                                                                color: Colors
+                                                                    .black45,
+                                                              ),
+                                                          prefixIconConstraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 34,
+                                                                minHeight: 34,
+                                                              ),
+                                                          suffixIcon:
+                                                              _query
+                                                                  .trim()
+                                                                  .isEmpty
+                                                              ? null
+                                                              : IconButton(
+                                                                  onPressed: () {
+                                                                    _searchController
+                                                                        .clear();
+                                                                    setState(
+                                                                      () =>
+                                                                          _query =
+                                                                              '',
+                                                                    );
+                                                                  },
+                                                                  icon: const Icon(
+                                                                    Icons
+                                                                        .cancel,
+                                                                    size: 18,
+                                                                    color: Colors
+                                                                        .black38,
+                                                                  ),
+                                                                ),
+                                                          filled: true,
+                                                          fillColor:
+                                                              const Color(
+                                                                0xFFF2F2F6,
+                                                              ),
+                                                          contentPadding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 10,
+                                                                vertical: 0,
+                                                              ),
+                                                          border: OutlineInputBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  18,
+                                                                ),
+                                                            borderSide:
+                                                                BorderSide.none,
+                                                          ),
+                                                          enabledBorder:
+                                                              OutlineInputBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      18,
+                                                                    ),
+                                                                borderSide:
+                                                                    BorderSide
+                                                                        .none,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  TextButton(
+                                                    onPressed: () {
+                                                      _searchController.clear();
+                                                      _searchFocusNode
+                                                          .unfocus();
+                                                      setState(
+                                                        () => _query = '',
+                                                      );
+                                                    },
+                                                    style: TextButton.styleFrom(
+                                                      minimumSize: const Size(
+                                                        0,
+                                                        36,
+                                                      ),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 2,
+                                                          ),
+                                                      tapTargetSize:
+                                                          MaterialTapTargetSize
+                                                              .shrinkWrap,
+                                                    ),
+                                                    child: const Text(
+                                                      "Отмена",
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        color: Color(
+                                                          0xFF606067,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
+                                      if (!isFocusedPointMode)
+                                        SliverPersistentHeader(
+                                          pinned: true,
+                                          delegate: _PinnedSheetHeaderDelegate(
+                                            height: 38,
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    5,
+                                                    0,
+                                                    5,
+                                                    10,
+                                                  ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 28,
+                                                      child: OutlinedButton(
+                                                        onPressed: () {
+                                                          setState(() {
+                                                            _pickupFilter =
+                                                                _pickupFilter ==
+                                                                    'today'
+                                                                ? 'all'
+                                                                : 'today';
+                                                          });
+                                                        },
+                                                        style: OutlinedButton.styleFrom(
+                                                          backgroundColor:
+                                                              _pickupFilter ==
+                                                                  'today'
+                                                              ? Colors.black
+                                                              : Colors.white,
+                                                          foregroundColor:
+                                                              _pickupFilter ==
+                                                                  'today'
+                                                              ? Colors.white
+                                                              : Colors.black87,
+                                                          side: BorderSide(
+                                                            color: Colors
+                                                                .grey
+                                                                .shade300,
+                                                          ),
+                                                          shape: RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  14,
+                                                                ),
+                                                          ),
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 6,
+                                                              ),
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                        child: const Text(
+                                                          "Забрать сегодня",
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 28,
+                                                      child: OutlinedButton(
+                                                        onPressed: () {
+                                                          setState(() {
+                                                            _pickupFilter =
+                                                                _pickupFilter ==
+                                                                    'preorder'
+                                                                ? 'all'
+                                                                : 'preorder';
+                                                          });
+                                                        },
+                                                        style: OutlinedButton.styleFrom(
+                                                          backgroundColor:
+                                                              _pickupFilter ==
+                                                                  'preorder'
+                                                              ? Colors.black
+                                                              : Colors.white,
+                                                          foregroundColor:
+                                                              _pickupFilter ==
+                                                                  'preorder'
+                                                              ? Colors.white
+                                                              : Colors.black87,
+                                                          side: BorderSide(
+                                                            color: Colors
+                                                                .grey
+                                                                .shade300,
+                                                          ),
+                                                          shape: RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  14,
+                                                                ),
+                                                          ),
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 6,
+                                                              ),
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                        child: const Text(
+                                                          "Под заказ",
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (_isLoadingPoints &&
+                                          visiblePoints.isEmpty)
+                                        const SliverToBoxAdapter(
+                                          child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: 36,
+                                            ),
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else if (visiblePoints.isEmpty)
+                                        SliverToBoxAdapter(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 36,
+                                            ),
+                                            child: Center(
+                                              child: Text(
+                                                "Ничего не найдено",
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        SliverPadding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            5,
+                                            4,
+                                            5,
+                                            12,
+                                          ),
+                                          sliver: SliverList(
+                                            delegate: SliverChildBuilderDelegate(
+                                              (context, index) {
+                                                final point =
+                                                    visiblePoints[index];
+                                                final id = point['id']
+                                                    ?.toString();
+                                                final isSelected =
+                                                    id == selectedId;
+                                                return Padding(
+                                                  key: ValueKey<String>(
+                                                    id ?? 'point_$index',
+                                                  ),
+                                                  padding: EdgeInsets.only(
+                                                    bottom:
+                                                        index ==
+                                                            visiblePoints
+                                                                    .length -
+                                                                1
+                                                        ? 0
+                                                        : 10,
+                                                  ),
+                                                  child: _buildPickupPointCard(
+                                                    point,
+                                                    isSelected,
+                                                  ),
+                                                );
+                                              },
+                                              childCount: visiblePoints.length,
+                                              addAutomaticKeepAlives: false,
+                                              addRepaintBoundaries: true,
+                                              addSemanticIndexes: false,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
                   ),
-                ),
                 if (focusedPoint != null)
                   Positioned(
                     left: 0,
