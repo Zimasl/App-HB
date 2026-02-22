@@ -13196,67 +13196,148 @@ class PickupPointsPage extends StatefulWidget {
   State<PickupPointsPage> createState() => _PickupPointsPageState();
 }
 
+class PickupPoint {
+  final String id;
+  final String stockId;
+  final String name;
+  final String address;
+  final String workTime;
+  final String eta;
+  final bool isAvailable;
+  final int count;
+  final double? lat;
+  final double? lng;
+  final int? utcOffsetMinutes;
+
+  const PickupPoint({
+    required this.id,
+    required this.stockId,
+    required this.name,
+    required this.address,
+    required this.workTime,
+    required this.eta,
+    required this.isAvailable,
+    required this.count,
+    required this.lat,
+    required this.lng,
+    required this.utcOffsetMinutes,
+  });
+
+  factory PickupPoint.fromJson(Map<String, dynamic> json) {
+    final idRaw = json['id'] ?? json['stock_id'];
+    final id = idRaw?.toString().trim() ?? '';
+    final stockIdRaw = json['stock_id']?.toString().trim();
+    final workTimeRaw = (json['work_time'] ?? '').toString();
+    return PickupPoint(
+      id: id,
+      stockId: stockIdRaw?.isNotEmpty == true ? stockIdRaw! : id,
+      name: json['name']?.toString() ?? 'Пункт выдачи',
+      address: json['address']?.toString() ?? '',
+      workTime: workTimeRaw.isNotEmpty
+          ? workTimeRaw
+          : json['worktime']?.toString() ?? '',
+      eta: json['eta']?.toString() ?? '',
+      isAvailable: _toBoolValue(json['is_available']),
+      count: _toIntValue(json['count']),
+      lat: _toDoubleValue(json['lat']),
+      lng: _toDoubleValue(json['lng']),
+      utcOffsetMinutes: _parseUtcOffsetMinutes(json),
+    );
+  }
+
+  bool get hasValidCoordinates => lat != null && lng != null;
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'stock_id': stockId,
+      'name': name,
+      'address': address,
+      'worktime': workTime,
+      'work_time': workTime,
+      'eta': eta,
+      'is_available': isAvailable,
+      'count': count,
+      'lat': lat,
+      'lng': lng,
+      'utc_offset': utcOffsetMinutes,
+      'utc_offset_minutes': utcOffsetMinutes,
+    };
+  }
+
+  static int? _parseUtcOffsetMinutes(Map<String, dynamic> json) {
+    final raw = json['utc_offset'] ?? json['utc_offset_minutes'];
+    if (raw == null) return null;
+    if (raw is num) return raw.toInt();
+    if (raw is! String) return null;
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  static double? _toDoubleValue(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  static int _toIntValue(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  static bool _toBoolValue(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == '1' || normalized == 'true' || normalized == 'yes';
+    }
+    return false;
+  }
+}
+
 class _PickupPointsPageState extends State<PickupPointsPage>
     with WidgetsBindingObserver {
   static const String _pointsUrl = '/native/get_points.php';
   static const double _sheetInitialChildSize = _sheetMinChildSize;
-  static const double _sheetMinChildSize = 0.18;
+  static const double _sheetMinChildSize = 0.17;
   static const double _sheetMaxChildSize = 1.0;
   static const double _sheetTopFlatExtent = _sheetMaxChildSize - 0.002;
   static const Duration _sheetSnapDuration = Duration(milliseconds: 140);
-  static const double _pauseMapExtent = _sheetMinChildSize + 0.015;
-  static const double _resumeMapExtent = _sheetMinChildSize + 0.005;
   static const double _focusStoreZoom = 16.2;
   static const double _focusUserZoom = 16.0;
   static const double _initialMapZoom = 14.6;
-  static const Color _pickupBorderColor = Color(0xFFD9D9DE);
-  static const Color _pickupAddressColor = Color(0xFF3C4048);
-  static const Color _pickupWorktimeColor = Color(0xFF666B73);
+  static const Color _pickupBorderColor = Color(0xFFE3E4E8);
+  static const Color _pickupAddressColor = Color(0xFF4C5159);
+  static const Color _pickupWorktimeColor = Color(0xFF8A8F98);
+  static const Color _pickupAccentColor = Color(0xFF63B45D);
   static const BorderRadius _pickupCardRadius = BorderRadius.all(
-    Radius.circular(12),
+    Radius.circular(14),
   );
   static final RegExp _etaHighlightRegex = RegExp(
     r'(сегодня|завтра|\d{1,2}\s*(?:-|–|—)\s*\d{1,2}\s*[а-яё]+|\d{1,2}\s*[а-яё]+)',
     caseSensitive: false,
     unicode: true,
   );
-  static const List<Map<String, dynamic>> _fallbackPoints = [
-    {
-      'id': 'pvz_1',
-      'stock_id': 'pvz_1',
-      'name': 'ПВЗ Hozyain Barin - Центр',
-      'address': 'ул. Ленина, 15',
-      'worktime': 'Ежедневно 09:00-21:00',
-      'eta': 'Сегодня',
-      'lat': 55.751244,
-      'lng': 37.618423,
-    },
-    {
-      'id': 'pvz_2',
-      'stock_id': 'pvz_2',
-      'name': 'ПВЗ Hozyain Barin - Север',
-      'address': 'пр-т Победы, 48',
-      'worktime': 'Ежедневно 10:00-22:00',
-      'eta': 'Завтра',
-      'lat': 55.782354,
-      'lng': 37.609124,
-    },
-    {
-      'id': 'pvz_3',
-      'stock_id': 'pvz_3',
-      'name': 'ПВЗ Hozyain Barin - Юг',
-      'address': 'ул. Гагарина, 102',
-      'worktime': 'Пн-Вс 09:00-20:00',
-      'eta': 'Сегодня',
-      'lat': 55.707437,
-      'lng': 37.585022,
-    },
-  ];
+  static final RegExp _workTimeIntervalRegex = RegExp(
+    r'(\d{1,2})\s*:\s*(\d{2})\s*(?:-|–|—|до)\s*(\d{1,2})\s*:\s*(\d{2})',
+    caseSensitive: false,
+    unicode: true,
+  );
+  static const Point _defaultMapCenter = Point(
+    latitude: 55.751244,
+    longitude: 37.618423,
+  );
 
   YandexMapController? _mapController;
   late int _deliveryMethod;
   String _query = '';
   Map<String, dynamic>? _selectedPoint;
+  String? _focusedPointId;
+  Duration? _serverUtcDrift;
   bool _isCheckingLocationPermission = true;
   bool _canShowMap = !Platform.isAndroid;
   PermissionStatus? _locationPermissionStatus;
@@ -13288,9 +13369,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
       DraggableScrollableController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  List<Map<String, dynamic>> _points = List<Map<String, dynamic>>.from(
-    _fallbackPoints,
-  );
+  List<Map<String, dynamic>> _points = [];
   List<MapObject> _pickupMapObjects = const [];
 
   @override
@@ -13529,14 +13608,19 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   }
 
   bool _computeMapPauseBySheetExtent(double extent) {
+    const activeMinExtent = _sheetMinChildSize;
+    const pauseExtent = activeMinExtent + 0.015;
+    const resumeExtent = activeMinExtent + 0.005;
     var shouldPause = _isMapPausedBySheet;
-    if (extent >= _pauseMapExtent) {
+    if (extent >= pauseExtent) {
       shouldPause = true;
-    } else if (extent <= _resumeMapExtent) {
+    } else if (extent <= resumeExtent) {
       shouldPause = false;
     }
     return shouldPause;
   }
+
+  bool get _isFocusedPointMode => _focusedPointId?.isNotEmpty == true;
 
   Point _toPoint(Map<String, dynamic>? point) {
     final lat = (point?['lat'] as num?)?.toDouble() ?? 55.751244;
@@ -13544,10 +13628,9 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     return Point(latitude: lat, longitude: lng);
   }
 
-  Point get _mapCenter => _toPoint(
-    _selectedPoint ??
-        (_points.isNotEmpty ? _points.first : _fallbackPoints.first),
-  );
+  Point get _mapCenter => _selectedPoint != null
+      ? _toPoint(_selectedPoint!)
+      : (_points.isNotEmpty ? _toPoint(_points.first) : _defaultMapCenter);
 
   void _selectPoint(Map<String, dynamic> point) {
     setState(() {
@@ -13686,8 +13769,37 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   }
 
   void _showPointDetails(Map<String, dynamic> point) {
+    final pointId = point['id']?.toString();
+    if (pointId == null || pointId.isEmpty) return;
+    setState(() => _focusedPointId = pointId);
+    _isMapPausedBySheet = false;
+    _isMapPausedBySheetNotifier.value = false;
+    _mapController?.moveCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: _toPoint(point), zoom: _focusStoreZoom),
+      ),
+      animation: const MapAnimation(
+        type: MapAnimationType.smooth,
+        duration: 0.8,
+      ),
+    );
+  }
+
+  void _submitSelectedPoint(Map<String, dynamic> point) {
     _selectPoint(point);
-    _expandSheetToTop();
+    Navigator.pop(context, {
+      ...point,
+      'stock_id': point['stock_id']?.toString() ?? point['id']?.toString(),
+    });
+  }
+
+  void _clearFocusedPointMode() {
+    if (_focusedPointId == null) return;
+    setState(() => _focusedPointId = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_expandSheetToTop());
+    });
   }
 
   Future<void> _openNavigationAppChooser(Map<String, dynamic> point) async {
@@ -13851,23 +13963,6 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     return null;
   }
 
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
-
-  bool _toBool(dynamic value) {
-    if (value is bool) return value;
-    if (value is num) return value != 0;
-    if (value is String) {
-      final normalized = value.trim().toLowerCase();
-      return normalized == '1' || normalized == 'true' || normalized == 'yes';
-    }
-    return false;
-  }
-
   double _toRadians(double value) => value * math.pi / 180.0;
 
   double _distanceKm(Point a, Point b) {
@@ -13907,6 +14002,8 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   }
 
   void _resortPoints() {
+    if (!_sheetController.isAttached) return;
+    if (_sheetController.size > _sheetMinChildSize + 0.02) return;
     final sorted = List<Map<String, dynamic>>.from(_points);
     _sortPointsByPriority(sorted);
     _points = sorted;
@@ -13920,6 +14017,22 @@ class _PickupPointsPageState extends State<PickupPointsPage>
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  List<Map<String, dynamic>> _resolveVisiblePoints(
+    List<Map<String, dynamic>> filteredPoints,
+  ) {
+    final focusedId = _focusedPointId;
+    if (focusedId == null || focusedId.isEmpty) return filteredPoints;
+    final selectedFromFiltered = filteredPoints
+        .where((point) => point['id']?.toString() == focusedId)
+        .toList();
+    if (selectedFromFiltered.isNotEmpty) return selectedFromFiltered;
+    final selectedFromAll = _points
+        .where((point) => point['id']?.toString() == focusedId)
+        .toList();
+    if (selectedFromAll.isNotEmpty) return selectedFromAll;
+    return filteredPoints;
   }
 
   Future<Uint8List?> _loadMarkerAssetBytes(String assetPath) async {
@@ -14088,26 +14201,145 @@ class _PickupPointsPageState extends State<PickupPointsPage>
 
   Map<String, dynamic>? _normalizePickupPoint(dynamic raw) {
     if (raw is! Map) return null;
-    final point = Map<String, dynamic>.from(raw);
-    final idRaw = point['id'] ?? point['stock_id'];
-    final id = idRaw?.toString().trim() ?? '';
-    final lat = _toDouble(point['lat']);
-    final lng = _toDouble(point['lng']);
-    if (id.isEmpty || lat == null || lng == null) return null;
-    return {
-      'id': id,
-      'stock_id': point['stock_id']?.toString().trim().isNotEmpty == true
-          ? point['stock_id'].toString().trim()
-          : id,
-      'name': point['name']?.toString() ?? 'Пункт выдачи',
-      'address': point['address']?.toString() ?? '',
-      'worktime': point['worktime']?.toString() ?? '',
-      'eta': point['eta']?.toString() ?? '',
-      'is_available': _toBool(point['is_available']),
-      'count': _toInt(point['count']),
-      'lat': lat,
-      'lng': lng,
-    };
+    final point = PickupPoint.fromJson(Map<String, dynamic>.from(raw));
+    if (point.id.isEmpty || !point.hasValidCoordinates) return null;
+    return point.toMap();
+  }
+
+  Duration? _parseServerUtcDrift(Response<dynamic> response) {
+    final header = response.headers.value('date');
+    if (header == null || header.trim().isEmpty) return null;
+    try {
+      final serverUtc = HttpDate.parse(header).toUtc();
+      final deviceUtc = DateTime.now().toUtc();
+      final drift = serverUtc.difference(deviceUtc);
+      if (drift.inHours.abs() > 48) return null;
+      return drift;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  DateTime _effectiveUtcNow() {
+    final drift = _serverUtcDrift;
+    if (drift == null) return DateTime.now().toUtc();
+    return DateTime.now().toUtc().add(drift);
+  }
+
+  int? _pointUtcOffsetMinutes(Map<String, dynamic>? point) {
+    final raw = point?['utc_offset'] ?? point?['utc_offset_minutes'];
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw.trim());
+    return null;
+  }
+
+  String _formatDurationRu(Duration duration) {
+    var totalMinutes = (duration.inSeconds / 60).ceil();
+    if (totalMinutes <= 0) totalMinutes = 1;
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    if (hours == 0) return '$minutesм.';
+    if (minutes == 0) return '$hoursч.';
+    return '$hoursч. $minutesм.';
+  }
+
+  String _formatWorkScheduleBase(String schedule) {
+    final text = schedule.trim();
+    if (text.isEmpty) return '';
+    final interval = _workTimeIntervalRegex.firstMatch(text);
+    if (interval == null) return text;
+    final startHour = (int.tryParse(interval.group(1) ?? '') ?? 0)
+        .toString()
+        .padLeft(2, '0');
+    final startMinute = (int.tryParse(interval.group(2) ?? '') ?? 0)
+        .toString()
+        .padLeft(2, '0');
+    final endHour = (int.tryParse(interval.group(3) ?? '') ?? 0)
+        .toString()
+        .padLeft(2, '0');
+    final endMinute = (int.tryParse(interval.group(4) ?? '') ?? 0)
+        .toString()
+        .padLeft(2, '0');
+    return 'Ежедневно $startHour:$startMinute-$endHour:$endMinute';
+  }
+
+  String getWorkStatus(String schedule, {Map<String, dynamic>? point}) {
+    final text = schedule.trim();
+    if (text.isEmpty) return '';
+
+    final interval = _workTimeIntervalRegex.firstMatch(text);
+    if (interval == null) return '';
+
+    final openHour = int.tryParse(interval.group(1) ?? '');
+    final openMinute = int.tryParse(interval.group(2) ?? '');
+    final closeHour = int.tryParse(interval.group(3) ?? '');
+    final closeMinute = int.tryParse(interval.group(4) ?? '');
+
+    final hasInvalidTime =
+        openHour == null ||
+        openMinute == null ||
+        closeHour == null ||
+        closeMinute == null ||
+        openHour < 0 ||
+        openHour > 23 ||
+        closeHour < 0 ||
+        closeHour > 23 ||
+        openMinute < 0 ||
+        openMinute > 59 ||
+        closeMinute < 0 ||
+        closeMinute > 59;
+    if (hasInvalidTime) return '';
+
+    final utcOffsetMinutes = _pointUtcOffsetMinutes(point);
+    if (utcOffsetMinutes == null) return '';
+    final pointNow = _effectiveUtcNow().add(
+      Duration(minutes: utcOffsetMinutes),
+    );
+
+    final intervals = <({DateTime open, DateTime close})>[];
+    for (var dayShift = -1; dayShift <= 2; dayShift++) {
+      final day = pointNow.add(Duration(days: dayShift));
+      var open = DateTime.utc(
+        day.year,
+        day.month,
+        day.day,
+        openHour,
+        openMinute,
+      );
+      var close = DateTime.utc(
+        day.year,
+        day.month,
+        day.day,
+        closeHour,
+        closeMinute,
+      );
+      if (!close.isAfter(open)) {
+        close = close.add(const Duration(days: 1));
+      }
+      intervals.add((open: open, close: close));
+    }
+
+    for (final interval in intervals) {
+      if (!pointNow.isBefore(interval.open) &&
+          pointNow.isBefore(interval.close)) {
+        final left = interval.close.difference(pointNow);
+        return 'до закрытия ${_formatDurationRu(left)}';
+      }
+    }
+
+    DateTime? nextOpen;
+    for (final interval in intervals) {
+      if (interval.open.isAfter(pointNow)) {
+        nextOpen = nextOpen == null || interval.open.isBefore(nextOpen)
+            ? interval.open
+            : nextOpen;
+      }
+    }
+    if (nextOpen == null) {
+      return 'Закрыто';
+    }
+    final tillOpen = nextOpen.difference(pointNow);
+    return 'до открытия ${_formatDurationRu(tillOpen)}';
   }
 
   Future<void> _loadPickupPoints() async {
@@ -14119,6 +14351,10 @@ class _PickupPointsPageState extends State<PickupPointsPage>
           ? '$_pointsUrl?product_id=${Uri.encodeQueryComponent(productId)}'
           : _pointsUrl;
       final response = await dio.get(path);
+      final drift = _parseServerUtcDrift(response);
+      if (drift != null) {
+        _serverUtcDrift = drift;
+      }
       final data = _parseAuthResponse(response.data);
       final status = data?['status']?.toString().toLowerCase();
       final rawPoints = data?['points'];
@@ -14142,7 +14378,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
         _rebuildMapObjects();
       }
     } catch (_) {
-      // Keep fallback points if API is temporarily unavailable.
+      if (mounted) setState(() => _points = []);
     } finally {
       if (mounted) setState(() => _isLoadingPoints = false);
     }
@@ -14282,15 +14518,13 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     }).toList();
   }
 
-  TextSpan _buildEtaSpan(String eta) {
-    const baseStyle = TextStyle(fontSize: 12, color: Color(0xFF6F6F73));
-    const accentStyle = TextStyle(
-      fontSize: 12,
-      color: Color(0xFF1DB954),
-      fontWeight: FontWeight.w600,
-    );
+  TextSpan _buildEtaSpan(
+    String eta, {
+    required TextStyle baseStyle,
+    required TextStyle accentStyle,
+  }) {
     final text = eta.trim();
-    if (text.isEmpty) return const TextSpan(text: '', style: baseStyle);
+    if (text.isEmpty) return TextSpan(text: '', style: baseStyle);
 
     final matches = _etaHighlightRegex.allMatches(text).toList();
     if (matches.isEmpty) return TextSpan(text: text, style: baseStyle);
@@ -14319,83 +14553,247 @@ class _PickupPointsPageState extends State<PickupPointsPage>
 
   Widget _buildPickupPointCard(Map<String, dynamic> point, bool isSelected) {
     final worktime = point['worktime']?.toString().trim() ?? '';
+    final workScheduleBase = _formatWorkScheduleBase(worktime);
+    final workStatus = getWorkStatus(worktime, point: point);
+    final hasWorkInfo = workScheduleBase.isNotEmpty;
     final eta = point['eta']?.toString().trim() ?? '';
+    final isAvailable = point['is_available'] == true;
+    final showFocusedClose =
+        _isFocusedPointMode &&
+        point['id']?.toString().isNotEmpty == true &&
+        point['id']?.toString() == _focusedPointId;
+    const availabilityBaseStyle = TextStyle(
+      fontSize: 15,
+      color: _pickupWorktimeColor,
+      fontWeight: FontWeight.w500,
+    );
+    const availabilityAccentStyle = TextStyle(
+      fontSize: 15,
+      color: _pickupAccentColor,
+      fontWeight: FontWeight.w700,
+    );
+    final availabilitySpan = isAvailable
+        ? const TextSpan(
+            children: [
+              TextSpan(text: 'В наличии ', style: availabilityBaseStyle),
+              TextSpan(text: 'сегодня', style: availabilityAccentStyle),
+            ],
+          )
+        : (eta.isNotEmpty
+              ? _buildEtaSpan(
+                  eta,
+                  baseStyle: availabilityBaseStyle,
+                  accentStyle: availabilityAccentStyle,
+                )
+              : const TextSpan(
+                  text: 'Под заказ',
+                  style: availabilityBaseStyle,
+                ));
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _showPointDetails(point),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: _pickupCardRadius,
-          border: Border.all(
-            color: isSelected ? Colors.black : _pickupBorderColor,
-            width: isSelected ? 1.3 : 1,
-          ),
+          border: Border.all(color: _pickupBorderColor, width: 1),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x12000000),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
         ),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: Icon(Icons.location_on_outlined, size: 18),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    point['name']?.toString() ?? '',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Transform.translate(
+                  offset: const Offset(-3, 0),
+                  child: const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(Icons.location_on_outlined, size: 19),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    point['address']?.toString() ?? '',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: _pickupAddressColor,
-                    ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Transform.translate(
+                        offset: const Offset(-3, 0),
+                        child: Text(
+                          point['name']?.toString() ?? '',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Transform.translate(
+                        offset: const Offset(-25, 0),
+                        child: Text(
+                          point['address']?.toString() ?? '',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: _pickupAddressColor,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      if (hasWorkInfo && !showFocusedClose) ...[
+                        const SizedBox(height: 5),
+                        Transform.translate(
+                          offset: const Offset(-25, 0),
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: workScheduleBase,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: _pickupWorktimeColor,
+                                    fontWeight: FontWeight.w400,
+                                    height: 1.1,
+                                  ),
+                                ),
+                                if (workStatus.isNotEmpty)
+                                  TextSpan(
+                                    text: ' - $workStatus',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: _pickupWorktimeColor,
+                                      fontWeight: FontWeight.w400,
+                                      height: 1.1,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (worktime.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      worktime,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: _pickupWorktimeColor,
+                ),
+                if (showFocusedClose) ...[
+                  const SizedBox(width: 8),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: _clearFocusedPointMode,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF6F6F8),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE0E1E6)),
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        size: 16,
+                        color: Colors.black87,
                       ),
                     ),
-                  ],
-                  if (eta.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    RichText(text: _buildEtaSpan(eta)),
-                  ],
+                  ),
                 ],
-              ),
+              ],
             ),
-            const SizedBox(width: 8),
-            InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: () => _openNavigationAppChooser(point),
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: const Icon(
-                  Icons.navigation_outlined,
-                  size: 18,
-                  color: Colors.black87,
+            if (hasWorkInfo && showFocusedClose) ...[
+              const SizedBox(height: 5),
+              Padding(
+                padding: const EdgeInsets.only(left: 25),
+                child: Transform.translate(
+                  offset: const Offset(-25, 0),
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: workScheduleBase,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: _pickupWorktimeColor,
+                            fontWeight: FontWeight.w400,
+                            height: 1.1,
+                          ),
+                        ),
+                        if (workStatus.isNotEmpty)
+                          TextSpan(
+                            text: ' - $workStatus',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: _pickupWorktimeColor,
+                              fontWeight: FontWeight.w400,
+                              height: 1.1,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: RichText(text: availabilitySpan)),
+                const SizedBox(width: 10),
+                InkWell(
+                  borderRadius: BorderRadius.circular(17),
+                  onTap: () => _openNavigationAppChooser(point),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6F6F8),
+                      borderRadius: BorderRadius.circular(17),
+                      border: Border.all(color: const Color(0xFFE0E1E6)),
+                    ),
+                    child: const Icon(
+                      Icons.navigation_outlined,
+                      size: 18,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 34,
+                  child: OutlinedButton(
+                    onPressed: () => _submitSelectedPoint(point),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: isSelected
+                            ? Colors.black
+                            : const Color(0xFFD4D6DC),
+                      ),
+                      backgroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      foregroundColor: Colors.black,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      isSelected ? 'Выбрано' : 'Выбрать',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -14406,8 +14804,12 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   @override
   Widget build(BuildContext context) {
     final points = _filteredPoints;
-    final visiblePoints = points;
+    final visiblePoints = _resolveVisiblePoints(points);
+    final isFocusedPointMode = _isFocusedPointMode;
     final selectedId = _selectedPoint?['id']?.toString();
+    final focusedPoint = isFocusedPointMode && visiblePoints.isNotEmpty
+        ? visiblePoints.first
+        : null;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -14734,167 +15136,172 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                 ),
                               )),
                 ),
-                NotificationListener<DraggableScrollableNotification>(
-                  onNotification: (notification) {
-                    if (notification.depth != 0) return false;
-                    final nextMapPause = _computeMapPauseBySheetExtent(
-                      notification.extent,
-                    );
-                    if (nextMapPause != _isMapPausedBySheet) {
-                      _isMapPausedBySheet = nextMapPause;
-                      _isMapPausedBySheetNotifier.value = nextMapPause;
-                    }
-                    final shouldFlattenTop =
-                        notification.extent >= _sheetTopFlatExtent;
-                    if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
-                      _isSheetTopFlatNotifier.value = shouldFlattenTop;
-                    }
-                    return false;
-                  },
-                  child: DraggableScrollableSheet(
-                    controller: _sheetController,
-                    initialChildSize: _sheetInitialChildSize,
-                    minChildSize: _sheetMinChildSize,
-                    maxChildSize: _sheetMaxChildSize,
-                    snap: true,
-                    snapSizes: const [_sheetMinChildSize, _sheetMaxChildSize],
-                    snapAnimationDuration: _sheetSnapDuration,
-                    builder: (context, scrollController) {
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: _isSheetTopFlatNotifier,
-                        builder: (context, isTopFlat, _) {
-                          return AnimatedContainer(
-                            duration: const Duration(milliseconds: 90),
-                            curve: Curves.easeOutCubic,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: isTopFlat
-                                  ? BorderRadius.zero
-                                  : const BorderRadius.vertical(
-                                      top: Radius.circular(16),
-                                    ),
-                            ),
-                            child: Stack(
-                              children: [
-                                CustomScrollView(
-                                  controller: scrollController,
-                                  cacheExtent: 560,
-                                  physics: const AlwaysScrollableScrollPhysics(
-                                    parent: BouncingScrollPhysics(),
-                                  ),
-                                  slivers: [
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(
-                                          top: 8,
-                                          bottom: 10,
+                if (!isFocusedPointMode)
+                  NotificationListener<DraggableScrollableNotification>(
+                    onNotification: (notification) {
+                      if (notification.depth != 0) return false;
+                      final nextMapPause = _computeMapPauseBySheetExtent(
+                        notification.extent,
+                      );
+                      if (nextMapPause != _isMapPausedBySheet) {
+                        _isMapPausedBySheet = nextMapPause;
+                        _isMapPausedBySheetNotifier.value = nextMapPause;
+                      }
+                      final shouldFlattenTop =
+                          notification.extent >= _sheetTopFlatExtent;
+                      if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
+                        _isSheetTopFlatNotifier.value = shouldFlattenTop;
+                      }
+                      return false;
+                    },
+                    child: DraggableScrollableSheet(
+                      controller: _sheetController,
+                      initialChildSize: _sheetInitialChildSize,
+                      minChildSize: _sheetMinChildSize,
+                      maxChildSize: _sheetMaxChildSize,
+                      snap: true,
+                      snapSizes: const [_sheetMinChildSize, _sheetMaxChildSize],
+                      snapAnimationDuration: _sheetSnapDuration,
+                      builder: (context, scrollController) {
+                        return ValueListenableBuilder<bool>(
+                          valueListenable: _isSheetTopFlatNotifier,
+                          builder: (context, isTopFlat, _) {
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 90),
+                              curve: Curves.easeOutCubic,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: isTopFlat
+                                    ? BorderRadius.zero
+                                    : const BorderRadius.vertical(
+                                        top: Radius.circular(16),
+                                      ),
+                              ),
+                              child: Stack(
+                                children: [
+                                  CustomScrollView(
+                                    controller: scrollController,
+                                    cacheExtent: 560,
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(
+                                          parent: BouncingScrollPhysics(),
                                         ),
-                                        child: Center(
-                                          child: Container(
-                                            width: 34,
-                                            height: 4,
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey.shade400,
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
+                                    slivers: [
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 8,
+                                            bottom: 10,
+                                          ),
+                                          child: Center(
+                                            child: Container(
+                                              width: 34,
+                                              height: 4,
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey.shade400,
+                                                borderRadius:
+                                                    BorderRadius.circular(999),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    SliverPersistentHeader(
-                                      pinned: true,
-                                      delegate: _PinnedSheetHeaderDelegate(
-                                        height: 46,
-                                        child: Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            5,
-                                            0,
-                                            5,
-                                            10,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: SizedBox(
-                                                  height: 36,
-                                                  child: TextField(
-                                                    controller:
-                                                        _searchController,
-                                                    focusNode: _searchFocusNode,
-                                                    onTap: _expandSheetToTop,
-                                                    onChanged: (value) {
-                                                      setState(
-                                                        () => _query = value,
-                                                      );
-                                                      if (value
-                                                          .trim()
-                                                          .isNotEmpty) {
-                                                        _expandSheetToTop();
-                                                      }
-                                                    },
-                                                    style: const TextStyle(
-                                                      fontSize: 14,
-                                                    ),
-                                                    textAlignVertical:
-                                                        TextAlignVertical
-                                                            .center,
-                                                    decoration: InputDecoration(
-                                                      hintText: "Поиск",
-                                                      hintStyle:
-                                                          const TextStyle(
-                                                            fontSize: 14,
-                                                            color:
-                                                                Colors.black54,
-                                                          ),
-                                                      prefixIcon: const Icon(
-                                                        Icons.search,
-                                                        size: 18,
-                                                        color: Colors.black45,
-                                                      ),
-                                                      prefixIconConstraints:
-                                                          const BoxConstraints(
-                                                            minWidth: 34,
-                                                            minHeight: 34,
-                                                          ),
-                                                      suffixIcon:
-                                                          _query.trim().isEmpty
-                                                          ? null
-                                                          : IconButton(
-                                                              onPressed: () {
-                                                                _searchController
-                                                                    .clear();
-                                                                setState(
-                                                                  () => _query =
-                                                                      '',
-                                                                );
-                                                              },
-                                                              icon: const Icon(
-                                                                Icons.cancel,
+                                      if (!isFocusedPointMode)
+                                        SliverPersistentHeader(
+                                          pinned: true,
+                                          delegate: _PinnedSheetHeaderDelegate(
+                                            height: 46,
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    5,
+                                                    0,
+                                                    5,
+                                                    10,
+                                                  ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 36,
+                                                      child: TextField(
+                                                        controller:
+                                                            _searchController,
+                                                        focusNode:
+                                                            _searchFocusNode,
+                                                        onTap:
+                                                            _expandSheetToTop,
+                                                        onChanged: (value) {
+                                                          setState(
+                                                            () =>
+                                                                _query = value,
+                                                          );
+                                                          if (value
+                                                              .trim()
+                                                              .isNotEmpty) {
+                                                            _expandSheetToTop();
+                                                          }
+                                                        },
+                                                        style: const TextStyle(
+                                                          fontSize: 14,
+                                                        ),
+                                                        textAlignVertical:
+                                                            TextAlignVertical
+                                                                .center,
+                                                        decoration: InputDecoration(
+                                                          hintText: "Поиск",
+                                                          hintStyle:
+                                                              const TextStyle(
+                                                                fontSize: 14,
+                                                                color: Colors
+                                                                    .black54,
+                                                              ),
+                                                          prefixIcon:
+                                                              const Icon(
+                                                                Icons.search,
                                                                 size: 18,
                                                                 color: Colors
-                                                                    .black38,
+                                                                    .black45,
                                                               ),
-                                                            ),
-                                                      filled: true,
-                                                      fillColor: const Color(
-                                                        0xFFF2F2F6,
-                                                      ),
-                                                      contentPadding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 10,
-                                                            vertical: 0,
-                                                          ),
-                                                      border: OutlineInputBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              18,
-                                                            ),
-                                                        borderSide:
-                                                            BorderSide.none,
-                                                      ),
-                                                      enabledBorder:
-                                                          OutlineInputBorder(
+                                                          prefixIconConstraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 34,
+                                                                minHeight: 34,
+                                                              ),
+                                                          suffixIcon:
+                                                              _query
+                                                                  .trim()
+                                                                  .isEmpty
+                                                              ? null
+                                                              : IconButton(
+                                                                  onPressed: () {
+                                                                    _searchController
+                                                                        .clear();
+                                                                    setState(
+                                                                      () =>
+                                                                          _query =
+                                                                              '',
+                                                                    );
+                                                                  },
+                                                                  icon: const Icon(
+                                                                    Icons
+                                                                        .cancel,
+                                                                    size: 18,
+                                                                    color: Colors
+                                                                        .black38,
+                                                                  ),
+                                                                ),
+                                                          filled: true,
+                                                          fillColor:
+                                                              const Color(
+                                                                0xFFF2F2F6,
+                                                              ),
+                                                          contentPadding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 10,
+                                                                vertical: 0,
+                                                              ),
+                                                          border: OutlineInputBorder(
                                                             borderRadius:
                                                                 BorderRadius.circular(
                                                                   18,
@@ -14902,259 +15309,313 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                                             borderSide:
                                                                 BorderSide.none,
                                                           ),
+                                                          enabledBorder:
+                                                              OutlineInputBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      18,
+                                                                    ),
+                                                                borderSide:
+                                                                    BorderSide
+                                                                        .none,
+                                                              ),
+                                                        ),
+                                                      ),
                                                     ),
                                                   ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              TextButton(
-                                                onPressed: () {
-                                                  _searchController.clear();
-                                                  _searchFocusNode.unfocus();
-                                                  setState(() => _query = '');
-                                                },
-                                                style: TextButton.styleFrom(
-                                                  minimumSize: const Size(
-                                                    0,
-                                                    36,
-                                                  ),
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 2,
+                                                  const SizedBox(width: 6),
+                                                  TextButton(
+                                                    onPressed: () {
+                                                      _searchController.clear();
+                                                      _searchFocusNode
+                                                          .unfocus();
+                                                      setState(
+                                                        () => _query = '',
+                                                      );
+                                                    },
+                                                    style: TextButton.styleFrom(
+                                                      minimumSize: const Size(
+                                                        0,
+                                                        36,
                                                       ),
-                                                  tapTargetSize:
-                                                      MaterialTapTargetSize
-                                                          .shrinkWrap,
-                                                ),
-                                                child: const Text(
-                                                  "Отмена",
-                                                  style: TextStyle(
-                                                    fontSize: 14,
-                                                    color: Color(0xFF606067),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 2,
+                                                          ),
+                                                      tapTargetSize:
+                                                          MaterialTapTargetSize
+                                                              .shrinkWrap,
+                                                    ),
+                                                    child: const Text(
+                                                      "Отмена",
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        color: Color(
+                                                          0xFF606067,
+                                                        ),
+                                                      ),
+                                                    ),
                                                   ),
-                                                ),
+                                                ],
                                               ),
-                                            ],
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                    SliverPersistentHeader(
-                                      pinned: true,
-                                      delegate: _PinnedSheetHeaderDelegate(
-                                        height: 38,
-                                        child: Padding(
+                                      if (!isFocusedPointMode)
+                                        SliverPersistentHeader(
+                                          pinned: true,
+                                          delegate: _PinnedSheetHeaderDelegate(
+                                            height: 38,
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    5,
+                                                    0,
+                                                    5,
+                                                    10,
+                                                  ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 28,
+                                                      child: OutlinedButton(
+                                                        onPressed: () {
+                                                          setState(() {
+                                                            _pickupFilter =
+                                                                _pickupFilter ==
+                                                                    'today'
+                                                                ? 'all'
+                                                                : 'today';
+                                                          });
+                                                        },
+                                                        style: OutlinedButton.styleFrom(
+                                                          backgroundColor:
+                                                              _pickupFilter ==
+                                                                  'today'
+                                                              ? Colors.black
+                                                              : Colors.white,
+                                                          foregroundColor:
+                                                              _pickupFilter ==
+                                                                  'today'
+                                                              ? Colors.white
+                                                              : Colors.black87,
+                                                          side: BorderSide(
+                                                            color: Colors
+                                                                .grey
+                                                                .shade300,
+                                                          ),
+                                                          shape: RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  14,
+                                                                ),
+                                                          ),
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 6,
+                                                              ),
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                        child: const Text(
+                                                          "Забрать сегодня",
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: SizedBox(
+                                                      height: 28,
+                                                      child: OutlinedButton(
+                                                        onPressed: () {
+                                                          setState(() {
+                                                            _pickupFilter =
+                                                                _pickupFilter ==
+                                                                    'preorder'
+                                                                ? 'all'
+                                                                : 'preorder';
+                                                          });
+                                                        },
+                                                        style: OutlinedButton.styleFrom(
+                                                          backgroundColor:
+                                                              _pickupFilter ==
+                                                                  'preorder'
+                                                              ? Colors.black
+                                                              : Colors.white,
+                                                          foregroundColor:
+                                                              _pickupFilter ==
+                                                                  'preorder'
+                                                              ? Colors.white
+                                                              : Colors.black87,
+                                                          side: BorderSide(
+                                                            color: Colors
+                                                                .grey
+                                                                .shade300,
+                                                          ),
+                                                          shape: RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  14,
+                                                                ),
+                                                          ),
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 6,
+                                                              ),
+                                                          tapTargetSize:
+                                                              MaterialTapTargetSize
+                                                                  .shrinkWrap,
+                                                        ),
+                                                        child: const Text(
+                                                          "Под заказ",
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (_isLoadingPoints &&
+                                          visiblePoints.isEmpty)
+                                        const SliverToBoxAdapter(
+                                          child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: 36,
+                                            ),
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else if (visiblePoints.isEmpty)
+                                        SliverToBoxAdapter(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 36,
+                                            ),
+                                            child: Center(
+                                              child: Text(
+                                                "Ничего не найдено",
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        SliverPadding(
                                           padding: const EdgeInsets.fromLTRB(
                                             5,
-                                            0,
+                                            4,
                                             5,
-                                            10,
+                                            12,
                                           ),
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: SizedBox(
-                                                  height: 28,
-                                                  child: OutlinedButton(
-                                                    onPressed: () {
-                                                      setState(() {
-                                                        _pickupFilter =
-                                                            _pickupFilter ==
-                                                                'today'
-                                                            ? 'all'
-                                                            : 'today';
-                                                      });
-                                                    },
-                                                    style: OutlinedButton.styleFrom(
-                                                      backgroundColor:
-                                                          _pickupFilter ==
-                                                              'today'
-                                                          ? Colors.black
-                                                          : Colors.white,
-                                                      foregroundColor:
-                                                          _pickupFilter ==
-                                                              'today'
-                                                          ? Colors.white
-                                                          : Colors.black87,
-                                                      side: BorderSide(
-                                                        color: Colors
-                                                            .grey
-                                                            .shade300,
-                                                      ),
-                                                      shape: RoundedRectangleBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              14,
-                                                            ),
-                                                      ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 6,
-                                                          ),
-                                                      tapTargetSize:
-                                                          MaterialTapTargetSize
-                                                              .shrinkWrap,
-                                                    ),
-                                                    child: const Text(
-                                                      "Забрать сегодня",
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                      ),
-                                                    ),
+                                          sliver: SliverList(
+                                            delegate: SliverChildBuilderDelegate(
+                                              (context, index) {
+                                                final point =
+                                                    visiblePoints[index];
+                                                final id = point['id']
+                                                    ?.toString();
+                                                final isSelected =
+                                                    id == selectedId;
+                                                return Padding(
+                                                  key: ValueKey<String>(
+                                                    id ?? 'point_$index',
                                                   ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: SizedBox(
-                                                  height: 28,
-                                                  child: OutlinedButton(
-                                                    onPressed: () {
-                                                      setState(() {
-                                                        _pickupFilter =
-                                                            _pickupFilter ==
-                                                                'preorder'
-                                                            ? 'all'
-                                                            : 'preorder';
-                                                      });
-                                                    },
-                                                    style: OutlinedButton.styleFrom(
-                                                      backgroundColor:
-                                                          _pickupFilter ==
-                                                              'preorder'
-                                                          ? Colors.black
-                                                          : Colors.white,
-                                                      foregroundColor:
-                                                          _pickupFilter ==
-                                                              'preorder'
-                                                          ? Colors.white
-                                                          : Colors.black87,
-                                                      side: BorderSide(
-                                                        color: Colors
-                                                            .grey
-                                                            .shade300,
-                                                      ),
-                                                      shape: RoundedRectangleBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              14,
-                                                            ),
-                                                      ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 6,
-                                                          ),
-                                                      tapTargetSize:
-                                                          MaterialTapTargetSize
-                                                              .shrinkWrap,
-                                                    ),
-                                                    child: const Text(
-                                                      "Под заказ",
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                      ),
-                                                    ),
+                                                  padding: EdgeInsets.only(
+                                                    bottom:
+                                                        index ==
+                                                            visiblePoints
+                                                                    .length -
+                                                                1
+                                                        ? 0
+                                                        : 10,
                                                   ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    if (_isLoadingPoints &&
-                                        visiblePoints.isEmpty)
-                                      const SliverToBoxAdapter(
-                                        child: Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            vertical: 36,
-                                          ),
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
+                                                  child: _buildPickupPointCard(
+                                                    point,
+                                                    isSelected,
+                                                  ),
+                                                );
+                                              },
+                                              childCount: visiblePoints.length,
+                                              addAutomaticKeepAlives: false,
+                                              addRepaintBoundaries: true,
+                                              addSemanticIndexes: false,
                                             ),
                                           ),
                                         ),
-                                      )
-                                    else if (visiblePoints.isEmpty)
-                                      SliverToBoxAdapter(
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 36,
-                                          ),
-                                          child: Center(
-                                            child: Text(
-                                              "Ничего не найдено",
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      SliverPadding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          5,
-                                          4,
-                                          5,
-                                          12,
-                                        ),
-                                        sliver: SliverList(
-                                          delegate: SliverChildBuilderDelegate(
-                                            (context, index) {
-                                              final point =
-                                                  visiblePoints[index];
-                                              final id = point['id']
-                                                  ?.toString();
-                                              final isSelected =
-                                                  id == selectedId;
-                                              return Padding(
-                                                key: ValueKey<String>(
-                                                  id ?? 'point_$index',
-                                                ),
-                                                padding: EdgeInsets.only(
-                                                  bottom:
-                                                      index ==
-                                                          visiblePoints.length -
-                                                              1
-                                                      ? 0
-                                                      : 8,
-                                                ),
-                                                child: _buildPickupPointCard(
-                                                  point,
-                                                  isSelected,
-                                                ),
-                                              );
-                                            },
-                                            childCount: visiblePoints.length,
-                                            addAutomaticKeepAlives: false,
-                                            addRepaintBoundaries: true,
-                                            addSemanticIndexes: false,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
                   ),
-                ),
+                if (focusedPoint != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: SafeArea(
+                      top: false,
+                      left: false,
+                      right: false,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(16),
+                          ),
+                          border: Border(
+                            top: BorderSide(color: Colors.grey.shade200),
+                          ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x14000000),
+                              blurRadius: 6,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(5, 13, 5, 13),
+                          child: _buildPickupPointCard(
+                            focusedPoint,
+                            focusedPoint['id']?.toString() == selectedId,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
