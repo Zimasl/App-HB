@@ -52,8 +52,9 @@ class YookassaPaymentService {
       applicationScheme: 'yookassapaymentsflutter://',
     );
 
-    final tokenizationResult =
-        await YookassaPaymentsFlutter.tokenization(tokenizationInput);
+    final tokenizationResult = await YookassaPaymentsFlutter.tokenization(
+      tokenizationInput,
+    );
 
     if (tokenizationResult is CanceledTokenizationResult) {
       throw const YookassaPaymentException('Оплата отменена пользователем');
@@ -86,7 +87,9 @@ class YookassaPaymentService {
     final confirmationUrl = payData['confirmation_url']?.toString();
 
     if (payStatus.isEmpty || paymentId.isEmpty) {
-      throw const YookassaPaymentException('Сервер не вернул payment_id/status');
+      throw const YookassaPaymentException(
+        'Сервер не вернул payment_id/status',
+      );
     }
 
     if (confirmationUrl != null && confirmationUrl.trim().isNotEmpty) {
@@ -121,17 +124,17 @@ class YookassaPaymentService {
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       final resp = await dio.post(
         '/native/yookassa/payment_status.php',
-        data: {
-          'order_id': orderId,
-          'payment_id': paymentId,
-        },
+        data: {'order_id': orderId, 'payment_id': paymentId},
         options: Options(contentType: Headers.jsonContentType),
       );
       final data = _asMap(resp.data);
-      final status = data['payment_status']?.toString().toLowerCase() ??
+      final status =
+          data['payment_status']?.toString().toLowerCase() ??
           data['status']?.toString().toLowerCase() ??
           '';
-      if (status == 'succeeded' || status == 'canceled' || status == 'pending') {
+      if (status == 'succeeded' ||
+          status == 'canceled' ||
+          status == 'pending') {
         if (status != 'pending') return status;
       }
       await Future<void>.delayed(delay);
@@ -144,4 +147,3 @@ class YookassaPaymentService {
     throw const YookassaPaymentException('Некорректный ответ сервера');
   }
 }
-

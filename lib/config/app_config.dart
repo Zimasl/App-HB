@@ -1,6 +1,8 @@
 class AppConfig {
-  static const String flavor =
-      String.fromEnvironment('FLAVOR', defaultValue: 'prod');
+  static const String flavor = String.fromEnvironment(
+    'FLAVOR',
+    defaultValue: 'prod',
+  );
 
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -30,4 +32,3 @@ class AppConfig {
     }
   }
 }
-

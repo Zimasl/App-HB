@@ -11803,7 +11803,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<void> _launchUrl(String url) async {
     final Uri uri = Uri.parse(url);
     final scheme = uri.scheme.toLowerCase();
-    final allowed = scheme == 'http' ||
+    final allowed =
+        scheme == 'http' ||
         scheme == 'https' ||
         scheme == 'tel' ||
         scheme == 'mailto';
@@ -12679,10 +12680,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (status == 'ok') {
         if (_paymentMethod == 0) {
           final service = YookassaPaymentService(dio: dio);
-          final amountRub = (data?['amount']?.toString().trim().isNotEmpty ==
-                      true)
-                  ? data!['amount'].toString()
-                  : widget.total.toStringAsFixed(2);
+          final amountRub =
+              (data?['amount']?.toString().trim().isNotEmpty == true)
+              ? data!['amount'].toString()
+              : widget.total.toStringAsFixed(2);
           final phone = _authPhone?.toString();
           final result = await service.payOrder(
             orderId: orderId,
@@ -12725,10 +12726,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
           '[create_order] status=$status response=${_responseDataToString(response.data)} payload=${json.encode(payload)}',
         );
         setState(
-          () => _orderError =
-              details.trim().isNotEmpty
-                  ? 'Не удалось оформить заказ: $details'
-                  : 'Не удалось оформить заказ',
+          () => _orderError = details.trim().isNotEmpty
+              ? 'Не удалось оформить заказ: $details'
+              : 'Не удалось оформить заказ',
         );
       }
     } catch (e) {
@@ -12741,8 +12741,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         debugPrint(
           '[create_order] dio status=${e.response?.statusCode} data=${_responseDataToString(e.response?.data)}',
         );
-        final serverText =
-            _normalizeOrderError(_responseDataToString(e.response?.data).trim());
+        final serverText = _normalizeOrderError(
+          _responseDataToString(e.response?.data).trim(),
+        );
         if (mounted) {
           setState(
             () => _orderError = serverText.isNotEmpty
