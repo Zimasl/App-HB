@@ -12987,18 +12987,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       );
     }
-    final inputBorder = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(8),
-      borderSide: BorderSide(color: Colors.grey.shade300),
-    );
-    final inputDecoration = InputDecoration(
-      border: inputBorder,
-      enabledBorder: inputBorder,
-      focusedBorder: inputBorder.copyWith(
-        borderSide: const BorderSide(color: Colors.black),
-      ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    );
     final selectedDeliveryAddress = (_selectedDeliveryAddress ?? '').trim();
     final selectedDeliveryApartment = (_selectedDeliveryApartment ?? '').trim();
     final selectedDeliveryDate = (_selectedDeliveryDate ?? '').trim();
@@ -13522,8 +13510,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Transform.translate(
-                                      offset: Offset(-1, 0),
-                                      child: Padding(
+                                      offset: const Offset(-1, 0),
+                                      child: const Padding(
                                         padding: EdgeInsets.only(top: 1),
                                         child: Icon(
                                           Icons.location_on_outlined,
@@ -14868,8 +14856,9 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
             if (detail != null && detail.isNotEmpty) msg = detail;
             if (kDebugMode) debugPrint('Yandex Suggest 403: ${response.body}');
           } catch (_) {
-            if (kDebugMode)
+            if (kDebugMode) {
               debugPrint('Yandex Suggest 403 body: ${response.body}');
+            }
           }
           setState(() {
             _suggestions = [];
@@ -15244,7 +15233,6 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                   height: 34,
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      const bool isPickup = false;
                       final indicatorWidth = (constraints.maxWidth - 4) / 2;
                       return Container(
                         decoration: BoxDecoration(
@@ -15257,7 +15245,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                             AnimatedPositioned(
                               duration: const Duration(milliseconds: 180),
                               curve: Curves.easeOutCubic,
-                              left: isPickup ? 2 : 2 + indicatorWidth,
+                              left: 2 + indicatorWidth,
                               top: 2,
                               bottom: 2,
                               width: indicatorWidth,
@@ -15457,7 +15445,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                     ),
                                   ],
                                 ),
-                                child: Row(
+                                child: const Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     SizedBox(
@@ -15467,8 +15455,8 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                         strokeWidth: 2,
                                       ),
                                     ),
-                                    const SizedBox(width: 12),
-                                    const Text(
+                                    SizedBox(width: 12),
+                                    Text(
                                       'Ищем на карте...',
                                       style: TextStyle(
                                         fontSize: 14,
