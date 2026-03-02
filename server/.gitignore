@@ -1,0 +1,3 @@
+# Секретный конфиг YooKassa — не коммитить
+config/yookassa_config.php
+**/yookassa_config.php

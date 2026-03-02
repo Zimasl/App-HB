@@ -31,10 +31,14 @@ android {
 
     defaultConfig {
         applicationId = "com.example.hozyain_barin"
-        minSdk = flutter.minSdkVersion
+        // YooKassa Flutter plugin requires minSdkVersion 24+
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInt()
         versionName = flutterVersionName
+
+        // Scheme for YooKassa/SBP return-to-app flows (used by YooKassa SDK)
+        resValue("string", "ym_app_scheme", "yookassapaymentsflutter")
     }
 
     buildTypes {

@@ -61,5 +61,21 @@
 		<string>Нужно для корректной работы карты и функций, связанных с геолокацией.</string>
 		<key>YANDEX_MAPKIT_API_KEY</key>
 		<string>d8fdb4b0-7698-4e1d-bdb5-978a25275ba9</string>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>yookassapaymentsflutter</string>
+				</array>
+			</dict>
+		</array>
+		<key>LSApplicationQueriesSchemes</key>
+		<array>
+			<string>yoomoneyauth</string>
+			<string>sberpay</string>
+		</array>
 	</dict>
 </plist>
