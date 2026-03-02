@@ -12733,7 +12733,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }) {
     final value = text.trim();
     if (value.isEmpty) return TextSpan(text: '', style: baseStyle);
-    final matches = _pickupAvailabilityHighlightRegex.allMatches(value).toList();
+    final matches = _pickupAvailabilityHighlightRegex
+        .allMatches(value)
+        .toList();
     if (matches.isEmpty) return TextSpan(text: value, style: baseStyle);
 
     final children = <TextSpan>[];
@@ -12741,7 +12743,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
     for (final match in matches) {
       if (match.start > cursor) {
         children.add(
-          TextSpan(text: value.substring(cursor, match.start), style: baseStyle),
+          TextSpan(
+            text: value.substring(cursor, match.start),
+            style: baseStyle,
+          ),
         );
       }
       children.add(
@@ -13002,17 +13007,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
       fullAddress: selectedDeliveryAddress,
       apartment: selectedDeliveryApartment,
     );
-    final selectedPickupName =
-        (_selectedPickupPoint?['name']?.toString() ?? '').trim();
+    final selectedPickupName = (_selectedPickupPoint?['name']?.toString() ?? '')
+        .trim();
     final selectedPickupAddress =
         (_selectedPickupPoint?['address']?.toString() ?? '').trim();
     final selectedPickupWorktime =
-        ((_selectedPickupPoint?['worktime'] ?? _selectedPickupPoint?['work_time'])
+        ((_selectedPickupPoint?['worktime'] ??
+                        _selectedPickupPoint?['work_time'])
                     ?.toString() ??
                 '')
             .trim();
-    final selectedPickupEta =
-        (_selectedPickupPoint?['eta']?.toString() ?? '').trim();
+    final selectedPickupEta = (_selectedPickupPoint?['eta']?.toString() ?? '')
+        .trim();
     final selectedPickupIsAvailableRaw = _selectedPickupPoint?['is_available'];
     final selectedPickupIsAvailable =
         selectedPickupIsAvailableRaw == true ||
@@ -13039,8 +13045,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
         : (selectedPickupIsAvailable
               ? const TextSpan(
                   children: [
-                    TextSpan(text: 'В наличии ', style: pickupAvailabilityBaseStyle),
-                    TextSpan(text: 'сегодня', style: pickupAvailabilityAccentStyle),
+                    TextSpan(
+                      text: 'В наличии ',
+                      style: pickupAvailabilityBaseStyle,
+                    ),
+                    TextSpan(
+                      text: 'сегодня',
+                      style: pickupAvailabilityAccentStyle,
+                    ),
                   ],
                 )
               : _buildPickupAvailabilitySpan(
@@ -13298,9 +13310,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             fit: BoxFit.cover,
                           ),
                           const Positioned.fill(
-                            child: ColoredBox(
-                              color: Color(0x08000000),
-                            ),
+                            child: ColoredBox(color: Color(0x08000000)),
                           ),
                           Center(
                             child: SizedBox(
@@ -13426,10 +13436,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               ],
                             ),
                           ),
-                          Container(
-                            height: 1,
-                            color: const Color(0xFFE3E4E8),
-                          ),
+                          Container(height: 1, color: const Color(0xFFE3E4E8)),
                           Container(
                             color: const Color(0xFFEDEDED),
                             child: SizedBox(
@@ -13480,10 +13487,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         ),
                         elevation: 1,
                       ),
-                      icon: const Icon(
-                        Icons.location_on_outlined,
-                        size: 18,
-                      ),
+                      icon: const Icon(Icons.location_on_outlined, size: 18),
                       label: const Text(
                         "Указать данные доставки",
                         style: TextStyle(
@@ -13573,17 +13577,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               ],
                             ),
                           ),
-                          Container(
-                            height: 1,
-                            color: const Color(0xFFE3E4E8),
-                          ),
+                          Container(height: 1, color: const Color(0xFFE3E4E8)),
                           Container(
                             color: const Color(0xFFEDEDED),
                             child: SizedBox(
                               height: 46,
                               child: InkWell(
-                                onTap: () =>
-                                    _openDeliveryAddressPage(openSheetOnStart: true),
+                                onTap: () => _openDeliveryAddressPage(
+                                  openSheetOnStart: true,
+                                ),
                                 child: const Padding(
                                   padding: EdgeInsets.symmetric(horizontal: 16),
                                   child: Row(
@@ -13928,7 +13930,9 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
         deltaY > _deliverySheetDismissDragThreshold;
     final dismissByVelocity = velocityY > 950;
     final shouldDismiss =
-        _isDeliverySheetAtTop && deltaY > 0 && (dismissByOffset || dismissByVelocity);
+        _isDeliverySheetAtTop &&
+        deltaY > 0 &&
+        (dismissByOffset || dismissByVelocity);
     if (!mounted) return;
     if (shouldDismiss) {
       _dismissDeliverySheet();
@@ -13978,7 +13982,9 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final text = _searchController.text;
-      _searchController.selection = TextSelection.collapsed(offset: text.length);
+      _searchController.selection = TextSelection.collapsed(
+        offset: text.length,
+      );
       if (!_searchFocusNode.hasFocus) _searchFocusNode.requestFocus();
       if (_searchScrollController.hasClients) {
         final maxScroll = _searchScrollController.position.maxScrollExtent;
@@ -14042,10 +14048,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
     try {
       await controller.moveCamera(
         CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: target,
-            zoom: _deliveryAddressSelectedZoom,
-          ),
+          CameraPosition(target: target, zoom: _deliveryAddressSelectedZoom),
         ),
         animation: const MapAnimation(
           type: MapAnimationType.linear,
@@ -14097,22 +14100,22 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
             child: Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: _onDeliverySheetPointerDown,
-              onPointerMove: (event) => _onDeliverySheetPointerMove(
-                event,
-                deliverySheetMaxHeight,
-              ),
-              onPointerUp: (event) => _onDeliverySheetPointerUp(
-                event,
-                deliverySheetMaxHeight,
-              ),
+              onPointerMove: (event) =>
+                  _onDeliverySheetPointerMove(event, deliverySheetMaxHeight),
+              onPointerUp: (event) =>
+                  _onDeliverySheetPointerUp(event, deliverySheetMaxHeight),
               onPointerCancel: _onDeliverySheetPointerCancel,
               child: Material(
                 color: Colors.transparent,
                 child: Container(
-                  constraints: BoxConstraints(maxHeight: deliverySheetMaxHeight),
+                  constraints: BoxConstraints(
+                    maxHeight: deliverySheetMaxHeight,
+                  ),
                   decoration: const BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(16),
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black26,
@@ -14125,163 +14128,223 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                     behavior: HitTestBehavior.translucent,
                     onTap: _dismissKeyboard,
                     child: Padding(
-                      padding: EdgeInsets.fromLTRB(12, 0, 12, 10 + padding.bottom),
+                      padding: EdgeInsets.fromLTRB(
+                        12,
+                        0,
+                        12,
+                        10 + padding.bottom,
+                      ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 10),
-                        child: Center(
-                          child: Container(
-                            width: 34,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade400,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(5, 0, 5, 10),
-                        child: Text(
-                          _searchController.text.isEmpty
-                              ? "Укажите адрес доставки"
-                              : _searchController.text,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                            height: 1.25,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 40,
-                              child: TextField(
-                                controller: _apartmentController,
-                                onTapOutside: (_) => _dismissKeyboard(),
-                                cursorColor: Colors.black,
-                                decoration: InputDecoration(
-                                  hintText: "№ квартиры",
-                                  hintStyle: TextStyle(
-                                    color: Colors.grey.shade500,
-                                    fontSize: 15,
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide(
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: BorderSide(
-                                      color: Colors.grey.shade700,
-                                      width: 1.2,
-                                    ),
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 11,
-                                  ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 10),
+                            child: Center(
+                              child: Container(
+                                width: 34,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade400,
+                                  borderRadius: BorderRadius.circular(999),
                                 ),
-                                keyboardType: TextInputType.number,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: SizedBox(
-                              height: 40,
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(10),
-                                onTap: () => setState(() {
-                                  _isPrivateHouse = !_isPrivateHouse;
-                                  if (_isPrivateHouse) {
-                                    _needLift = false;
-                                    _liftFloor = 1;
-                                    _hasCargoLiftForOrder = false;
-                                  }
-                                }),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF2F2F6),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                                  child: Row(
-                                    children: [
-                                      Checkbox(
-                                        value: _isPrivateHouse,
-                                        onChanged: (v) => setState(() {
-                                          _isPrivateHouse = v ?? false;
-                                          if (_isPrivateHouse) {
-                                            _needLift = false;
-                                            _liftFloor = 1;
-                                            _hasCargoLiftForOrder = false;
-                                          }
-                                        }),
-                                        activeColor: Colors.black,
-                                        checkColor: Colors.white,
-                                        materialTapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        visualDensity: VisualDensity.compact,
-                                        side: BorderSide(
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(5, 0, 5, 10),
+                            child: Text(
+                              _searchController.text.isEmpty
+                                  ? "Укажите адрес доставки"
+                                  : _searchController.text,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
+                                height: 1.25,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 40,
+                                  child: TextField(
+                                    controller: _apartmentController,
+                                    onTapOutside: (_) => _dismissKeyboard(),
+                                    cursorColor: Colors.black,
+                                    decoration: InputDecoration(
+                                      hintText: "№ квартиры",
+                                      hintStyle: TextStyle(
+                                        color: Colors.grey.shade500,
+                                        fontSize: 15,
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                        borderSide: BorderSide(
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                        borderSide: BorderSide(
                                           color: Colors.grey.shade700,
                                           width: 1.2,
                                         ),
                                       ),
-                                      const Expanded(
-                                        child: Text(
-                                          "Частный дом",
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.black87,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(10),
                                       ),
-                                    ],
+                                      isDense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 11,
+                                          ),
+                                    ),
+                                    keyboardType: TextInputType.number,
                                   ),
                                 ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 40,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(10),
+                                    onTap: () => setState(() {
+                                      _isPrivateHouse = !_isPrivateHouse;
+                                      if (_isPrivateHouse) {
+                                        _needLift = false;
+                                        _liftFloor = 1;
+                                        _hasCargoLiftForOrder = false;
+                                      }
+                                    }),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF2F2F6),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Checkbox(
+                                            value: _isPrivateHouse,
+                                            onChanged: (v) => setState(() {
+                                              _isPrivateHouse = v ?? false;
+                                              if (_isPrivateHouse) {
+                                                _needLift = false;
+                                                _liftFloor = 1;
+                                                _hasCargoLiftForOrder = false;
+                                              }
+                                            }),
+                                            activeColor: Colors.black,
+                                            checkColor: Colors.white,
+                                            materialTapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            side: BorderSide(
+                                              color: Colors.grey.shade700,
+                                              width: 1.2,
+                                            ),
+                                          ),
+                                          const Expanded(
+                                            child: Text(
+                                              "Частный дом",
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.black87,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      if (!_isPrivateHouse) ...[
-                        const SizedBox(height: 8),
-                        if (!_needLift)
-                          SizedBox(
-                            height: 40,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () => setState(() => _needLift = true),
-                              child: Container(
+                          if (!_isPrivateHouse) ...[
+                            const SizedBox(height: 8),
+                            if (!_needLift)
+                              SizedBox(
+                                height: 40,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => setState(() => _needLift = true),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF2F2F6),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Checkbox(
+                                          value: _needLift,
+                                          onChanged: (v) => setState(
+                                            () => _needLift = v ?? false,
+                                          ),
+                                          activeColor: Colors.black,
+                                          checkColor: Colors.white,
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                          side: BorderSide(
+                                            color: Colors.grey.shade700,
+                                            width: 1.2,
+                                          ),
+                                        ),
+                                        const Expanded(
+                                          child: Text(
+                                            "Нужен подъем на этаж",
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.black87,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else ...[
+                              Container(
+                                height: 40,
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFF2F2F6),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
                                 child: Row(
                                   children: [
                                     Checkbox(
                                       value: _needLift,
-                                      onChanged: (v) =>
-                                          setState(() => _needLift = v ?? false),
+                                      onChanged: (v) => setState(() {
+                                        _needLift = v ?? false;
+                                        if (!_needLift) {
+                                          _liftFloor = 1;
+                                          _hasCargoLiftForOrder = false;
+                                        }
+                                      }),
                                       activeColor: Colors.black,
                                       checkColor: Colors.white,
                                       materialTapTargetSize:
@@ -14303,378 +14366,381 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
+                                    const SizedBox(width: 8),
+                                    PopupMenuButton<int>(
+                                      initialValue: _liftFloor,
+                                      onSelected: (value) {
+                                        if (!mounted) return;
+                                        setState(() => _liftFloor = value);
+                                      },
+                                      itemBuilder: (context) =>
+                                          List.generate(25, (index) {
+                                            final floor = index + 1;
+                                            return PopupMenuItem<int>(
+                                              value: floor,
+                                              child: Text('$floor'),
+                                            );
+                                          }),
+                                      offset: const Offset(0, 44),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      color: Colors.white,
+                                      child: Container(
+                                        width: 76,
+                                        height: 32,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Text(
+                                              '$_liftFloor',
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                            const Spacer(),
+                                            Icon(
+                                              Icons.keyboard_arrow_down_rounded,
+                                              color: Colors.grey.shade500,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
-                            ),
-                          )
-                        else ...[
-                          Container(
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF2F2F6),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Row(
-                              children: [
-                                Checkbox(
-                                  value: _needLift,
-                                  onChanged: (v) => setState(() {
-                                    _needLift = v ?? false;
-                                    if (!_needLift) {
-                                      _liftFloor = 1;
-                                      _hasCargoLiftForOrder = false;
-                                    }
-                                  }),
-                                  activeColor: Colors.black,
-                                  checkColor: Colors.white,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: VisualDensity.compact,
-                                  side: BorderSide(
-                                    color: Colors.grey.shade700,
-                                    width: 1.2,
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: 40,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => setState(
+                                    () => _hasCargoLiftForOrder =
+                                        !_hasCargoLiftForOrder,
                                   ),
-                                ),
-                                const Expanded(
-                                  child: Text(
-                                    "Нужен подъем на этаж",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.black87,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                PopupMenuButton<int>(
-                                  initialValue: _liftFloor,
-                                  onSelected: (value) {
-                                    if (!mounted) return;
-                                    setState(() => _liftFloor = value);
-                                  },
-                                  itemBuilder: (context) => List.generate(25, (index) {
-                                    final floor = index + 1;
-                                    return PopupMenuItem<int>(
-                                      value: floor,
-                                      child: Text('$floor'),
-                                    );
-                                  }),
-                                  offset: const Offset(0, 44),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  color: Colors.white,
                                   child: Container(
-                                    width: 76,
-                                    height: 32,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                    ),
                                     decoration: BoxDecoration(
-                                      color: Colors.white,
+                                      color: const Color(0xFFF2F2F6),
                                       borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: Colors.grey.shade600,
-                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
                                     ),
                                     child: Row(
                                       children: [
-                                        Text(
-                                          '$_liftFloor',
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w500,
-                                            color: Colors.black87,
+                                        Checkbox(
+                                          value: _hasCargoLiftForOrder,
+                                          onChanged: (v) => setState(
+                                            () => _hasCargoLiftForOrder =
+                                                v ?? false,
+                                          ),
+                                          activeColor: Colors.black,
+                                          checkColor: Colors.white,
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                          side: BorderSide(
+                                            color: Colors.grey.shade700,
+                                            width: 1.2,
                                           ),
                                         ),
-                                        const Spacer(),
-                                        Icon(
-                                          Icons.keyboard_arrow_down_rounded,
-                                          color: Colors.grey.shade500,
+                                        const Expanded(
+                                          child: Text(
+                                            "Есть лифт, вмещающий весь заказ",
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.black87,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ),
                                       ],
                                     ),
                                   ),
                                 ),
-                              ],
+                              ),
+                            ],
+                          ],
+                          const SizedBox(height: 6),
+                          const Text(
+                            "Выберите дату и время доставки",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          SizedBox(
-                            height: 40,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () => setState(
-                                () => _hasCargoLiftForOrder = !_hasCargoLiftForOrder,
-                              ),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF2F2F6),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
-                                child: Row(
-                                  children: [
-                                    Checkbox(
-                                      value: _hasCargoLiftForOrder,
-                                      onChanged: (v) => setState(
-                                        () => _hasCargoLiftForOrder = v ?? false,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 40,
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final d = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime.now(),
+                                        lastDate: DateTime.now().add(
+                                          const Duration(days: 60),
+                                        ),
+                                        builder: (context, child) {
+                                          final base = Theme.of(context);
+                                          return Theme(
+                                            data: base.copyWith(
+                                              colorScheme: base.colorScheme
+                                                  .copyWith(
+                                                    primary: Colors.black,
+                                                    onPrimary: Colors.white,
+                                                    onSurface: Colors.black87,
+                                                  ),
+                                              textButtonTheme:
+                                                  TextButtonThemeData(
+                                                    style: TextButton.styleFrom(
+                                                      foregroundColor:
+                                                          Colors.black,
+                                                    ),
+                                                  ),
+                                            ),
+                                            child: child!,
+                                          );
+                                        },
+                                      );
+                                      if (d != null) {
+                                        setState(
+                                          () => _deliveryDate =
+                                              '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}',
+                                        );
+                                      }
+                                    },
+                                    child: InputDecorator(
+                                      decoration: InputDecoration(
+                                        labelText: "Дата",
+                                        labelStyle: TextStyle(
+                                          color: Colors.grey.shade700,
+                                        ),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: BorderSide(
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: BorderSide(
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: const BorderSide(
+                                            color: Colors.black87,
+                                            width: 1.2,
+                                          ),
+                                        ),
+                                        isDense: false,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
+                                            ),
                                       ),
-                                      activeColor: Colors.black,
-                                      checkColor: Colors.white,
-                                      materialTapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      visualDensity: VisualDensity.compact,
-                                      side: BorderSide(
-                                        color: Colors.grey.shade700,
-                                        width: 1.2,
-                                      ),
-                                    ),
-                                    const Expanded(
                                       child: Text(
-                                        "Есть лифт, вмещающий весь заказ",
+                                        _deliveryDate.isEmpty
+                                            ? "Выбрать"
+                                            : _deliveryDate,
                                         style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.black87,
+                                          color: _deliveryDate.isEmpty
+                                              ? Colors.grey
+                                              : Colors.black87,
                                         ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        ],
-                      ],
-                      const SizedBox(height: 6),
-                      const Text(
-                        "Выберите дату и время доставки",
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 40,
-                              child: InkWell(
-                                onTap: () async {
-                                  final d = await showDatePicker(
-                                    context: context,
-                                    initialDate: DateTime.now(),
-                                    firstDate: DateTime.now(),
-                                    lastDate: DateTime.now().add(
-                                      const Duration(days: 60),
-                                    ),
-                                    builder: (context, child) {
-                                      final base = Theme.of(context);
-                                      return Theme(
-                                        data: base.copyWith(
-                                          colorScheme: base.colorScheme.copyWith(
-                                            primary: Colors.black,
-                                            onPrimary: Colors.white,
-                                            onSurface: Colors.black87,
-                                          ),
-                                          textButtonTheme: TextButtonThemeData(
-                                            style: TextButton.styleFrom(
-                                              foregroundColor: Colors.black,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 40,
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final t = await showTimePicker(
+                                        context: context,
+                                        initialTime: TimeOfDay.now(),
+                                        builder: (context, child) {
+                                          final base = Theme.of(context);
+                                          const inactiveSurface = Color(
+                                            0xFFF2F2F6,
+                                          );
+                                          return Theme(
+                                            data: base.copyWith(
+                                              colorScheme: base.colorScheme
+                                                  .copyWith(
+                                                    primary: Colors.black,
+                                                    onPrimary: Colors.white,
+                                                    secondary: Colors.black,
+                                                    onSecondary: Colors.white,
+                                                    tertiary: Colors.black,
+                                                    onTertiary: Colors.white,
+                                                    surface: Colors.white,
+                                                    onSurface: Colors.black87,
+                                                  ),
+                                              textButtonTheme:
+                                                  TextButtonThemeData(
+                                                    style: TextButton.styleFrom(
+                                                      foregroundColor:
+                                                          Colors.black,
+                                                    ),
+                                                  ),
+                                              timePickerTheme: base
+                                                  .timePickerTheme
+                                                  .copyWith(
+                                                    backgroundColor:
+                                                        Colors.white,
+                                                    hourMinuteColor:
+                                                        inactiveSurface,
+                                                    dialHandColor: Colors.black,
+                                                    dialBackgroundColor:
+                                                        inactiveSurface,
+                                                    hourMinuteTextColor:
+                                                        Colors.black87,
+                                                    dayPeriodColor:
+                                                        inactiveSurface,
+                                                    dayPeriodTextColor:
+                                                        Colors.black87,
+                                                    entryModeIconColor:
+                                                        Colors.black,
+                                                  ),
                                             ),
+                                            child: child!,
+                                          );
+                                        },
+                                      );
+                                      if (t != null) {
+                                        setState(
+                                          () => _deliveryTime =
+                                              '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
+                                        );
+                                      }
+                                    },
+                                    child: InputDecorator(
+                                      decoration: InputDecoration(
+                                        labelText: "Время",
+                                        labelStyle: TextStyle(
+                                          color: Colors.grey.shade700,
+                                        ),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: BorderSide(
+                                            color: Colors.grey.shade600,
                                           ),
                                         ),
-                                        child: child!,
-                                      );
-                                    },
-                                  );
-                                  if (d != null) {
-                                    setState(
-                                      () => _deliveryDate =
-                                          '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}',
-                                    );
-                                  }
-                                },
-                                child: InputDecorator(
-                                  decoration: InputDecoration(
-                                    labelText: "Дата",
-                                    labelStyle: TextStyle(
-                                      color: Colors.grey.shade700,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: const BorderSide(
-                                        color: Colors.black87,
-                                        width: 1.2,
-                                      ),
-                                    ),
-                                    isDense: false,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _deliveryDate.isEmpty ? "Выбрать" : _deliveryDate,
-                                    style: TextStyle(
-                                      color: _deliveryDate.isEmpty
-                                          ? Colors.grey
-                                          : Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: SizedBox(
-                              height: 40,
-                              child: InkWell(
-                                onTap: () async {
-                                  final t = await showTimePicker(
-                                    context: context,
-                                    initialTime: TimeOfDay.now(),
-                                    builder: (context, child) {
-                                      final base = Theme.of(context);
-                                      const inactiveSurface = Color(0xFFF2F2F6);
-                                      return Theme(
-                                        data: base.copyWith(
-                                          colorScheme: base.colorScheme.copyWith(
-                                            primary: Colors.black,
-                                            onPrimary: Colors.white,
-                                            secondary: Colors.black,
-                                            onSecondary: Colors.white,
-                                            tertiary: Colors.black,
-                                            onTertiary: Colors.white,
-                                            surface: Colors.white,
-                                            onSurface: Colors.black87,
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
                                           ),
-                                          textButtonTheme: TextButtonThemeData(
-                                            style: TextButton.styleFrom(
-                                              foregroundColor: Colors.black,
+                                          borderSide: BorderSide(
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: const BorderSide(
+                                            color: Colors.black87,
+                                            width: 1.2,
+                                          ),
+                                        ),
+                                        isDense: false,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
                                             ),
-                                          ),
-                                          timePickerTheme: base.timePickerTheme.copyWith(
-                                            backgroundColor: Colors.white,
-                                            hourMinuteColor: inactiveSurface,
-                                            dialHandColor: Colors.black,
-                                            dialBackgroundColor: inactiveSurface,
-                                            hourMinuteTextColor: Colors.black87,
-                                            dayPeriodColor: inactiveSurface,
-                                            dayPeriodTextColor: Colors.black87,
-                                            entryModeIconColor: Colors.black,
-                                          ),
+                                      ),
+                                      child: Text(
+                                        _deliveryTime.isEmpty
+                                            ? "Выбрать"
+                                            : _deliveryTime,
+                                        style: TextStyle(
+                                          color: _deliveryTime.isEmpty
+                                              ? Colors.grey
+                                              : Colors.black87,
                                         ),
-                                        child: child!,
-                                      );
-                                    },
-                                  );
-                                  if (t != null) {
-                                    setState(
-                                      () => _deliveryTime =
-                                          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
-                                    );
-                                  }
-                                },
-                                child: InputDecorator(
-                                  decoration: InputDecoration(
-                                    labelText: "Время",
-                                    labelStyle: TextStyle(
-                                      color: Colors.grey.shade700,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(
-                                        color: Colors.grey.shade600,
                                       ),
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: const BorderSide(
-                                        color: Colors.black87,
-                                        width: 1.2,
-                                      ),
-                                    ),
-                                    isDense: false,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _deliveryTime.isEmpty ? "Выбрать" : _deliveryTime,
-                                    style: TextStyle(
-                                      color: _deliveryTime.isEmpty
-                                          ? Colors.grey
-                                          : Colors.black87,
                                     ),
                                   ),
                                 ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _commentController,
+                            onTapOutside: (_) => _dismissKeyboard(),
+                            cursorColor: Colors.black,
+                            decoration: InputDecoration(
+                              labelText: "Комментарий",
+                              labelStyle: TextStyle(
+                                color: Colors.grey.shade700,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(
+                                  color: Colors.black87,
+                                  width: 1.2,
+                                ),
+                              ),
+                              alignLabelWithHint: true,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
                             ),
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
+                            minLines: 2,
+                            maxLines: null,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: _commentController,
-                        onTapOutside: (_) => _dismissKeyboard(),
-                        cursorColor: Colors.black,
-                        decoration: InputDecoration(
-                          labelText: "Комментарий",
-                          labelStyle: TextStyle(color: Colors.grey.shade700),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(color: Colors.grey.shade600),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(color: Colors.grey.shade600),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(
-                              color: Colors.black87,
-                              width: 1.2,
-                            ),
-                          ),
-                          alignLabelWithHint: true,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                        ),
-                        keyboardType: TextInputType.multiline,
-                        textInputAction: TextInputAction.newline,
-                        minLines: 2,
-                        maxLines: null,
-                      ),
-                      const SizedBox(height: 10),
+                          const SizedBox(height: 10),
                           SizedBox(
                             height: 44,
                             child: ElevatedButton(
@@ -14793,14 +14859,17 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
         response = await _httpGetYandex(geoUri);
         if (!mounted || requestId != _suggestRequestId) return;
         if (response.statusCode == 403) {
-          String msg = 'Подсказки недоступны. Проверьте ключ API в кабинете Яндекса.';
+          String msg =
+              'Подсказки недоступны. Проверьте ключ API в кабинете Яндекса.';
           try {
             final err = json.decode(response.body) as Map<String, dynamic>?;
-            final detail = err?['message'] as String? ?? err?['error'] as String?;
+            final detail =
+                err?['message'] as String? ?? err?['error'] as String?;
             if (detail != null && detail.isNotEmpty) msg = detail;
             if (kDebugMode) debugPrint('Yandex Suggest 403: ${response.body}');
           } catch (_) {
-            if (kDebugMode) debugPrint('Yandex Suggest 403 body: ${response.body}');
+            if (kDebugMode)
+              debugPrint('Yandex Suggest 403 body: ${response.body}');
           }
           setState(() {
             _suggestions = [];
@@ -14821,7 +14890,9 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       }
       list = _parseSuggestResponse(response.body);
       if (list.isEmpty && kDebugMode) {
-        final preview = response.body.length > 400 ? '${response.body.substring(0, 400)}...' : response.body;
+        final preview = response.body.length > 400
+            ? '${response.body.substring(0, 400)}...'
+            : response.body;
         debugPrint('Yandex Suggest empty parse, response: $preview');
       }
       if (!mounted || requestId != _suggestRequestId) return;
@@ -14852,7 +14923,8 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       final data = json.decode(body);
       // v1/suggest: { "results": [ { "title": { "text": "..." }, "subtitle": { "text": "..." }, "uri": "..." } ] }
       final map = data is Map<String, dynamic> ? data : null;
-      final results = map?['results'] as List<dynamic>? ?? map?['items'] as List<dynamic>?;
+      final results =
+          map?['results'] as List<dynamic>? ?? map?['items'] as List<dynamic>?;
       if (results != null) {
         for (final r in results) {
           if (r is! Map<String, dynamic>) continue;
@@ -14867,18 +14939,18 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
             if (title is Map && title['text'] != null) {
               titleText = title['text'] as String?;
             } else {
-              titleText = r['value'] as String? ?? r['displayName'] as String? ?? r['title'] as String?;
+              titleText =
+                  r['value'] as String? ??
+                  r['displayName'] as String? ??
+                  r['title'] as String?;
             }
           }
-          final subtitle = (r['subtitle'] is Map && (r['subtitle'] as Map)['text'] != null)
+          final subtitle =
+              (r['subtitle'] is Map && (r['subtitle'] as Map)['text'] != null)
               ? (r['subtitle'] as Map)['text'] as String
               : null;
           if (titleText != null && titleText.isNotEmpty) {
-            list.add({
-              'title': titleText,
-              'subtitle': subtitle,
-              'uri': uriStr,
-            });
+            list.add({'title': titleText, 'subtitle': subtitle, 'uri': uriStr});
           }
         }
         if (list.isNotEmpty) return list;
@@ -14897,12 +14969,20 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
           if (r is Map<String, dynamic>) {
             final displayName = r['displayName'] as String?;
             final value = r['value'] as String? ?? displayName;
-            final titleStr = r['title'] is String ? r['title'] as String? : null;
-            final name = value ?? titleStr ?? r['name'] as String? ?? r['text'] as String?;
+            final titleStr = r['title'] is String
+                ? r['title'] as String?
+                : null;
+            final name =
+                value ??
+                titleStr ??
+                r['name'] as String? ??
+                r['text'] as String?;
             if (name != null && name.isNotEmpty) {
               list.add({
                 'title': name,
-                'subtitle': displayName != name ? displayName : (r['subtitle'] as String?),
+                'subtitle': displayName != name
+                    ? displayName
+                    : (r['subtitle'] as String?),
                 'uri': r['uri'] as String?,
               });
             }
@@ -15018,15 +15098,15 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       final uri = Uri.parse(
         uriStr != null
             ? 'https://geocode-maps.yandex.ru/1.x/'
-              '?apikey=$_yandexSuggestApiKey'
-              '&uri=${Uri.encodeComponent(uriStr)}'
-              '&lang=ru_RU'
-              '&format=json'
+                  '?apikey=$_yandexSuggestApiKey'
+                  '&uri=${Uri.encodeComponent(uriStr)}'
+                  '&lang=ru_RU'
+                  '&format=json'
             : 'https://geocode-maps.yandex.ru/1.x/'
-              '?apikey=$_yandexSuggestApiKey'
-              '&geocode=${Uri.encodeComponent(addressText)}'
-              '&lang=ru_RU'
-              '&format=json',
+                  '?apikey=$_yandexSuggestApiKey'
+                  '&geocode=${Uri.encodeComponent(addressText)}'
+                  '&lang=ru_RU'
+                  '&format=json',
       );
       final response = await _httpGetYandex(uri);
       if (response.statusCode != 200) return null;
@@ -15053,10 +15133,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       if (selectedGeo == null) return null;
       final point = _parsePointFromGeoObject(selectedGeo);
       if (point == null) return null;
-      return _GeocodeLookupResult(
-        point: point,
-        isPrecise: precise != null,
-      );
+      return _GeocodeLookupResult(point: point, isPrecise: precise != null);
     } catch (_) {
       return null;
     }
@@ -15086,11 +15163,15 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       final response = await _httpGetYandex(uri);
       if (response.statusCode != 200) return null;
       final data = json.decode(response.body) as Map<String, dynamic>?;
-      final members = data?['response']?['GeoObjectCollection']?['featureMember'] as List<dynamic>?;
+      final members =
+          data?['response']?['GeoObjectCollection']?['featureMember']
+              as List<dynamic>?;
       if (members == null || members.isEmpty) return null;
-      final meta = members.first['GeoObject']?['metaDataProperty']?['GeocoderMetaData'];
+      final meta =
+          members.first['GeoObject']?['metaDataProperty']?['GeocoderMetaData'];
       final addr = meta?['Address'];
-      final formatted = addr?['formatted'] as String? ?? meta?['text'] as String?;
+      final formatted =
+          addr?['formatted'] as String? ?? meta?['text'] as String?;
       return formatted?.trim();
     } catch (_) {
       return null;
@@ -15121,308 +15202,320 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
           resizeToAvoidBottomInset: false,
           backgroundColor: Colors.white,
           appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.white,
-        automaticallyImplyLeading: false,
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            IconButton(
-              icon: const Icon(
-                Icons.arrow_back_ios_new,
-                color: Colors.black,
-                size: 20,
-              ),
-              onPressed: () => Navigator.pop(context),
-            ),
-            const Expanded(
-              child: Text(
-                "Детали доставки",
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  color: Colors.black,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
+            backgroundColor: Colors.white,
+            elevation: 0,
+            surfaceTintColor: Colors.white,
+            automaticallyImplyLeading: false,
+            titleSpacing: 0,
+            title: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.black,
+                    size: 20,
+                  ),
+                  onPressed: () => Navigator.pop(context),
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 48),
-          ],
-        ),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
-            child: SizedBox(
-              height: 34,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  const bool isPickup = false;
-                  final indicatorWidth = (constraints.maxWidth - 4) / 2;
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F6),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: Colors.grey.shade300),
+                const Expanded(
+                  child: Text(
+                    "Детали доставки",
+                    style: TextStyle(
+                      fontFamily: 'Roboto',
+                      color: Colors.black,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
                     ),
-                    child: Stack(
-                      children: [
-                        AnimatedPositioned(
-                          duration: const Duration(milliseconds: 180),
-                          curve: Curves.easeOutCubic,
-                          left: isPickup ? 2 : 2 + indicatorWidth,
-                          top: 2,
-                          bottom: 2,
-                          width: indicatorWidth,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 48),
+              ],
+            ),
+          ),
+          body: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
+                child: SizedBox(
+                  height: 34,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const bool isPickup = false;
+                      final indicatorWidth = (constraints.maxWidth - 4) / 2;
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF2F2F6),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: Colors.grey.shade300),
                         ),
-                        Row(
+                        child: Stack(
                           children: [
-                            Expanded(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(16),
-                                onTap: () {
-                                  if (widget.onSwitchToSamovyvoz != null) {
-                                    widget.onSwitchToSamovyvoz!();
-                                  } else {
-                                    Navigator.pushReplacement(
-                                      context,
-                                      _adaptivePageRoute(
-                                        builder: (_) => const PickupPointsPage(
-                                          initialDeliveryMethod: 1,
-                                          selectedPoint: null,
-                                          productId: null,
+                            AnimatedPositioned(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOutCubic,
+                              left: isPickup ? 2 : 2 + indicatorWidth,
+                              top: 2,
+                              bottom: 2,
+                              width: indicatorWidth,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(16),
+                                    onTap: () {
+                                      if (widget.onSwitchToSamovyvoz != null) {
+                                        widget.onSwitchToSamovyvoz!();
+                                      } else {
+                                        Navigator.pushReplacement(
+                                          context,
+                                          _adaptivePageRoute(
+                                            builder: (_) =>
+                                                const PickupPointsPage(
+                                                  initialDeliveryMethod: 1,
+                                                  selectedPoint: null,
+                                                  productId: null,
+                                                ),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Center(
+                                      child: Text(
+                                        "Самовывоз",
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black54,
                                         ),
                                       ),
-                                    );
-                                  }
-                                },
-                                child: const Center(
-                                  child: Text(
-                                    "Самовывоз",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black54,
                                     ),
                                   ),
                                 ),
-                              ),
-                            ),
-                            Expanded(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(16),
-                                onTap: () {},
-                                child: const Center(
-                                  child: Text(
-                                    "Доставка",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black,
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(16),
+                                    onTap: () {},
+                                    child: const Center(
+                                      child: Text(
+                                        "Доставка",
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: YandexMap(
-                    tiltGesturesEnabled: false,
-                    rotateGesturesEnabled: false,
-                    mode2DEnabled: true,
-                    onMapCreated: (controller) async {
-                      _mapController = controller;
-                      var target = const Point(
-                        latitude: 43.1150678,
-                        longitude: 131.8855768,
-                      );
-                      var zoom = 12.0;
-                      if (_selectedDeliveryPoint != null) {
-                        zoom = _deliveryAddressSelectedZoom;
-                        target = (_deliverySheetVisible || widget.openSheetOnStart)
-                            ? _deliveryCameraTargetWithSheetOffset(
-                                _selectedDeliveryPoint!,
-                                zoom,
-                              )
-                            : _selectedDeliveryPoint!;
-                      }
-                      await controller.moveCamera(
-                        CameraUpdate.newCameraPosition(
-                          CameraPosition(target: target, zoom: zoom),
-                        ),
-                        animation: const MapAnimation(
-                          type: MapAnimationType.linear,
-                          duration: 0.3,
-                        ),
                       );
                     },
-                    onMapTap: (Point point) async {
-                      setState(() {
-                        _selectedDeliveryPoint = point;
-                      });
-                      await _onDeliveryPointSelected(point);
-                    },
-                    mapObjects: _buildDeliveryMapObjects(),
                   ),
                 ),
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  top: 8,
-                  child: Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    elevation: 2,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          height: 40,
-                          child: TextField(
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            scrollController: _searchScrollController,
-                            textAlignVertical: TextAlignVertical.center,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: Colors.black87,
+              ),
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: YandexMap(
+                        tiltGesturesEnabled: false,
+                        rotateGesturesEnabled: false,
+                        mode2DEnabled: true,
+                        onMapCreated: (controller) async {
+                          _mapController = controller;
+                          var target = const Point(
+                            latitude: 43.1150678,
+                            longitude: 131.8855768,
+                          );
+                          var zoom = 12.0;
+                          if (_selectedDeliveryPoint != null) {
+                            zoom = _deliveryAddressSelectedZoom;
+                            target =
+                                (_deliverySheetVisible ||
+                                    widget.openSheetOnStart)
+                                ? _deliveryCameraTargetWithSheetOffset(
+                                    _selectedDeliveryPoint!,
+                                    zoom,
+                                  )
+                                : _selectedDeliveryPoint!;
+                          }
+                          await controller.moveCamera(
+                            CameraUpdate.newCameraPosition(
+                              CameraPosition(target: target, zoom: zoom),
                             ),
-                            decoration: InputDecoration(
-                              hintText: "Найти на карте",
-                              hintStyle: const TextStyle(
-                                fontSize: 15,
-                                color: Colors.black38,
+                            animation: const MapAnimation(
+                              type: MapAnimationType.linear,
+                              duration: 0.3,
+                            ),
+                          );
+                        },
+                        onMapTap: (Point point) async {
+                          setState(() {
+                            _selectedDeliveryPoint = point;
+                          });
+                          await _onDeliveryPointSelected(point);
+                        },
+                        mapObjects: _buildDeliveryMapObjects(),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      top: 8,
+                      child: Material(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        elevation: 2,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              height: 40,
+                              child: TextField(
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                scrollController: _searchScrollController,
+                                textAlignVertical: TextAlignVertical.center,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  color: Colors.black87,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: "Найти на карте",
+                                  hintStyle: const TextStyle(
+                                    fontSize: 15,
+                                    color: Colors.black38,
+                                  ),
+                                  isDense: true,
+                                  prefixIcon: const Icon(
+                                    Icons.search,
+                                    size: 22,
+                                    color: Colors.black38,
+                                  ),
+                                  suffixIcon:
+                                      _searchController.text.trim().isEmpty
+                                      ? null
+                                      : IconButton(
+                                          icon: const Icon(
+                                            Icons.close,
+                                            size: 20,
+                                            color: Colors.black54,
+                                          ),
+                                          onPressed: () {
+                                            _searchController.clear();
+                                            setState(() {
+                                              _suggestions = [];
+                                              _suggestionsMessage = null;
+                                            });
+                                          },
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(
+                                            minWidth: 40,
+                                            minHeight: 40,
+                                          ),
+                                        ),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
                               ),
-                              isDense: true,
-                              prefixIcon: const Icon(
-                                Icons.search,
-                                size: 22,
-                                color: Colors.black38,
-                              ),
-                              suffixIcon: _searchController.text.trim().isEmpty
-                                  ? null
-                                  : IconButton(
-                                      icon: const Icon(
-                                        Icons.close,
-                                        size: 20,
+                            ),
+                            if (_isGeocoding)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: const BorderRadius.vertical(
+                                    bottom: Radius.circular(18),
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.08,
+                                      ),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text(
+                                      'Ищем на карте...',
+                                      style: TextStyle(
+                                        fontSize: 14,
                                         color: Colors.black54,
                                       ),
-                                      onPressed: () {
-                                        _searchController.clear();
-                                        setState(() {
-                                          _suggestions = [];
-                                          _suggestionsMessage = null;
-                                        });
-                                      },
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(
-                                        minWidth: 40,
-                                        minHeight: 40,
-                                      ),
                                     ),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (_isGeocoding)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: const BorderRadius.vertical(
-                                bottom: Radius.circular(18),
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                              ),
+                            if (!_isGeocoding &&
+                                _searchFocusNode.hasFocus &&
+                                (_suggestions.isNotEmpty ||
+                                    _suggestionsLoading ||
+                                    _suggestionsMessage != null)) ...[
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxHeight: 260,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: const BorderRadius.vertical(
+                                    bottom: Radius.circular(18),
                                   ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.08,
+                                      ),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 12),
-                                const Text(
-                                  'Ищем на карте...',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (!_isGeocoding &&
-                            _searchFocusNode.hasFocus &&
-                            (_suggestions.isNotEmpty ||
-                                _suggestionsLoading ||
-                                _suggestionsMessage != null)) ...[
-                          Container(
-                            constraints: const BoxConstraints(maxHeight: 260),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: const BorderRadius.vertical(
-                                bottom: Radius.circular(18),
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: _suggestionsLoading
-                                ? const Padding(
-                                    padding: EdgeInsets.all(20),
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
+                                child: _suggestionsLoading
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(20),
+                                        child: Center(
+                                          child: SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                                  )
-                                : _suggestionsMessage != null
+                                      )
+                                    : _suggestionsMessage != null
                                     ? Padding(
                                         padding: const EdgeInsets.all(16),
                                         child: Center(
@@ -15460,14 +15553,16 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                               borderRadius:
                                                   BorderRadius.circular(10),
                                               child: ConstrainedBox(
-                                                constraints: const BoxConstraints(
-                                                    minHeight: 48),
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      minHeight: 48,
+                                                    ),
                                                 child: Padding(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 10,
-                                                  ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 10,
+                                                      ),
                                                   child: Column(
                                                     crossAxisAlignment:
                                                         CrossAxisAlignment
@@ -15482,8 +15577,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                                         title,
                                                         style: const TextStyle(
                                                           fontSize: 15,
-                                                          color:
-                                                              Colors.black87,
+                                                          color: Colors.black87,
                                                         ),
                                                         maxLines: 2,
                                                         overflow: TextOverflow
@@ -15493,18 +15587,19 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                                           subtitle
                                                               .isNotEmpty) ...[
                                                         const SizedBox(
-                                                            height: 2),
+                                                          height: 2,
+                                                        ),
                                                         Text(
                                                           subtitle,
                                                           style: TextStyle(
                                                             fontSize: 13,
                                                             color: Colors
-                                                                .grey.shade600,
+                                                                .grey
+                                                                .shade600,
                                                           ),
                                                           maxLines: 1,
-                                                          overflow:
-                                                              TextOverflow
-                                                                  .ellipsis,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
                                                         ),
                                                       ],
                                                     ],
@@ -15515,25 +15610,26 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
                                           );
                                         },
                                       ),
-                          ),
-                        ],
-                      ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_selectedDeliveryPoint != null &&
+                        !_renderDeliverySheetOnRoot)
+                      _buildDeliverySheetPositioned(
+                        padding: padding,
+                        keyboardInset: keyboardInset,
+                        deliverySheetMaxHeight: deliverySheetMaxHeight,
+                        deliverySheetDragFraction: deliverySheetDragFraction,
+                        deliverySheetOpacity: deliverySheetOpacity,
+                      ),
+                  ],
                 ),
-                if (_selectedDeliveryPoint != null && !_renderDeliverySheetOnRoot)
-                  _buildDeliverySheetPositioned(
-                    padding: padding,
-                    keyboardInset: keyboardInset,
-                    deliverySheetMaxHeight: deliverySheetMaxHeight,
-                    deliverySheetDragFraction: deliverySheetDragFraction,
-                    deliverySheetOpacity: deliverySheetOpacity,
-                  ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
         ),
         if (_selectedDeliveryPoint != null && _renderDeliverySheetOnRoot) ...[
           Positioned.fill(
@@ -17282,7 +17378,8 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                     await Navigator.pushReplacement(
                                       context,
                                       _adaptivePageRoute(
-                                        builder: (_) => const DeliveryAddressPage(),
+                                        builder: (_) =>
+                                            const DeliveryAddressPage(),
                                       ),
                                     );
                                   }
