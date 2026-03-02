@@ -30,6 +30,7 @@ dependencies:
   dio_cookie_manager: ^3.3.0
   mask_text_input_formatter: ^2.9.0
   yandex_mapkit_lite: ^2.0.2
+  yookassa_payments_flutter: ^1.11.1
 
   image_picker_android: ^0.8.13+13
   image_picker_platform_interface: ^2.11.1

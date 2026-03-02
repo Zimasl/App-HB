@@ -28,6 +28,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'config/app_config.dart';
+import 'services/yookassa_payment_service.dart';
 import 'category_counter_service.dart';
 
 // Стиль текста для меню
@@ -161,11 +163,17 @@ String _responseDataToString(dynamic data) {
   return data.toString();
 }
 
+/// Нормализует текст ошибки от PHP (например "Callto" -> "Call to").
+String _normalizeOrderError(String? text) {
+  if (text == null || text.trim().isEmpty) return text ?? '';
+  return text.replaceAll('Callto ', 'Call to ');
+}
+
 Dio _getAuthDio() {
   if (_authDio != null) return _authDio!;
   final dio = Dio(
     BaseOptions(
-      baseUrl: 'https://hozyain-barin.ru',
+      baseUrl: AppConfig.apiBaseUrl,
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 15),
       sendTimeout: const Duration(seconds: 15),
@@ -3228,6 +3236,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         builder: (_) => CheckoutPage(
           items: payloadItems,
           total: totalSum,
+          contactId: _authContactId,
           onOrderSuccess: _clearCart,
         ),
       ),
@@ -5650,7 +5659,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   void _initDeepLinks() async {
     _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
-      _launchUrl(uri.toString());
+      final scheme = uri.scheme.toLowerCase();
+      if (scheme == 'http' || scheme == 'https') {
+        _launchUrl(uri.toString());
+      }
     });
   }
 
@@ -11790,6 +11802,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<void> _launchUrl(String url) async {
     final Uri uri = Uri.parse(url);
+    final scheme = uri.scheme.toLowerCase();
+    final allowed = scheme == 'http' ||
+        scheme == 'https' ||
+        scheme == 'tel' ||
+        scheme == 'mailto';
+    if (!allowed) return;
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
@@ -12593,11 +12611,13 @@ class _AuthPageState extends State<AuthPage> {
 class CheckoutPage extends StatefulWidget {
   final List<Map<String, dynamic>> items;
   final double total;
+  final String? contactId;
   final VoidCallback? onOrderSuccess;
   const CheckoutPage({
     super.key,
     required this.items,
     required this.total,
+    this.contactId,
     this.onOrderSuccess,
   });
 
@@ -12629,32 +12649,110 @@ class _CheckoutPageState extends State<CheckoutPage> {
     });
     try {
       final dio = _getAuthDio();
+      final contactId = widget.contactId ?? _authContactId;
+      final payload = <String, dynamic>{
+        'items': widget.items,
+        'total': widget.total,
+        'payment_method': _paymentMethod,
+        'delivery_method': _deliveryMethod,
+        if (contactId != null && contactId.isNotEmpty) 'contact_id': contactId,
+        if (_deliveryMethod == 0) 'address': _addressController.text.trim(),
+        if (_selectedPickupPoint != null) ...{
+          'pickup_point': _selectedPickupPoint,
+          'pickup_stock_id': _selectedPickupPoint?['stock_id'],
+          'pickup_point_id': _selectedPickupPoint?['id'],
+        },
+      };
       final response = await dio.post(
         '/native/create_order.php',
-        data: {
-          'items': widget.items,
-          'total': widget.total,
-          if (_selectedPickupPoint != null)
-            'pickup_point': _selectedPickupPoint,
-        },
+        data: payload,
         options: Options(contentType: Headers.jsonContentType),
       );
       final data = _parseAuthResponse(response.data);
       final status = data?['status']?.toString();
+      final orderId =
+          data?['order_id']?.toString() ?? data?['id']?.toString() ?? '';
       final number =
           data?['order_number']?.toString() ??
           data?['order_id']?.toString() ??
           data?['id']?.toString();
       if (status == 'ok') {
-        if (mounted) {
-          widget.onOrderSuccess?.call();
-          setState(() => _orderNumber = number ?? "—");
+        if (_paymentMethod == 0) {
+          final service = YookassaPaymentService(dio: dio);
+          final amountRub = (data?['amount']?.toString().trim().isNotEmpty ==
+                      true)
+                  ? data!['amount'].toString()
+                  : widget.total.toStringAsFixed(2);
+          final phone = _authPhone?.toString();
+          final result = await service.payOrder(
+            orderId: orderId,
+            orderNumber: number,
+            amountRub: amountRub,
+            title: 'Хозяин Барин',
+            subtitle: 'Заказ №${number ?? orderId}',
+            userPhoneNumber: (phone != null && phone.trim().isNotEmpty)
+                ? phone.trim()
+                : null,
+          );
+          if (!mounted) return;
+          if (result.status == 'succeeded') {
+            widget.onOrderSuccess?.call();
+            setState(() => _orderNumber = number ?? "—");
+          } else if (result.status == 'canceled') {
+            setState(
+              () => _orderError =
+                  'Оплата отменена. Заказ №${number ?? orderId} ожидает оплату.',
+            );
+          } else {
+            setState(
+              () => _orderError =
+                  'Оплата в обработке. Заказ №${number ?? orderId} ожидает подтверждения.',
+            );
+          }
+        } else {
+          if (mounted) {
+            widget.onOrderSuccess?.call();
+            setState(() => _orderNumber = number ?? "—");
+          }
         }
       } else {
-        setState(() => _orderError = "Не удалось оформить заказ");
+        final rawDetails =
+            data?['error_description']?.toString() ??
+            data?['error']?.toString() ??
+            data?['message']?.toString();
+        final details = _normalizeOrderError(rawDetails);
+        debugPrint(
+          '[create_order] status=$status response=${_responseDataToString(response.data)} payload=${json.encode(payload)}',
+        );
+        setState(
+          () => _orderError =
+              details.trim().isNotEmpty
+                  ? 'Не удалось оформить заказ: $details'
+                  : 'Не удалось оформить заказ',
+        );
       }
-    } catch (_) {
-      if (mounted) setState(() => _orderError = "Ошибка сети");
+    } catch (e) {
+      debugPrint('[create_order] exception: $e');
+      if (e is YookassaPaymentException) {
+        if (mounted) {
+          setState(() => _orderError = e.message);
+        }
+      } else if (e is DioException) {
+        debugPrint(
+          '[create_order] dio status=${e.response?.statusCode} data=${_responseDataToString(e.response?.data)}',
+        );
+        final serverText =
+            _normalizeOrderError(_responseDataToString(e.response?.data).trim());
+        if (mounted) {
+          setState(
+            () => _orderError = serverText.isNotEmpty
+                ? 'Ошибка оформления: $serverText'
+                : 'Ошибка сети',
+          );
+        }
+      } else {
+        if (mounted) setState(() => _orderError = 'Ошибка: $e');
+      }
     } finally {
       if (mounted) setState(() => _isSubmittingOrder = false);
     }
