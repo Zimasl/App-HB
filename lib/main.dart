@@ -12669,6 +12669,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _addressController = TextEditingController();
   int _deliveryMethod = 1; // 0 - доставка, 1 - самовывоз
   int _paymentMethod = 0; // 0 - онлайн, 1 - при получении
+  int _onlinePaymentOption = 0; // 0 - YooKassa, 1 - банковская карта
   Map<String, dynamic>? _selectedPickupPoint;
   Map<String, dynamic>? _selectedDeliveryData;
   String? _selectedDeliveryAddress;
@@ -12840,6 +12841,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
             amountRub: amountRub,
             title: 'Хозяин Барин',
             subtitle: 'Заказ №${number ?? orderId}',
+            onlinePaymentMethod: _onlinePaymentOption == 1
+                ? OnlinePaymentMethod.bankCard
+                : OnlinePaymentMethod.yooMoney,
             userPhoneNumber: (phone != null && phone.trim().isNotEmpty)
                 ? phone.trim()
                 : null,
@@ -13706,26 +13710,208 @@ class _CheckoutPageState extends State<CheckoutPage> {
               ],
             ]),
             _section("Способ оплаты", [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  _paymentMethod == 0
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                ),
-                title: const Text("Онлайн"),
-                onTap: () => setState(() => _paymentMethod = 0),
+              Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => _paymentMethod = 0),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        decoration: BoxDecoration(
+                          color: _paymentMethod == 0
+                              ? Colors.black
+                              : const Color(0xFFF3F3F4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _paymentMethod == 0
+                                ? Colors.black
+                                : const Color(0xFFE5E5E7),
+                          ),
+                        ),
+                        child: Text(
+                          "Онлайн",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: _paymentMethod == 0
+                                ? Colors.white
+                                : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => _paymentMethod = 1),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        decoration: BoxDecoration(
+                          color: _paymentMethod == 1
+                              ? Colors.black
+                              : const Color(0xFFF3F3F4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _paymentMethod == 1
+                                ? Colors.black
+                                : const Color(0xFFE5E5E7),
+                          ),
+                        ),
+                        child: Text(
+                          "При получении",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: _paymentMethod == 1
+                                ? Colors.white
+                                : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  _paymentMethod == 1
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
+              if (_paymentMethod == 0) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => setState(() => _onlinePaymentOption = 0),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              width: 2,
+                              color: _onlinePaymentOption == 0
+                                  ? const Color(0xFF2E7CF6)
+                                  : const Color(0xFFE5E5E7),
+                            ),
+                            color: Colors.white,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.account_balance_wallet_rounded,
+                                    size: 18,
+                                    color: _onlinePaymentOption == 0
+                                        ? const Color(0xFF2E7CF6)
+                                        : Colors.black54,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Text(
+                                    "YooKassa",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                "Через YooKassa",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => setState(() => _onlinePaymentOption = 1),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              width: 2,
+                              color: _onlinePaymentOption == 1
+                                  ? const Color(0xFF2E7CF6)
+                                  : const Color(0xFFE5E5E7),
+                            ),
+                            color: Colors.white,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.credit_card_rounded,
+                                    size: 18,
+                                    color: _onlinePaymentOption == 1
+                                        ? const Color(0xFF2E7CF6)
+                                        : Colors.black54,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Text(
+                                    "Карта",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                "Банковская карта",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                title: const Text("При получении"),
-                onTap: () => setState(() => _paymentMethod = 1),
-              ),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF2F7FF),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _onlinePaymentOption == 0
+                        ? "Оплата пройдет через YooKassa."
+                        : "Оплата пройдет банковской картой через YooKassa.",
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF204A87),
+                    ),
+                  ),
+                ),
+              ],
             ]),
             const SizedBox(height: 4),
             SizedBox(

@@ -3,6 +3,8 @@ import 'package:yookassa_payments_flutter/yookassa_payments_flutter.dart';
 
 import '../config/app_config.dart';
 
+enum OnlinePaymentMethod { yooMoney, bankCard }
+
 class YookassaPaymentException implements Exception {
   final String message;
   const YookassaPaymentException(this.message);
@@ -35,10 +37,16 @@ class YookassaPaymentService {
     required String amountRub,
     required String title,
     required String subtitle,
+    required OnlinePaymentMethod onlinePaymentMethod,
     String? userPhoneNumber,
     bool enableLogging = false,
   }) async {
     AppConfig.validatePayments();
+
+    final paymentMethodTypes = switch (onlinePaymentMethod) {
+      OnlinePaymentMethod.bankCard => PaymentMethodTypes.bankCard,
+      OnlinePaymentMethod.yooMoney => PaymentMethodTypes.yooMoney,
+    };
 
     final tokenizationInput = TokenizationModuleInputData(
       clientApplicationKey: AppConfig.yookassaClientKey,
@@ -46,6 +54,7 @@ class YookassaPaymentService {
       subtitle: subtitle,
       amount: Amount(value: amountRub, currency: Currency.rub),
       shopId: AppConfig.yookassaShopId,
+      tokenizationSettings: TokenizationSettings(paymentMethodTypes),
       savePaymentMethod: SavePaymentMethod.off,
       isLoggingEnabled: enableLogging,
       userPhoneNumber: userPhoneNumber,
