@@ -75,6 +75,8 @@ $delivery_method = isset($input['delivery_method']) ? (int) $input['delivery_met
 $address         = isset($input['address']) ? trim((string) $input['address']) : '';
 $pickup_stock_id = isset($input['pickup_stock_id']) ? (int) $input['pickup_stock_id'] : null;
 $total           = isset($input['total']) ? (float) $input['total'] : 0.0;
+$payment_status  = isset($input['payment_status']) ? strtolower(trim((string) $input['payment_status'])) : '';
+$payment_id      = isset($input['payment_id']) ? trim((string) $input['payment_id']) : '';
 
 $post = [
     'access_token' => $token,
@@ -89,6 +91,7 @@ foreach ($order_items as $item) {
 if ($payment_method === 0) $post['params[payment_id]'] = 1;
 if ($delivery_method === 0 && $address !== '') $post['params[shipping_address]'] = $address;
 if ($pickup_stock_id !== null) $post['params[stock_id]'] = $pickup_stock_id;
+if ($payment_id !== '') $post['params[yookassa_payment_id]'] = $payment_id;
 
 $url = $base . '/api.php/shop.order.add';
 $ctx = stream_context_create([
@@ -119,6 +122,24 @@ if (empty($order_id)) {
     $msg = isset($data['error']) ? $data['error'] : (isset($data['message']) ? $data['message'] : 'Не удалось создать заказ');
     echo json_encode(['status' => 'error', 'error_description' => $msg]);
     exit;
+}
+
+// Если онлайн-оплата уже подтверждена в приложении, отмечаем заказ оплаченным.
+if ($payment_method === 0 && $payment_status === 'succeeded') {
+    $pay_post = [
+        'access_token' => $token,
+        'id'           => $order_id,
+        'action'       => 'pay',
+    ];
+    $pay_ctx = stream_context_create([
+        'http' => [
+            'method'  => 'POST',
+            'header'  => 'Content-Type: application/x-www-form-urlencoded',
+            'content' => http_build_query($pay_post),
+            'timeout' => 10,
+        ],
+    ]);
+    @file_get_contents($base . '/api.php/shop.order.action', false, $pay_ctx);
 }
 
 echo json_encode([
