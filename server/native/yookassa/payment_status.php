@@ -55,7 +55,7 @@ $data = json_decode($response, true);
 $payment_status = isset($data['status']) ? strtolower((string) $data['status']) : 'pending';
 
 // Отметить заказ оплаченным через API Webasyst (shop.order.action action=pay)
-if ($payment_status === 'succeeded' && $order_id !== '' && API_TOKEN !== '' && API_TOKEN !== 'ВСТАВЬТЕ_ТОТ_ЖЕ_ТОКЕН_ЧТО_В_CREATE_ORDER') {
+if ($payment_status === 'succeeded' && $order_id !== '' && ctype_digit((string) $order_id) && API_TOKEN !== '' && API_TOKEN !== 'ВСТАВЬТЕ_ТОТ_ЖЕ_ТОКЕН_ЧТО_В_CREATE_ORDER') {
     $base = rtrim(API_BASE_URL, '/');
     $post = [
         'access_token' => API_TOKEN,

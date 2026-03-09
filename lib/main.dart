@@ -23,6 +23,7 @@ import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:yandex_mapkit_lite/yandex_mapkit_lite.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -262,6 +263,86 @@ String? _authContactId;
 String? _authUserName;
 String? _authPhone;
 String? _authPhotoUrl;
+
+const String _prefsAuthContactIdKey = 'hb.auth.contact_id';
+const String _prefsAuthUserNameKey = 'hb.auth.user_name';
+const String _prefsAuthPhoneKey = 'hb.auth.phone';
+const String _prefsAuthPhotoUrlKey = 'hb.auth.photo_url';
+const String _prefsCheckoutStatePrefix = 'hb.checkout.state.';
+const String _prefsCartStateKey = 'hb.cart.state';
+const String _prefsViewedProductsKey = 'hb.viewed.products';
+
+String _checkoutStateStorageKey(String? contactId) {
+  final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
+  final suffix = normalizedContactId.isEmpty ? 'guest' : normalizedContactId;
+  return '$_prefsCheckoutStatePrefix$suffix';
+}
+
+Future<void> _persistAuthSessionToPrefs() async {
+  final prefs = await SharedPreferences.getInstance();
+  final contactId = _authContactId?.trim() ?? '';
+  if (contactId.isEmpty) {
+    await prefs.remove(_prefsAuthContactIdKey);
+    await prefs.remove(_prefsAuthUserNameKey);
+    await prefs.remove(_prefsAuthPhoneKey);
+    await prefs.remove(_prefsAuthPhotoUrlKey);
+    return;
+  }
+  await prefs.setString(_prefsAuthContactIdKey, contactId);
+  final userName = _authUserName?.trim() ?? '';
+  if (userName.isNotEmpty) {
+    await prefs.setString(_prefsAuthUserNameKey, userName);
+  } else {
+    await prefs.remove(_prefsAuthUserNameKey);
+  }
+  final phone = _authPhone?.trim() ?? '';
+  if (phone.isNotEmpty) {
+    await prefs.setString(_prefsAuthPhoneKey, phone);
+  } else {
+    await prefs.remove(_prefsAuthPhoneKey);
+  }
+  final photoUrl = _authPhotoUrl?.trim() ?? '';
+  if (photoUrl.isNotEmpty) {
+    await prefs.setString(_prefsAuthPhotoUrlKey, photoUrl);
+  } else {
+    await prefs.remove(_prefsAuthPhotoUrlKey);
+  }
+}
+
+Future<void> _restoreAuthSessionFromPrefs() async {
+  final prefs = await SharedPreferences.getInstance();
+  final contactId = prefs.getString(_prefsAuthContactIdKey)?.trim() ?? '';
+  if (contactId.isEmpty) return;
+  _authContactId = contactId;
+  _authUserName = prefs.getString(_prefsAuthUserNameKey)?.trim();
+  _authPhone = prefs.getString(_prefsAuthPhoneKey)?.trim();
+  _authPhotoUrl = prefs.getString(_prefsAuthPhotoUrlKey)?.trim();
+}
+
+Future<Map<String, dynamic>?> _restoreCheckoutStateFromPrefs(
+  String? contactId,
+) async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(_checkoutStateStorageKey(contactId));
+  if (raw == null || raw.trim().isEmpty) return null;
+  try {
+    final decoded = json.decode(raw);
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+  } catch (_) {}
+  return null;
+}
+
+Future<void> _persistCheckoutStateToPrefs(
+  String? contactId,
+  Map<String, dynamic> state,
+) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(
+    _checkoutStateStorageKey(contactId),
+    json.encode(state),
+  );
+}
+
 bool get _isAuthorized =>
     _authContactId != null &&
     _authContactId!.isNotEmpty &&
@@ -292,6 +373,18 @@ bool _isDefaultUserpic(String url) {
   final lower = url.toLowerCase();
   return lower.contains('/wa-content/img/userpic') ||
       lower.contains('userpic.svg');
+}
+
+ImageProvider? _authAvatarProvider(String? rawUrl) {
+  final value = rawUrl?.trim() ?? '';
+  if (value.isEmpty) return null;
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return NetworkImage(value);
+  }
+  if (!kIsWeb && value.startsWith('/')) {
+    return FileImage(File(value));
+  }
+  return null;
 }
 
 Map<String, dynamic>? _storesHierarchyForModalCache;
@@ -936,6 +1029,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": [],
     "wishlist": [],
     "compare": [],
+    "profile": [],
   };
   final Map<String, List<dynamic>> _originalNativeLists = {
     "men": [],
@@ -951,6 +1045,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": [],
     "wishlist": [],
     "compare": [],
+    "profile": [],
   };
   String _currentSort = "default";
   int _sortSeq = 0;
@@ -993,6 +1088,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "discount_women": 0,
     "wishlist": 0,
     "compare": 0,
+    "profile": 0,
   };
   final Map<String, bool> _nativeHasMore = {
     "men": true,
@@ -1010,6 +1106,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "discount_women": true,
     "wishlist": false,
     "compare": false,
+    "profile": false,
   };
   final Map<String, bool> _nativeIsLoadingMore = {
     "men": false,
@@ -1027,6 +1124,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "discount_women": false,
     "wishlist": false,
     "compare": false,
+    "profile": false,
   };
   final Set<String> _nativeInitialLoadingKeys = <String>{};
   final Map<String, bool> _nativeShowLoadingIndicator = {
@@ -1045,7 +1143,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "discount_women": false,
     "wishlist": false,
     "compare": false,
+    "profile": false,
   };
+  final List<Map<String, dynamic>> _viewedProducts = <Map<String, dynamic>>[];
+  Future<Map<String, dynamic>?>? _profileCheckoutStateFuture;
   final Map<String, Timer?> _nativeLoadingIndicatorTimers = {};
   final Map<String, List<MapEntry<String, String>>> _nativeFilterParams = {};
 
@@ -1100,6 +1201,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreAuthSessionAndRefreshUi());
+    unawaited(_restoreCartFromPrefs());
+    unawaited(_restoreViewedProductsFromPrefs());
     _catalogBackSwipeController =
         AnimationController(
             vsync: this,
@@ -1231,6 +1335,81 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     _cartCountNotifier.addListener(_scheduleCartFloatingButtonUpdate);
     _cartSelectionNotifier.addListener(_scheduleCartFloatingButtonUpdate);
+  }
+
+  Future<void> _restoreAuthSessionAndRefreshUi() async {
+    await _restoreAuthSessionFromPrefs();
+    _reloadProfileData();
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _reloadProfileData() {
+    _reloadProfileCheckoutState();
+  }
+
+  void _reloadProfileCheckoutState() {
+    _profileCheckoutStateFuture = _restoreCheckoutStateFromPrefs(
+      _authContactId,
+    );
+  }
+
+  String _normalizePhoneForBonusPlus(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10) {
+      return '7$digits';
+    }
+    if (digits.length == 11 && digits.startsWith('8')) {
+      return '7${digits.substring(1)}';
+    }
+    if (digits.length == 11 && digits.startsWith('7')) {
+      return digits;
+    }
+    if (digits.length > 11) {
+      final last10 = digits.substring(digits.length - 10);
+      return '7$last10';
+    }
+    return digits;
+  }
+
+  Future<double?> _fetchBonusPlusBalance() async {
+    final phone = _normalizePhoneForBonusPlus(_authPhone ?? '');
+    if (phone.length < 10) return null;
+    try {
+      final dio = _getAuthDio();
+      final response = await dio.post(
+        '/native/bonusplus_balance.php',
+        data: {
+          'phone': phone,
+          'contact_id': _authContactId,
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        },
+      );
+      dynamic decoded = response.data;
+      if (decoded is String) decoded = json.decode(decoded);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      if (map['status']?.toString() != 'ok') return null;
+      final dynamic rawBalance = map['bonus_balance'] ??
+          map['balance'] ??
+          (map['customer'] is Map
+              ? (map['customer'] as Map)['bonusBalance']
+              : null);
+      if (rawBalance == null) return null;
+      if (rawBalance is num) return rawBalance.toDouble();
+      return double.tryParse(rawBalance.toString().replaceAll(',', '.'));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _formatBonusBalance(double balance) {
+    final rounded = balance.roundToDouble();
+    if ((balance - rounded).abs() < 0.001) return rounded.toInt().toString();
+    return balance.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
+          RegExp(r'\.$'),
+          '',
+        );
   }
 
   @override
@@ -3167,6 +3346,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (product is! Map) return;
     final productId = product['id']?.toString() ?? "";
     if (productId.isEmpty) return;
+    final fallbackProduct = Map<String, dynamic>.from(product);
     _cartQuantityByProductId[productId] =
         (_cartQuantityByProductId[productId] ?? 0) + 1;
     if (!_cartProductsById.containsKey(productId)) {
@@ -3185,7 +3365,38 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       0,
       (a, b) => a + b,
     );
+    unawaited(_persistCartToPrefs());
     _showCartToast(product);
+    unawaited(
+      _refreshCartProductActualData(
+        productId,
+        fallbackProduct: fallbackProduct,
+      ),
+    );
+  }
+
+  Future<void> _refreshCartProductActualData(
+    String productId, {
+    Map<String, dynamic>? fallbackProduct,
+  }) async {
+    if (productId.trim().isEmpty) return;
+    try {
+      final fresh = await _fetchProductInfoById(productId);
+      final source = fresh ?? fallbackProduct;
+      if (source == null) return;
+      final normalized = Map<String, dynamic>.from(source);
+      normalized['id'] = productId;
+      final existing = _cartProductsById[productId];
+      _cartProductsById[productId] = <String, dynamic>{
+        if (existing != null) ...existing,
+        ...normalized,
+        'id': productId,
+      };
+      await _persistCartToPrefs();
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Ignore refresh failures and keep current cart snapshot.
+    }
   }
 
   List<Map<String, dynamic>> _getCartItems() {
@@ -3199,7 +3410,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return items;
   }
 
-  void _removeFromCart(String productId) {
+  void _removeFromCart(String productId, {bool persist = true}) {
     _cartQuantityByProductId.remove(productId);
     _cartProductsById.remove(productId);
     _cartSelectedIds.remove(productId);
@@ -3208,6 +3419,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       (a, b) => a + b,
     );
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    if (persist) {
+      unawaited(_persistCartToPrefs());
+    }
     if (mounted) setState(() {});
   }
 
@@ -3222,6 +3436,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         0,
         (a, b) => a + b,
       );
+      unawaited(_persistCartToPrefs());
       if (mounted) setState(() {});
     }
   }
@@ -3232,6 +3447,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _cartSelectedIds.clear();
     _cartCountNotifier.value = 0;
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    unawaited(_persistCartToPrefs());
     if (mounted) setState(() {});
   }
 
@@ -3289,6 +3505,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _cartSelectedIds.add(productId);
     }
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    unawaited(_persistCartToPrefs());
     if (mounted) setState(() {});
   }
 
@@ -3298,21 +3515,24 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (id.isNotEmpty) _cartSelectedIds.add(id);
     }
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    unawaited(_persistCartToPrefs());
     if (mounted) setState(() {});
   }
 
   void _deselectAllCart() {
     _cartSelectedIds.clear();
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    unawaited(_persistCartToPrefs());
     if (mounted) setState(() {});
   }
 
   void _deleteSelectedFromCart() {
     for (final id in _cartSelectedIds.toList()) {
-      _removeFromCart(id);
+      _removeFromCart(id, persist: false);
     }
     _cartSelectedIds.clear();
     _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+    unawaited(_persistCartToPrefs());
   }
 
   Map<String, int> _getStockMapForProduct(
@@ -5060,6 +5280,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   void _openProductPage(dynamic product, {bool showStockSheetOnLoad = false}) {
     if (product is! Map) return;
+    _registerViewedProduct(product);
     final String productId = product['id']?.toString() ?? "";
     if (productId.isNotEmpty) {
       _queueProductDetailsFetch(productId);
@@ -5198,6 +5419,538 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         subject: name.isNotEmpty ? name : "Товар",
       ),
     );
+  }
+
+  void _registerViewedProduct(Map product) {
+    final id = product['id']?.toString().trim() ?? "";
+    if (id.isEmpty) return;
+    _viewedProducts.removeWhere((p) => (p['id']?.toString() ?? '') == id);
+    _viewedProducts.insert(0, Map<String, dynamic>.from(product));
+    if (_viewedProducts.length > 20) {
+      _viewedProducts.removeRange(20, _viewedProducts.length);
+    }
+    unawaited(_persistViewedProductsToPrefs());
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _persistViewedProductsToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_viewedProducts.isEmpty) {
+      await prefs.remove(_prefsViewedProductsKey);
+      return;
+    }
+    final payload = _viewedProducts
+        .map((item) => _cartProductForStorage(item))
+        .toList(growable: false);
+    await prefs.setString(_prefsViewedProductsKey, json.encode(payload));
+  }
+
+  Future<void> _restoreViewedProductsFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_prefsViewedProductsKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is! List) return;
+      _viewedProducts
+        ..clear()
+        ..addAll(
+          decoded
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .where((e) => (e['id']?.toString().trim().isNotEmpty ?? false)),
+        );
+      if (_viewedProducts.length > 20) {
+        _viewedProducts.removeRange(20, _viewedProducts.length);
+      }
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Ignore invalid local history.
+    }
+  }
+
+  List<Map<String, dynamic>> _extractOrdersFromResponse(dynamic decoded) {
+    dynamic data = decoded;
+    if (decoded is Map) {
+      data = decoded['data'] ?? decoded['orders'] ?? decoded;
+    }
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (data is Map) {
+      final list = <Map<String, dynamic>>[];
+      data.forEach((_, value) {
+        if (value is Map) list.add(Map<String, dynamic>.from(value));
+      });
+      return list;
+    }
+    return const [];
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMyOrders() async {
+    if (!_isAuthorized) return const [];
+    final dio = _getAuthDio();
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) return const [];
+    final queries = <Map<String, String>>[
+      {'hash': 'contact/$contactId'},
+      {'hash': 'contact_id/$contactId'},
+      {'contact_id': contactId},
+    ];
+
+    final seenIds = <String>{};
+    final merged = <Map<String, dynamic>>[];
+
+    for (final query in queries) {
+      try {
+        final response = await dio.get(
+          '/api.php/shop.order.search',
+          queryParameters: {'access_token': _shopApiToken, ...query},
+        );
+        dynamic decoded = response.data;
+        if (decoded is String) decoded = json.decode(decoded);
+        final orders = _extractOrdersFromResponse(decoded);
+        for (final order in orders) {
+          final orderContactId =
+              (order['contact_id'] ?? order['contactId'] ?? '')
+                  .toString()
+                  .trim();
+          if (orderContactId.isNotEmpty && orderContactId != contactId) {
+            continue;
+          }
+          final id = (order['id'] ?? order['order_id'] ?? '').toString();
+          if (id.isEmpty || seenIds.contains(id)) continue;
+          seenIds.add(id);
+          merged.add(order);
+        }
+      } catch (_) {}
+    }
+
+    merged.sort((a, b) {
+      final da = (a['create_datetime'] ?? a['datetime'] ?? '').toString();
+      final db = (b['create_datetime'] ?? b['datetime'] ?? '').toString();
+      return db.compareTo(da);
+    });
+    return merged;
+  }
+
+  Future<Map<String, dynamic>?> _fetchOrderDetails(String orderId) async {
+    if (!_isAuthorized) return null;
+    final cleanId = orderId.trim();
+    if (cleanId.isEmpty) return null;
+    final dio = _getAuthDio();
+    final response = await dio.get(
+      '/api.php/shop.order.getInfo',
+      queryParameters: {'access_token': _shopApiToken, 'id': cleanId},
+    );
+    dynamic decoded = response.data;
+    if (decoded is String) decoded = json.decode(decoded);
+    Map<String, dynamic>? order;
+    if (decoded is Map && decoded['data'] is Map) {
+      order = Map<String, dynamic>.from(decoded['data'] as Map);
+    } else if (decoded is Map) {
+      order = Map<String, dynamic>.from(decoded);
+    }
+    if (order == null) return null;
+
+    String normalizeImageUrl(String raw) {
+      final value = raw.trim();
+      if (value.isEmpty) return value;
+      if (value.startsWith('http://') || value.startsWith('https://')) {
+        return value;
+      }
+      if (value.startsWith('//')) return 'https:$value';
+      if (value.startsWith('/')) return 'https://hozyain-barin.ru$value';
+      return 'https://hozyain-barin.ru/$value';
+    }
+
+    String pickImage(Map<String, dynamic> src) {
+      final keys = [
+        'image_url',
+        'image',
+        'img',
+        'photo_url',
+        'url_image',
+        'image_uri',
+      ];
+      for (final key in keys) {
+        final value = src[key]?.toString().trim() ?? '';
+        if (value.isNotEmpty) return normalizeImageUrl(value);
+      }
+      final images = src['images'];
+      if (images is List && images.isNotEmpty) {
+        final first = images.first?.toString().trim() ?? '';
+        if (first.isNotEmpty) return normalizeImageUrl(first);
+      }
+      return '';
+    }
+
+    final rawItems = order['items'] ?? order['products'] ?? order['cart'];
+    final List<Map<String, dynamic>> items = [];
+    if (rawItems is List) {
+      for (final entry in rawItems) {
+        if (entry is Map) items.add(Map<String, dynamic>.from(entry));
+      }
+    } else if (rawItems is Map) {
+      for (final entry in rawItems.values) {
+        if (entry is Map) items.add(Map<String, dynamic>.from(entry));
+      }
+    }
+
+    final productIds = <String>{};
+    for (final item in items) {
+      final existing = pickImage(item);
+      if (existing.isNotEmpty) continue;
+      final productId =
+          (item['product_id'] ?? item['id'] ?? '').toString().trim();
+      if (productId.isNotEmpty) {
+        productIds.add(productId);
+      }
+    }
+
+    final productImageById = <String, String>{};
+    for (final productId in productIds) {
+      try {
+        final productResponse = await dio.get(
+          '/api.php/shop.product.getInfo',
+          queryParameters: {'access_token': _shopApiToken, 'id': productId},
+        );
+        dynamic productDecoded = productResponse.data;
+        if (productDecoded is String) {
+          productDecoded = json.decode(productDecoded);
+        }
+        Map<String, dynamic>? product;
+        if (productDecoded is Map && productDecoded['data'] is Map) {
+          product = Map<String, dynamic>.from(productDecoded['data'] as Map);
+        } else if (productDecoded is Map) {
+          product = Map<String, dynamic>.from(productDecoded);
+        }
+        if (product == null) continue;
+        final image = pickImage(product);
+        if (image.isNotEmpty) {
+          productImageById[productId] = image;
+        }
+      } catch (_) {
+        // Если карточка товара недоступна, оставляем текущие данные.
+      }
+    }
+
+    if (items.isNotEmpty && productImageById.isNotEmpty) {
+      for (final item in items) {
+        final existing = pickImage(item);
+        if (existing.isNotEmpty) {
+          item['image_url'] = existing;
+          continue;
+        }
+        final productId =
+            (item['product_id'] ?? item['id'] ?? '').toString().trim();
+        final resolved = productImageById[productId] ?? '';
+        if (resolved.isNotEmpty) {
+          item['image_url'] = resolved;
+        }
+      }
+      if (rawItems is List) {
+        order['items'] = items;
+      } else if (rawItems is Map) {
+        final keys = rawItems.keys.toList();
+        final mapped = <String, dynamic>{};
+        for (int i = 0; i < keys.length; i++) {
+          mapped[keys[i].toString()] = i < items.length ? items[i] : rawItems[keys[i]];
+        }
+        order['items'] = mapped;
+      } else {
+        order['items'] = items;
+      }
+    }
+
+    return order;
+  }
+
+  String _resolveOrderItemImage(Map<String, dynamic> item) {
+    String pick(Map<String, dynamic> src, List<String> keys) {
+      for (final key in keys) {
+        final value = src[key]?.toString().trim() ?? '';
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    var raw = pick(item, const [
+      'image_url',
+      'image',
+      'photo_url',
+      'img',
+      'url_image',
+    ]);
+    if (raw.isEmpty && item['product'] is Map) {
+      raw = pick(Map<String, dynamic>.from(item['product'] as Map), const [
+        'image_url',
+        'image',
+        'photo_url',
+        'img',
+        'url_image',
+      ]);
+    }
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.startsWith('//')) return 'https:$raw';
+    if (raw.startsWith('/')) return 'https://hozyain-barin.ru$raw';
+    return 'https://hozyain-barin.ru/$raw';
+  }
+
+  Map<String, dynamic> _orderItemToProductMap(Map<String, dynamic> item) {
+    final productId =
+        (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
+            .toString()
+            .trim();
+    final image = _resolveOrderItemImage(item);
+    final name =
+        (item['name'] ?? item['product_name'] ?? item['title'] ?? 'Товар')
+            .toString()
+            .trim();
+    final priceRaw = (item['price'] ?? item['price_str'] ?? '').toString().trim();
+    return <String, dynamic>{
+      'id': productId,
+      'name': name,
+      if (priceRaw.isNotEmpty) 'price': priceRaw,
+      if (priceRaw.isNotEmpty) 'raw_price': priceRaw,
+      if (image.isNotEmpty) 'image': image,
+      if (image.isNotEmpty) 'image_url': image,
+      if (image.isNotEmpty) 'images': [image],
+    };
+  }
+
+  Future<void> _openOrderItemProduct(Map<String, dynamic> item) async {
+    final productId =
+        (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
+            .toString()
+            .trim();
+    Map<String, dynamic>? product;
+    if (productId.isNotEmpty) {
+      product = await _fetchProductInfoById(productId);
+    }
+    product ??= _orderItemToProductMap(item);
+    if (product['id']?.toString().trim().isEmpty ?? true) {
+      return;
+    }
+    if (!mounted) return;
+    _openProductPage(product);
+  }
+
+  void _repeatOrderItem(Map<String, dynamic> item) {
+    final product = _orderItemToProductMap(item);
+    if ((product['id']?.toString().trim().isEmpty ?? true)) return;
+    _addToCart(product);
+  }
+
+  void _openMyOrdersPage() {
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => _MyOrdersPage(
+          ordersFuture: _fetchMyOrders(),
+          loadOrderDetails: _fetchOrderDetails,
+          onOpenOrderItemProduct: (item) {
+            unawaited(_openOrderItemProduct(item));
+          },
+          onRepeatOrderItem: _repeatOrderItem,
+          onOpenOrderWeb: (id) {
+            final clean = id.trim();
+            if (clean.isEmpty) return;
+            _launchUrl('https://hozyain-barin.ru/my/orders/$clean/');
+          },
+        ),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _cartProductForStorage(Map<String, dynamic> product) {
+    try {
+      final normalized = json.decode(json.encode(product));
+      if (normalized is Map) return Map<String, dynamic>.from(normalized);
+    } catch (_) {}
+    return <String, dynamic>{
+      'id': product['id']?.toString() ?? '',
+      'name': product['name']?.toString() ?? '',
+      'price': product['price']?.toString() ?? '',
+      'raw_price': product['raw_price'],
+      'image': product['image']?.toString() ?? '',
+      'images': product['images'],
+      'link': product['link']?.toString() ?? '',
+    };
+  }
+
+  Future<void> _persistCartToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_cartQuantityByProductId.isEmpty) {
+      await prefs.remove(_prefsCartStateKey);
+      return;
+    }
+    final serializableProducts = <String, dynamic>{};
+    _cartProductsById.forEach((key, value) {
+      serializableProducts[key] = _cartProductForStorage(value);
+    });
+    final payload = <String, dynamic>{
+      'quantities': _cartQuantityByProductId,
+      'products': serializableProducts,
+      'selected_ids': _cartSelectedIds.toList(),
+    };
+    await prefs.setString(_prefsCartStateKey, json.encode(payload));
+  }
+
+  Future<void> _restoreCartFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_prefsCartStateKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is! Map) return;
+      final quantitiesRaw = decoded['quantities'];
+      final productsRaw = decoded['products'];
+      final selectedRaw = decoded['selected_ids'];
+      if (quantitiesRaw is! Map || productsRaw is! Map) return;
+
+      final restoredQuantities = <String, int>{};
+      quantitiesRaw.forEach((key, value) {
+        final id = key.toString().trim();
+        final qty = int.tryParse(value?.toString() ?? '0') ?? 0;
+        if (id.isEmpty || qty <= 0) return;
+        restoredQuantities[id] = qty;
+      });
+      if (restoredQuantities.isEmpty) return;
+
+      final restoredProducts = <String, Map<String, dynamic>>{};
+      productsRaw.forEach((key, value) {
+        final id = key.toString().trim();
+        if (id.isEmpty || !restoredQuantities.containsKey(id)) return;
+        if (value is Map) {
+          restoredProducts[id] = Map<String, dynamic>.from(value);
+        }
+      });
+
+      final restoredSelected = <String>{};
+      if (selectedRaw is List) {
+        for (final value in selectedRaw) {
+          final id = value?.toString().trim() ?? '';
+          if (id.isNotEmpty && restoredQuantities.containsKey(id)) {
+            restoredSelected.add(id);
+          }
+        }
+      }
+
+      _cartQuantityByProductId
+        ..clear()
+        ..addAll(restoredQuantities);
+      _cartProductsById
+        ..clear()
+        ..addAll(restoredProducts);
+      _cartSelectedIds
+        ..clear()
+        ..addAll(restoredSelected);
+      _cartCountNotifier.value = _cartQuantityByProductId.values.fold(
+        0,
+        (a, b) => a + b,
+      );
+      _cartSelectionNotifier.value = !_cartSelectionNotifier.value;
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Ignore invalid local cache and continue with empty cart.
+    }
+  }
+
+  Future<void> _handleProfileNavTap() async {
+    if (!_isAuthorized) {
+      final ok = await Navigator.push<bool>(
+        context,
+        _adaptivePageRoute(builder: (_) => const AuthPage()),
+      );
+      if (ok != true || !_isAuthorized) return;
+      _reloadProfileData();
+      if (mounted) setState(() {});
+    }
+    _reloadProfileData();
+    _navigateToSimple("Профиль", "/my/");
+  }
+
+  Future<void> _pickAndSaveProfileAvatar() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1400,
+      );
+      if (picked == null) return;
+      _authPhotoUrl = picked.path;
+      await _persistAuthSessionToPrefs();
+      if (!mounted) return;
+      setState(() {});
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось загрузить фото')),
+      );
+    }
+  }
+
+  Future<void> _openProfileAuthPage() async {
+    final ok = await Navigator.push<bool>(
+      context,
+      _adaptivePageRoute(builder: (_) => const AuthPage()),
+    );
+    if (ok == true && mounted) {
+      _reloadProfileData();
+      setState(() {});
+    }
+  }
+
+  Future<void> _editProfileName() async {
+    if (!_isAuthorized) {
+      await _openProfileAuthPage();
+      return;
+    }
+    final controller = TextEditingController(text: (_authUserName ?? '').trim());
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Редактировать профиль'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Имя',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+    if (saved != true) return;
+    final nextName = controller.text.trim();
+    if (nextName.isEmpty) return;
+    _authUserName = nextName;
+    await _persistAuthSessionToPrefs();
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _goHome() {
@@ -5590,6 +6343,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (path.contains('wishlist=true')) return "wishlist";
     if (path.startsWith('/compare')) return "compare";
     if (path.startsWith('/cart')) return "cart";
+    if (path.startsWith('/my') || path.startsWith('/signup')) return "profile";
     if (catId != null && catId.isNotEmpty) {
       if (catId == _menBagsCategoryId) return "men";
       if (catId == _beltBagsCategoryId) return "belt";
@@ -5622,7 +6376,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void _fetchActiveNativeCategoryIfNeeded() {
     if (_nativeCategory == "wishlist" ||
         _nativeCategory == "compare" ||
-        _nativeCategory == "cart") {
+        _nativeCategory == "cart" ||
+        _nativeCategory == "profile") {
       return;
     }
     final customId = _nativeCustomCategoryIdByKey[_nativeCategory];
@@ -6151,6 +6906,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           return _buildWishlistGrid(_getActiveNativeList());
                         },
                       )
+                    else if (_nativeCategory == "profile")
+                      _buildProfilePage()
                     else if (_nativeCategory == "cart")
                       AnimatedBuilder(
                         animation: Listenable.merge([
@@ -6165,7 +6922,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       _buildNativeCategoryPage(_getActiveNativeList()),
                     if (_nativeCategory != "wishlist" &&
                         _nativeCategory != "compare" &&
-                        _nativeCategory != "cart")
+                        _nativeCategory != "cart" &&
+                        _nativeCategory != "profile")
                       _buildNativeLoadMoreSliver(),
                     const SliverToBoxAdapter(child: SizedBox(height: 12)),
                   ],
@@ -10204,7 +10962,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         if (_isNativeCategoryPage &&
             _nativeCategory != "wishlist" &&
             _nativeCategory != "compare" &&
-            _nativeCategory != "cart")
+            _nativeCategory != "cart" &&
+            _nativeCategory != "profile")
           _navBtnIcon(
             Icons.filter_list,
             () => _showFilterMenu(context),
@@ -10214,7 +10973,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           _navBtnIcon(Icons.more_vert, _showCompareSectionsMenu, hPadding: 10),
         if (_isNativeCategoryPage &&
             _nativeCategory != "compare" &&
-            _nativeCategory != "cart")
+            _nativeCategory != "cart" &&
+            _nativeCategory != "profile")
           _navBtnIcon(Icons.sort, () => _showSortMenu(context), hPadding: 10),
         if (_isNativeCategoryPage && _nativeCategory == "wishlist")
           _navBtnIcon(Icons.delete_outline, _clearFavorites, hPadding: 10),
@@ -10481,6 +11241,443 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  String _extractProfileCity(Map<String, dynamic>? checkoutState) {
+    final fromDelivery =
+        checkoutState?['selectedDeliveryAddress']?.toString().trim() ?? '';
+    if (fromDelivery.isNotEmpty) {
+      final parts = fromDelivery
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (parts.isNotEmpty) return parts.first;
+    }
+    final pickupAddress = (checkoutState?['selectedPickupPoint'] is Map)
+        ? (checkoutState?['selectedPickupPoint']['address']
+                  ?.toString()
+                  .trim() ??
+              '')
+        : '';
+    if (pickupAddress.isNotEmpty) {
+      final parts = pickupAddress
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (parts.isNotEmpty) return parts.first;
+    }
+    return 'Владивосток (Приморский край)';
+  }
+
+  Widget _profileMenuTile({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    String? badge,
+    VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: Colors.black45),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black45,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (badge != null && badge.isNotEmpty && badge != "0")
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  badge,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            const Icon(Icons.chevron_right, color: Colors.black38),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewedProductCard(Map<String, dynamic> product) {
+    final imageUrl = _resolveProductImages(product).isNotEmpty
+        ? _resolveProductImages(product).first
+        : '';
+    final price = product['price']?.toString() ?? '';
+    final name = product['name']?.toString() ?? '';
+    return InkWell(
+      onTap: () => _openProductPage(product),
+      child: Container(
+        width: 132,
+        margin: const EdgeInsets.only(right: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  height: 98,
+                  width: double.infinity,
+                  child: imageUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) =>
+                              Container(color: Colors.grey.shade100),
+                        )
+                      : Container(color: Colors.grey.shade100),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              const Spacer(),
+              Text(
+                price,
+                style: _cardPriceStyle,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfilePage() {
+    final future =
+        _profileCheckoutStateFuture ??= _restoreCheckoutStateFromPrefs(
+          _authContactId,
+        );
+    final bonusFuture = _fetchBonusPlusBalance();
+    return SliverToBoxAdapter(
+      child: FutureBuilder<Map<String, dynamic>?>(
+        future: future,
+        builder: (context, snapshot) {
+          final checkoutState = snapshot.data;
+          final city = _extractProfileCity(checkoutState);
+          final deliveryAddress =
+              checkoutState?['selectedDeliveryAddress']?.toString().trim() ??
+              '';
+          final defaultStore = (checkoutState?['selectedPickupPoint'] is Map)
+              ? (checkoutState?['selectedPickupPoint']['name']
+                        ?.toString()
+                        .trim() ??
+                    '')
+              : '';
+          final viewedItems = _viewedProducts.take(8).toList();
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(10, 12, 10, 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Stack(
+                        children: [
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: Colors.grey.shade100,
+                            backgroundImage: _authAvatarProvider(_authPhotoUrl),
+                            child:
+                                (_authPhotoUrl == null ||
+                                    _authPhotoUrl!.isEmpty ||
+                                    _authAvatarProvider(_authPhotoUrl) == null)
+                                ? const Icon(
+                                    Icons.person_outline,
+                                    color: Colors.black45,
+                                    size: 32,
+                                  )
+                                : null,
+                          ),
+                          Positioned(
+                            right: -2,
+                            bottom: -2,
+                            child: Material(
+                              color: Colors.black,
+                              shape: const CircleBorder(),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: _pickAndSaveProfileAvatar,
+                                child: const Padding(
+                                  padding: EdgeInsets.all(6),
+                                  child: Icon(
+                                    Icons.camera_alt_outlined,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    (_authUserName ?? 'Пользователь')
+                                            .trim()
+                                            .isEmpty
+                                        ? 'Пользователь'
+                                        : _authUserName!.trim(),
+                                    style: const TextStyle(
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w500,
+                                      height: 1.1,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: _editProfileName,
+                                  visualDensity: VisualDensity.compact,
+                                  icon: const Icon(
+                                    Icons.edit_outlined,
+                                    size: 20,
+                                    color: Colors.black54,
+                                  ),
+                                  tooltip: 'Редактировать профиль',
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            InkWell(
+                              onTap: _openProfileAuthPage,
+                              child: const Text(
+                                'Изменить телефон',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _formatPhoneMasked(_authPhone ?? ''),
+                              style: const TextStyle(
+                                fontSize: 18,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            FutureBuilder<double?>(
+                              future: bonusFuture,
+                              builder: (context, bonusSnapshot) {
+                                final bonus = bonusSnapshot.data;
+                                if (bonus == null) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF5F5F5),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(
+                                        Icons.stars_outlined,
+                                        size: 16,
+                                        color: Colors.black87,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Бонусы: ${_formatBonusBalance(bonus)}',
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      _profileMenuTile(
+                        icon: Icons.location_on_outlined,
+                        title: city,
+                        onTap: () => _navigateToSimple("Профиль", "/my/"),
+                      ),
+                      if (deliveryAddress.isNotEmpty) ...[
+                        Divider(height: 1, color: Colors.grey.shade200),
+                        _profileMenuTile(
+                          icon: Icons.home_outlined,
+                          title: "Адрес доставки",
+                          subtitle: deliveryAddress,
+                          onTap: () => _navigateToSimple("Профиль", "/my/"),
+                        ),
+                      ],
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _profileMenuTile(
+                        icon: Icons.store_outlined,
+                        title: "Магазин по умолчанию",
+                        subtitle: defaultStore.isEmpty
+                            ? "Изначально устанавливается при оформлении заказа"
+                            : defaultStore,
+                        onTap: () => _navigateToSimple("Профиль", "/my/"),
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _profileMenuTile(
+                        icon: Icons.receipt_long_outlined,
+                        title: "Заказы",
+                        onTap: _openMyOrdersPage,
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      ValueListenableBuilder<int>(
+                        valueListenable: _wishCountNotifier,
+                        builder: (context, count, _) => _profileMenuTile(
+                          icon: Icons.favorite_border,
+                          title: "Избранное",
+                          badge: count > 0 ? count.toString() : null,
+                          onTap: () => _navigateToSimple(
+                            "Избранное",
+                            "/search/?wishlist=true",
+                          ),
+                        ),
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      ValueListenableBuilder<int>(
+                        valueListenable: _compareCountNotifier,
+                        builder: (context, count, _) => _profileMenuTile(
+                          icon: Icons.bar_chart_outlined,
+                          title: "Сравнение",
+                          badge: count > 0 ? count.toString() : null,
+                          onTap: () =>
+                              _navigateToSimple("Сравнение", "/compare/"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Вы смотрели",
+                        style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (viewedItems.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 18),
+                          child: Text(
+                            "Здесь будут товары, которые вы открывали",
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        )
+                      else
+                        SizedBox(
+                          height: 214,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: viewedItems.length,
+                            itemBuilder: (context, index) =>
+                                _buildViewedProductCard(viewedItems[index]),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildBottomBar({bool showTopBorder = true}) {
     return Container(
       height: 58,
@@ -10536,8 +11733,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ),
           _navItem(
             'assets/images/nav_profile.svg',
-            'Войти',
-            () => _navigateToSimple("Вход", "/signup/"),
+            _isAuthorized ? 'Профиль' : 'Войти',
+            _handleProfileNavTap,
           ),
         ],
       ),
@@ -11719,13 +12916,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           hasChildren: children.isNotEmpty,
           isExpanded: isExpanded,
           onTap: () {
-            if (children.isNotEmpty) {
-              setDialogState(
-                () => _expandedCategoryId = isExpanded ? null : catId,
-              );
-            } else {
-              _navigateToApiCategory(cat);
-            }
+            _navigateToApiCategory(cat);
           },
           onExpand: () => setDialogState(
             () => _expandedCategoryId = isExpanded ? null : catId,
@@ -12328,6 +13519,7 @@ class _AuthPageState extends State<AuthPage> {
           _authUserName = effectiveName.isNotEmpty
               ? effectiveName
               : (_authUserName ?? "Пользователь");
+          unawaited(_persistAuthSessionToPrefs());
           Navigator.pop(context, true);
         }
       } else {
@@ -12377,6 +13569,7 @@ class _AuthPageState extends State<AuthPage> {
             : _pendingContactId;
         _authUserName = name;
         _authPhone = phone;
+        unawaited(_persistAuthSessionToPrefs());
         if (_authContactId == null || _authContactId!.isEmpty) {
           setState(() => _authError = "Не удалось завершить регистрацию");
           return;
@@ -12667,9 +13860,13 @@ class CheckoutPage extends StatefulWidget {
 
 class _CheckoutPageState extends State<CheckoutPage> {
   final _addressController = TextEditingController();
+  final _bonusAmountController = TextEditingController();
   int _deliveryMethod = 1; // 0 - доставка, 1 - самовывоз
   int _paymentMethod = 0; // 0 - онлайн, 1 - при получении
   int _onlinePaymentOption = 0; // 0 - YooKassa, 1 - банковская карта
+  bool _useBonuses = false;
+  double _bonusBalance = 0;
+  bool _isBonusLoading = false;
   Map<String, dynamic>? _selectedPickupPoint;
   Map<String, dynamic>? _selectedDeliveryData;
   String? _selectedDeliveryAddress;
@@ -12679,6 +13876,159 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _isSubmittingOrder = false;
   String? _orderNumber;
   String? _orderError;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreCheckoutState());
+    unawaited(_loadBonusBalance());
+  }
+
+  Future<void> _restoreCheckoutState() async {
+    final saved = await _restoreCheckoutStateFromPrefs(
+      widget.contactId ?? _authContactId,
+    );
+    if (!mounted || saved == null) return;
+    setState(() {
+      _deliveryMethod =
+          int.tryParse(saved['deliveryMethod']?.toString() ?? '1') ?? 1;
+      _paymentMethod =
+          int.tryParse(saved['paymentMethod']?.toString() ?? '0') ?? 0;
+      _onlinePaymentOption =
+          int.tryParse(saved['onlinePaymentOption']?.toString() ?? '0') ?? 0;
+      _useBonuses = saved['useBonuses'] == true ||
+          saved['useBonuses']?.toString() == '1' ||
+          saved['useBonuses']?.toString().toLowerCase() == 'true';
+      _bonusAmountController.text =
+          saved['bonusAmount']?.toString().trim() ?? '';
+
+      final pickupRaw = saved['selectedPickupPoint'];
+      if (pickupRaw is Map) {
+        _selectedPickupPoint = Map<String, dynamic>.from(pickupRaw);
+      }
+
+      final deliveryRaw = saved['selectedDeliveryData'];
+      if (deliveryRaw is Map) {
+        _selectedDeliveryData = Map<String, dynamic>.from(deliveryRaw);
+      }
+      _selectedDeliveryAddress = saved['selectedDeliveryAddress']
+          ?.toString()
+          .trim();
+      _selectedDeliveryApartment = saved['selectedDeliveryApartment']
+          ?.toString()
+          .trim();
+      _selectedDeliveryDate = saved['selectedDeliveryDate']?.toString().trim();
+      _selectedDeliveryTime = saved['selectedDeliveryTime']?.toString().trim();
+      _addressController.text = _selectedDeliveryAddress ?? '';
+    });
+  }
+
+  Future<void> _persistCheckoutState() async {
+    await _persistCheckoutStateToPrefs(widget.contactId ?? _authContactId, {
+      'deliveryMethod': _deliveryMethod,
+      'paymentMethod': _paymentMethod,
+      'onlinePaymentOption': _onlinePaymentOption,
+      'useBonuses': _useBonuses,
+      'bonusAmount': _bonusAmountController.text.trim(),
+      'selectedPickupPoint': _selectedPickupPoint,
+      'selectedDeliveryData': _selectedDeliveryData,
+      'selectedDeliveryAddress': _selectedDeliveryAddress,
+      'selectedDeliveryApartment': _selectedDeliveryApartment,
+      'selectedDeliveryDate': _selectedDeliveryDate,
+      'selectedDeliveryTime': _selectedDeliveryTime,
+    });
+  }
+
+  String _normalizePhoneForBonusPlus(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10) return '7$digits';
+    if (digits.length == 11 && digits.startsWith('8')) {
+      return '7${digits.substring(1)}';
+    }
+    if (digits.length == 11 && digits.startsWith('7')) {
+      return digits;
+    }
+    if (digits.length > 11) {
+      return '7${digits.substring(digits.length - 10)}';
+    }
+    return digits;
+  }
+
+  double get _maxBonusWriteOff {
+    final maxByOrder = widget.total < 0 ? 0 : widget.total;
+    if (_bonusBalance <= 0) return 0;
+    return math.min(_bonusBalance, maxByOrder).toDouble();
+  }
+
+  double get _bonusWriteOffValue {
+    if (!_useBonuses) return 0;
+    final parsed = double.tryParse(
+          _bonusAmountController.text.trim().replaceAll(',', '.'),
+        ) ??
+        0;
+    if (parsed <= 0) return 0;
+    final max = _maxBonusWriteOff;
+    if (max <= 0) return 0;
+    return parsed.clamp(0, max).toDouble();
+  }
+
+  String _sanitizeBonusInput(String raw) {
+    final normalized = raw.replaceAll(',', '.').replaceAll(RegExp(r'[^0-9.]'), '');
+    if (normalized.isEmpty) return '';
+    final parsed = double.tryParse(normalized);
+    if (parsed == null) return '';
+    final fixed = parsed.clamp(0, _maxBonusWriteOff).toDouble();
+    if ((fixed - fixed.round()).abs() < 0.001) return fixed.round().toString();
+    return fixed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
+          RegExp(r'\.$'),
+          '',
+        );
+  }
+
+  Future<void> _loadBonusBalance() async {
+    final phone = _normalizePhoneForBonusPlus(_authPhone ?? '');
+    if (phone.length < 11) return;
+    if (mounted) setState(() => _isBonusLoading = true);
+    try {
+      final dio = _getAuthDio();
+      final response = await dio.post(
+        '/native/bonusplus_balance.php',
+        data: {'phone': phone, 'contact_id': _authContactId},
+      );
+      dynamic decoded = response.data;
+      if (decoded is String) decoded = json.decode(decoded);
+      if (decoded is! Map) return;
+      final map = Map<String, dynamic>.from(decoded);
+      if (map['status']?.toString() != 'ok') return;
+      final raw = map['bonus_balance'] ?? map['balance'];
+      final balance = raw is num
+          ? raw.toDouble()
+          : double.tryParse(raw?.toString().replaceAll(',', '.') ?? '0') ?? 0;
+      if (!mounted) return;
+      setState(() {
+        _bonusBalance = balance < 0 ? 0 : balance;
+        if (_useBonuses && _bonusAmountController.text.trim().isEmpty) {
+          _bonusAmountController.text = _maxBonusWriteOff.round().toString();
+        } else if (_bonusAmountController.text.trim().isNotEmpty) {
+          _bonusAmountController.text =
+              _sanitizeBonusInput(_bonusAmountController.text.trim());
+        }
+      });
+    } catch (_) {
+      // Ignore errors silently to avoid interrupting checkout flow.
+    } finally {
+      if (mounted) setState(() => _isBonusLoading = false);
+    }
+  }
+
+  String _formatBonusBalance(double balance) {
+    final rounded = balance.roundToDouble();
+    if ((balance - rounded).abs() < 0.001) return rounded.toInt().toString();
+    return balance.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
+          RegExp(r'\.$'),
+          '',
+        );
+  }
 
   String _buildDeliveryShortAddress({
     required String fullAddress,
@@ -12801,7 +14151,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     try {
       final dio = _getAuthDio();
       final contactId = widget.contactId ?? _authContactId;
-      final payload = <String, dynamic>{
+      final basePayload = <String, dynamic>{
         'items': widget.items,
         'total': widget.total,
         'payment_method': _paymentMethod,
@@ -12813,76 +14163,87 @@ class _CheckoutPageState extends State<CheckoutPage> {
           'pickup_stock_id': _selectedPickupPoint?['stock_id'],
           'pickup_point_id': _selectedPickupPoint?['id'],
         },
+        if (_bonusWriteOffValue > 0) ...{
+          'use_bonus': 1,
+          'bonus_amount': _bonusWriteOffValue.toStringAsFixed(2),
+        },
       };
-      final response = await dio.post(
-        '/native/create_order.php',
-        data: payload,
-        options: Options(contentType: Headers.jsonContentType),
-      );
-      final data = _parseAuthResponse(response.data);
-      final status = data?['status']?.toString();
-      final orderId =
-          data?['order_id']?.toString() ?? data?['id']?.toString() ?? '';
-      final number =
-          data?['order_number']?.toString() ??
-          data?['order_id']?.toString() ??
-          data?['id']?.toString();
-      if (status == 'ok') {
-        if (_paymentMethod == 0) {
-          final service = YookassaPaymentService(dio: dio);
-          final amountRub =
-              (data?['amount']?.toString().trim().isNotEmpty == true)
-              ? data!['amount'].toString()
-              : widget.total.toStringAsFixed(2);
-          final phone = _authPhone?.toString();
-          final result = await service.payOrder(
-            orderId: orderId,
-            orderNumber: number,
-            amountRub: amountRub,
-            title: 'Хозяин Барин',
-            subtitle: 'Заказ №${number ?? orderId}',
-            onlinePaymentMethod: _onlinePaymentOption == 1
-                ? OnlinePaymentMethod.bankCard
-                : OnlinePaymentMethod.yooMoney,
-            userPhoneNumber: (phone != null && phone.trim().isNotEmpty)
-                ? phone.trim()
-                : null,
+      Future<Map<String, dynamic>> createOrder(
+        Map<String, dynamic> payload,
+      ) async {
+        final response = await dio.post(
+          '/native/create_order.php',
+          data: payload,
+          options: Options(contentType: Headers.jsonContentType),
+        );
+        final data = _parseAuthResponse(response.data);
+        final status = data?['status']?.toString();
+        if (status != 'ok') {
+          final rawDetails =
+              data?['error_description']?.toString() ??
+              data?['error']?.toString() ??
+              data?['message']?.toString();
+          final details = _normalizeOrderError(rawDetails);
+          debugPrint(
+            '[create_order] status=$status response=${_responseDataToString(response.data)} payload=${json.encode(payload)}',
           );
-          if (!mounted) return;
-          if (result.status == 'succeeded') {
-            widget.onOrderSuccess?.call();
-            setState(() => _orderNumber = number ?? "—");
-          } else if (result.status == 'canceled') {
-            setState(
-              () => _orderError =
-                  'Оплата отменена. Заказ №${number ?? orderId} ожидает оплату.',
-            );
-          } else {
-            setState(
-              () => _orderError =
-                  'Оплата в обработке. Заказ №${number ?? orderId} ожидает подтверждения.',
-            );
-          }
-        } else {
-          if (mounted) {
-            widget.onOrderSuccess?.call();
-            setState(() => _orderNumber = number ?? "—");
-          }
+          throw YookassaPaymentException(
+            details.trim().isNotEmpty
+                ? 'Не удалось оформить заказ: $details'
+                : 'Не удалось оформить заказ',
+          );
         }
+        return data ?? <String, dynamic>{};
+      }
+
+      if (_paymentMethod == 0) {
+        final service = YookassaPaymentService(dio: dio);
+        final phone = _authPhone?.toString();
+        final tempOrderId = 'prepay-${DateTime.now().millisecondsSinceEpoch}';
+        final result = await service.payOrder(
+          orderId: tempOrderId,
+          orderNumber: null,
+          amountRub: widget.total.toStringAsFixed(2),
+          title: 'Хозяин Барин',
+          subtitle: 'Оплата заказа',
+          onlinePaymentMethod: _onlinePaymentOption == 1
+              ? OnlinePaymentMethod.bankCard
+              : OnlinePaymentMethod.yooMoney,
+          userPhoneNumber: (phone != null && phone.trim().isNotEmpty)
+              ? phone.trim()
+              : null,
+        );
+        if (!mounted) return;
+        if (result.status != 'succeeded') {
+          setState(
+            () => _orderError = result.status == 'canceled'
+                ? 'Оплата отменена. Заказ не создан.'
+                : 'Оплата не подтверждена. Заказ не создан.',
+          );
+          return;
+        }
+
+        final orderData = await createOrder({
+          ...basePayload,
+          'payment_status': 'succeeded',
+          'payment_id': result.paymentId,
+        });
+        final number =
+            orderData['order_number']?.toString() ??
+            orderData['order_id']?.toString() ??
+            orderData['id']?.toString() ??
+            "—";
+        widget.onOrderSuccess?.call();
+        if (mounted) setState(() => _orderNumber = number);
       } else {
-        final rawDetails =
-            data?['error_description']?.toString() ??
-            data?['error']?.toString() ??
-            data?['message']?.toString();
-        final details = _normalizeOrderError(rawDetails);
-        debugPrint(
-          '[create_order] status=$status response=${_responseDataToString(response.data)} payload=${json.encode(payload)}',
-        );
-        setState(
-          () => _orderError = details.trim().isNotEmpty
-              ? 'Не удалось оформить заказ: $details'
-              : 'Не удалось оформить заказ',
-        );
+        final orderData = await createOrder(basePayload);
+        final number =
+            orderData['order_number']?.toString() ??
+            orderData['order_id']?.toString() ??
+            orderData['id']?.toString() ??
+            "—";
+        widget.onOrderSuccess?.call();
+        if (mounted) setState(() => _orderNumber = number);
       }
     } catch (e) {
       debugPrint('[create_order] exception: $e');
@@ -12915,6 +14276,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void dispose() {
     _addressController.dispose();
+    _bonusAmountController.dispose();
     super.dispose();
   }
 
@@ -12985,6 +14347,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       };
       _deliveryMethod = 1;
     });
+    unawaited(_persistCheckoutState());
   }
 
   Future<void> _openDeliveryAddressPage({bool openSheetOnStart = false}) async {
@@ -13017,8 +14380,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _selectedDeliveryApartment = result['apartment']?.toString().trim();
         _selectedDeliveryDate = result['date']?.toString().trim();
         _selectedDeliveryTime = result['time']?.toString().trim();
+        _addressController.text = _selectedDeliveryAddress ?? '';
         _deliveryMethod = 0;
       });
+      unawaited(_persistCheckoutState());
       return;
     }
     setState(() {
@@ -13028,6 +14393,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       };
       _deliveryMethod = 1;
     });
+    unawaited(_persistCheckoutState());
   }
 
   @override
@@ -13072,7 +14438,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 SizedBox(
                   height: 44,
                   child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).popUntil((route) => route.isFirst),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
                       foregroundColor: Colors.white,
@@ -13267,13 +14635,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         CircleAvatar(
                           radius: 20,
                           backgroundColor: Colors.grey.shade200,
-                          backgroundImage:
-                              (_authPhotoUrl != null &&
-                                  _authPhotoUrl!.isNotEmpty)
-                              ? NetworkImage(_authPhotoUrl!)
-                              : null,
+                          backgroundImage: _authAvatarProvider(_authPhotoUrl),
                           child:
-                              (_authPhotoUrl == null || _authPhotoUrl!.isEmpty)
+                              (_authPhotoUrl == null ||
+                                  _authPhotoUrl!.isEmpty ||
+                                  _authAvatarProvider(_authPhotoUrl) == null)
                               ? const Icon(Icons.person, color: Colors.black54)
                               : null,
                         ),
@@ -13324,7 +14690,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   children: [
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => setState(() => _deliveryMethod = 1),
+                        onTap: () {
+                          setState(() => _deliveryMethod = 1);
+                          unawaited(_persistCheckoutState());
+                        },
                         child: Container(
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
@@ -13354,7 +14723,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => setState(() => _deliveryMethod = 0),
+                        onTap: () {
+                          setState(() => _deliveryMethod = 0);
+                          unawaited(_persistCheckoutState());
+                        },
                         child: Container(
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
@@ -13715,7 +15087,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   Expanded(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: () => setState(() => _paymentMethod = 0),
+                      onTap: () {
+                        setState(() => _paymentMethod = 0);
+                        unawaited(_persistCheckoutState());
+                      },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(vertical: 11),
@@ -13748,7 +15123,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   Expanded(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: () => setState(() => _paymentMethod = 1),
+                      onTap: () {
+                        setState(() => _paymentMethod = 1);
+                        unawaited(_persistCheckoutState());
+                      },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(vertical: 11),
@@ -13786,7 +15164,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     Expanded(
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
-                        onTap: () => setState(() => _onlinePaymentOption = 0),
+                        onTap: () {
+                          setState(() => _onlinePaymentOption = 0);
+                          unawaited(_persistCheckoutState());
+                        },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           padding: const EdgeInsets.all(12),
@@ -13795,7 +15176,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             border: Border.all(
                               width: 2,
                               color: _onlinePaymentOption == 0
-                                  ? const Color(0xFF2E7CF6)
+                                  ? Colors.black
                                   : const Color(0xFFE5E5E7),
                             ),
                             color: Colors.white,
@@ -13809,7 +15190,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     Icons.account_balance_wallet_rounded,
                                     size: 18,
                                     color: _onlinePaymentOption == 0
-                                        ? const Color(0xFF2E7CF6)
+                                        ? Colors.black
                                         : Colors.black54,
                                   ),
                                   const SizedBox(width: 6),
@@ -13839,7 +15220,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     Expanded(
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
-                        onTap: () => setState(() => _onlinePaymentOption = 1),
+                        onTap: () {
+                          setState(() => _onlinePaymentOption = 1);
+                          unawaited(_persistCheckoutState());
+                        },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           padding: const EdgeInsets.all(12),
@@ -13848,7 +15232,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             border: Border.all(
                               width: 2,
                               color: _onlinePaymentOption == 1
-                                  ? const Color(0xFF2E7CF6)
+                                  ? Colors.black
                                   : const Color(0xFFE5E5E7),
                             ),
                             color: Colors.white,
@@ -13862,7 +15246,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     Icons.credit_card_rounded,
                                     size: 18,
                                     color: _onlinePaymentOption == 1
-                                        ? const Color(0xFF2E7CF6)
+                                        ? Colors.black
                                         : Colors.black54,
                                   ),
                                   const SizedBox(width: 6),
@@ -13898,17 +15282,143 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF2F7FF),
+                    color: const Color(0xFFF5F5F5),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
                     _onlinePaymentOption == 0
                         ? "Оплата пройдет через YooKassa."
                         : "Оплата пройдет банковской картой через YooKassa.",
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF204A87),
-                    ),
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F8F8),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE5E5E7)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.stars_outlined,
+                            size: 16,
+                            color: Colors.black87,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _isBonusLoading
+                                  ? 'Загрузка бонусов...'
+                                  : 'Доступно бонусов: ${_formatBonusBalance(_bonusBalance)}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.black87,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _bonusBalance <= 0
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _useBonuses = !_useBonuses;
+                                        if (_useBonuses &&
+                                            _bonusAmountController.text
+                                                .trim()
+                                                .isEmpty) {
+                                          _bonusAmountController.text =
+                                              _maxBonusWriteOff
+                                                  .round()
+                                                  .toString();
+                                        }
+                                      });
+                                      unawaited(_persistCheckoutState());
+                                    },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                _useBonuses
+                                    ? 'Не списывать бонусы'
+                                    : 'Списать бонусы',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 96,
+                            child: TextField(
+                              controller: _bonusAmountController,
+                              enabled: _useBonuses && _bonusBalance > 0,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              onChanged: (value) {
+                                final sanitized = _sanitizeBonusInput(value);
+                                if (sanitized != value) {
+                                  _bonusAmountController.value =
+                                      TextEditingValue(
+                                        text: sanitized,
+                                        selection: TextSelection.collapsed(
+                                          offset: sanitized.length,
+                                        ),
+                                      );
+                                }
+                                unawaited(_persistCheckoutState());
+                                if (mounted) setState(() {});
+                              },
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: '0',
+                                suffixText: 'б',
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 9,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_bonusWriteOffValue > 0) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],
@@ -22955,6 +24465,503 @@ class NativeProductCard extends StatefulWidget {
 
   @override
   State<NativeProductCard> createState() => _NativeProductCardState();
+}
+
+class _MyOrdersPage extends StatelessWidget {
+  final Future<List<Map<String, dynamic>>> ordersFuture;
+  final Future<Map<String, dynamic>?> Function(String orderId) loadOrderDetails;
+  final ValueChanged<Map<String, dynamic>> onOpenOrderItemProduct;
+  final ValueChanged<Map<String, dynamic>> onRepeatOrderItem;
+  final ValueChanged<String> onOpenOrderWeb;
+
+  const _MyOrdersPage({
+    required this.ordersFuture,
+    required this.loadOrderDetails,
+    required this.onOpenOrderItemProduct,
+    required this.onRepeatOrderItem,
+    required this.onOpenOrderWeb,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    String statusLabel(String raw) {
+      switch (raw.toLowerCase()) {
+        case 'paid':
+        case 'completed':
+        case 'shipped':
+        case 'processing':
+          return 'В работе';
+        case 'new':
+          return 'Новый';
+        case 'deleted':
+        case 'cancelled':
+        case 'canceled':
+          return 'Отменен';
+        default:
+          return raw.isEmpty ? 'Статус уточняется' : raw;
+      }
+    }
+
+    String orderTitle(Map<String, dynamic> order) {
+      final number =
+          (order['id_str'] ??
+                  order['number'] ??
+                  order['order_id'] ??
+                  order['id'])
+              ?.toString() ??
+          '';
+      return number.isEmpty ? 'Заказ' : 'Заказ №$number';
+    }
+
+    String orderSubtitle(Map<String, dynamic> order) {
+      final created = (order['create_datetime'] ?? order['datetime'] ?? '')
+          .toString();
+      final total = (order['total_str'] ?? order['total'] ?? '').toString();
+      final parts = <String>[];
+      if (created.isNotEmpty) parts.add(created);
+      if (total.isNotEmpty) parts.add('Сумма: $total');
+      return parts.join('  •  ');
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      appBar: AppBar(
+        title: const Text("Мои заказы", style: TextStyle(color: Colors.black)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: ordersFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.black),
+            );
+          }
+          final orders = snapshot.data ?? const [];
+          if (orders.isEmpty) {
+            return const Center(
+              child: Text(
+                "Заказы не найдены",
+                style: TextStyle(fontSize: 16, color: Colors.black54),
+              ),
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(10, 12, 10, 18),
+            itemCount: orders.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final order = orders[index];
+              final orderId = (order['id'] ?? order['order_id'] ?? '')
+                  .toString()
+                  .trim();
+              final status = statusLabel(
+                (order['state_id'] ?? order['status'] ?? '').toString(),
+              );
+              return Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: orderId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            CupertinoPageRoute<void>(
+                              builder: (_) => _OrderDetailsPage(
+                                orderId: orderId,
+                                loadOrderDetails: loadOrderDetails,
+                                onOpenOrderItemProduct: onOpenOrderItemProduct,
+                                onRepeatOrderItem: onRepeatOrderItem,
+                                onOpenOrderWeb: onOpenOrderWeb,
+                              ),
+                            ),
+                          );
+                        },
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.receipt_long, color: Colors.black45),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                orderTitle(order),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                orderSubtitle(order),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          status,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black45,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right, color: Colors.black38),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _OrderDetailsPage extends StatelessWidget {
+  final String orderId;
+  final Future<Map<String, dynamic>?> Function(String orderId) loadOrderDetails;
+  final ValueChanged<Map<String, dynamic>> onOpenOrderItemProduct;
+  final ValueChanged<Map<String, dynamic>> onRepeatOrderItem;
+  final ValueChanged<String> onOpenOrderWeb;
+
+  const _OrderDetailsPage({
+    required this.orderId,
+    required this.loadOrderDetails,
+    required this.onOpenOrderItemProduct,
+    required this.onRepeatOrderItem,
+    required this.onOpenOrderWeb,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    String formatTitle(Map<String, dynamic> order) {
+      final number =
+          (order['id_str'] ??
+                  order['number'] ??
+                  order['order_id'] ??
+                  order['id'])
+              ?.toString() ??
+          orderId;
+      return number.isEmpty ? 'Заказ' : 'Заказ №$number';
+    }
+
+    List<Map<String, dynamic>> extractItems(Map<String, dynamic> order) {
+      dynamic raw = order['items'] ?? order['products'] ?? order['cart'];
+      if (raw is List) {
+        return raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (raw is Map) {
+        return raw.values
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      return const [];
+    }
+
+    String itemName(Map<String, dynamic> item) {
+      return (item['name'] ?? item['product_name'] ?? item['title'] ?? 'Товар')
+          .toString();
+    }
+
+    String itemQty(Map<String, dynamic> item) {
+      final qty = item['quantity'] ?? item['qty'] ?? 1;
+      return qty.toString();
+    }
+
+    String itemPrice(Map<String, dynamic> item) {
+      return (item['price_str'] ?? item['price'] ?? '').toString();
+    }
+
+    String itemImageUrl(Map<String, dynamic> item) {
+      String pick(Map<String, dynamic> src, List<String> keys) {
+        for (final key in keys) {
+          final value = src[key]?.toString().trim() ?? '';
+          if (value.isNotEmpty) return value;
+        }
+        return '';
+      }
+
+      var raw = pick(item, const [
+        'image_url',
+        'image',
+        'photo_url',
+        'img',
+        'url_image',
+      ]);
+      if (raw.isEmpty && item['product'] is Map) {
+        raw = pick(Map<String, dynamic>.from(item['product'] as Map), const [
+          'image_url',
+          'image',
+          'photo_url',
+          'img',
+          'url_image',
+        ]);
+      }
+      if (raw.isEmpty) return '';
+      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+      if (raw.startsWith('//')) return 'https:$raw';
+      if (raw.startsWith('/')) return 'https://hozyain-barin.ru$raw';
+      return 'https://hozyain-barin.ru/$raw';
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      appBar: AppBar(
+        title: const Text(
+          "Детали заказа",
+          style: TextStyle(color: Colors.black),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: FutureBuilder<Map<String, dynamic>?>(
+        future: loadOrderDetails(orderId),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.black),
+            );
+          }
+          final order = snapshot.data;
+          if (order == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Не удалось загрузить детали заказа",
+                      style: TextStyle(fontSize: 16, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton(
+                      onPressed: () => onOpenOrderWeb(orderId),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text("Открыть заказ на сайте"),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          final items = extractItems(order);
+          final total =
+              (order['total_str'] ?? order['total'] ?? order['amount'] ?? '')
+                  .toString();
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(10, 12, 10, 20),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      formatTitle(order),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      (order['create_datetime'] ?? order['datetime'] ?? '')
+                          .toString(),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    if (total.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        "Сумма: $total",
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: items.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: Text(
+                          "Состав заказа недоступен",
+                          style: TextStyle(fontSize: 15, color: Colors.black54),
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          for (int i = 0; i < items.length; i++) ...[
+                            if (i > 0)
+                              Divider(height: 1, color: Colors.grey.shade200),
+                            Builder(
+                              builder: (_) {
+                                final item = items[i];
+                                final image = itemImageUrl(item);
+                                return Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          InkWell(
+                                            borderRadius: BorderRadius.circular(8),
+                                            onTap: () => onOpenOrderItemProduct(item),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(8),
+                                              child: SizedBox(
+                                                width: 52,
+                                                height: 52,
+                                                child: image.isEmpty
+                                                    ? Container(
+                                                        color: Colors.grey.shade100,
+                                                        child: const Icon(
+                                                          Icons
+                                                              .image_not_supported_outlined,
+                                                          color: Colors.black26,
+                                                          size: 18,
+                                                        ),
+                                                      )
+                                                    : CachedNetworkImage(
+                                                        imageUrl: image,
+                                                        fit: BoxFit.cover,
+                                                        errorWidget: (_, __, ___) =>
+                                                            Container(
+                                                              color: Colors
+                                                                  .grey
+                                                                  .shade100,
+                                                              child: const Icon(
+                                                                Icons
+                                                                    .broken_image_outlined,
+                                                                color: Colors.black26,
+                                                                size: 18,
+                                                              ),
+                                                            ),
+                                                      ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              onTap: () =>
+                                                  onOpenOrderItemProduct(item),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 2,
+                                                    ),
+                                                child: Text(
+                                                  itemName(item),
+                                                  style: const TextStyle(
+                                                    fontSize: 15,
+                                                    color: Colors.black87,
+                                                    decoration:
+                                                        TextDecoration.underline,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            "x${itemQty(item)}",
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.black54,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Text(
+                                            itemPrice(item),
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: OutlinedButton(
+                                          onPressed: () => onRepeatOrderItem(item),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: Colors.black87,
+                                            side: BorderSide(
+                                              color: Colors.grey.shade300,
+                                            ),
+                                            minimumSize: const Size(0, 34),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 0,
+                                            ),
+                                          ),
+                                          child: const Text('Повторить'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _NativeProductCardState extends State<NativeProductCard>

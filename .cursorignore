@@ -1,5 +1,3 @@
 build/
 .dart_tool/
-android/
-ios/
 .git/
