@@ -18,7 +18,7 @@ if (!defined('BONUSPLUS_API_BASE')) {
     define('BONUSPLUS_API_BASE', 'https://bonusplus.pro/api');
 }
 if (!defined('BONUSPLUS_API_KEY')) {
-    define('BONUSPLUS_API_KEY', 'ВСТАВЬТЕ_КЛЮЧ_API_BONUSPLUS');
+    define('BONUSPLUS_API_KEY', 'CF8291C0-8DC3-4FB2-A5F9-2E501E2107A7');
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -40,7 +40,7 @@ if ($phone_digits === '' || strlen($phone_digits) < 10) {
     exit;
 }
 
-if (BONUSPLUS_API_KEY === '' || BONUSPLUS_API_KEY === 'ВСТАВЬТЕ_КЛЮЧ_API_BONUSPLUS') {
+if (BONUSPLUS_API_KEY === '') {
     echo json_encode(['status' => 'error', 'message' => 'BonusPlus API key is not configured']);
     exit;
 }
