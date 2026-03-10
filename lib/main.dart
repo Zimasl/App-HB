@@ -1391,7 +1391,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (decoded is! Map) return null;
       final map = Map<String, dynamic>.from(decoded);
       if (map['status']?.toString() != 'ok') return null;
-      final dynamic rawBalance = map['bonus_balance'] ??
+      final dynamic rawBalance =
+          map['bonus_balance'] ??
           map['balance'] ??
           (map['customer'] is Map
               ? (map['customer'] as Map)['bonusBalance']
@@ -1407,10 +1408,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   String _formatBonusBalance(double balance) {
     final rounded = balance.roundToDouble();
     if ((balance - rounded).abs() < 0.001) return rounded.toInt().toString();
-    return balance.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
-          RegExp(r'\.$'),
-          '',
-        );
+    return balance
+        .toStringAsFixed(2)
+        .replaceAll(RegExp(r'0+$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
   }
 
   @override
@@ -5610,8 +5611,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     for (final item in items) {
       final existing = pickImage(item);
       if (existing.isNotEmpty) continue;
-      final productId =
-          (item['product_id'] ?? item['id'] ?? '').toString().trim();
+      final productId = (item['product_id'] ?? item['id'] ?? '')
+          .toString()
+          .trim();
       if (productId.isNotEmpty) {
         productIds.add(productId);
       }
@@ -5651,8 +5653,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           item['image_url'] = existing;
           continue;
         }
-        final productId =
-            (item['product_id'] ?? item['id'] ?? '').toString().trim();
+        final productId = (item['product_id'] ?? item['id'] ?? '')
+            .toString()
+            .trim();
         final resolved = productImageById[productId] ?? '';
         if (resolved.isNotEmpty) {
           item['image_url'] = resolved;
@@ -5664,7 +5667,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final keys = rawItems.keys.toList();
         final mapped = <String, dynamic>{};
         for (int i = 0; i < keys.length; i++) {
-          mapped[keys[i].toString()] = i < items.length ? items[i] : rawItems[keys[i]];
+          mapped[keys[i].toString()] = i < items.length
+              ? items[i]
+              : rawItems[keys[i]];
         }
         order['items'] = mapped;
       } else {
@@ -5708,16 +5713,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Map<String, dynamic> _orderItemToProductMap(Map<String, dynamic> item) {
-    final productId =
-        (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
-            .toString()
-            .trim();
+    final productId = (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
+        .toString()
+        .trim();
     final image = _resolveOrderItemImage(item);
     final name =
         (item['name'] ?? item['product_name'] ?? item['title'] ?? 'Товар')
             .toString()
             .trim();
-    final priceRaw = (item['price'] ?? item['price_str'] ?? '').toString().trim();
+    final priceRaw = (item['price'] ?? item['price_str'] ?? '')
+        .toString()
+        .trim();
     return <String, dynamic>{
       'id': productId,
       'name': name,
@@ -5730,10 +5736,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<void> _openOrderItemProduct(Map<String, dynamic> item) async {
-    final productId =
-        (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
-            .toString()
-            .trim();
+    final productId = (item['product_id'] ?? item['id'] ?? item['sku_id'] ?? '')
+        .toString()
+        .trim();
     Map<String, dynamic>? product;
     if (productId.isNotEmpty) {
       product = await _fetchProductInfoById(productId);
@@ -5918,7 +5923,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       await _openProfileAuthPage();
       return;
     }
-    final controller = TextEditingController(text: (_authUserName ?? '').trim());
+    final controller = TextEditingController(
+      text: (_authUserName ?? '').trim(),
+    );
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -11383,10 +11390,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 style: const TextStyle(fontSize: 13, color: Colors.black87),
               ),
               const Spacer(),
-              Text(
-                price,
-                style: _cardPriceStyle,
-              ),
+              Text(price, style: _cardPriceStyle),
             ],
           ),
         ),
@@ -11395,10 +11399,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Widget _buildProfilePage() {
-    final future =
-        _profileCheckoutStateFuture ??= _restoreCheckoutStateFromPrefs(
-          _authContactId,
-        );
+    final future = _profileCheckoutStateFuture ??=
+        _restoreCheckoutStateFromPrefs(_authContactId);
     final bonusFuture = _fetchBonusPlusBalance();
     return SliverToBoxAdapter(
       child: FutureBuilder<Map<String, dynamic>?>(
@@ -13912,7 +13914,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
           int.tryParse(saved['paymentMethod']?.toString() ?? '0') ?? 0;
       _onlinePaymentOption =
           int.tryParse(saved['onlinePaymentOption']?.toString() ?? '0') ?? 0;
-      _useBonuses = saved['useBonuses'] == true ||
+      _useBonuses =
+          saved['useBonuses'] == true ||
           saved['useBonuses']?.toString() == '1' ||
           saved['useBonuses']?.toString().toLowerCase() == 'true';
       _bonusAmountController.text =
@@ -13978,7 +13981,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   double get _bonusWriteOffValue {
     if (!_useBonuses) return 0;
-    final parsed = double.tryParse(
+    final parsed =
+        double.tryParse(
           _bonusAmountController.text.trim().replaceAll(',', '.'),
         ) ??
         0;
@@ -13989,16 +13993,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   String _sanitizeBonusInput(String raw) {
-    final normalized = raw.replaceAll(',', '.').replaceAll(RegExp(r'[^0-9.]'), '');
+    final normalized = raw
+        .replaceAll(',', '.')
+        .replaceAll(RegExp(r'[^0-9.]'), '');
     if (normalized.isEmpty) return '';
     final parsed = double.tryParse(normalized);
     if (parsed == null) return '';
     final fixed = parsed.clamp(0, _maxBonusWriteOff).toDouble();
     if ((fixed - fixed.round()).abs() < 0.001) return fixed.round().toString();
-    return fixed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
-          RegExp(r'\.$'),
-          '',
-        );
+    return fixed
+        .toStringAsFixed(2)
+        .replaceAll(RegExp(r'0+$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
   }
 
   Future<void> _loadBonusBalance() async {
@@ -14026,8 +14032,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         if (_useBonuses && _bonusAmountController.text.trim().isEmpty) {
           _bonusAmountController.text = _maxBonusWriteOff.round().toString();
         } else if (_bonusAmountController.text.trim().isNotEmpty) {
-          _bonusAmountController.text =
-              _sanitizeBonusInput(_bonusAmountController.text.trim());
+          _bonusAmountController.text = _sanitizeBonusInput(
+            _bonusAmountController.text.trim(),
+          );
         }
       });
     } catch (_) {
@@ -14040,10 +14047,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String _formatBonusBalance(double balance) {
     final rounded = balance.roundToDouble();
     if ((balance - rounded).abs() < 0.001) return rounded.toInt().toString();
-    return balance.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(
-          RegExp(r'\.$'),
-          '',
-        );
+    return balance
+        .toStringAsFixed(2)
+        .replaceAll(RegExp(r'0+$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
   }
 
   String _formatCheckoutPrice(double price) {
@@ -14084,8 +14091,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final comparePrice = _parseCheckoutPriceValue(
         item['compare_price'] ?? item['old_price'] ?? item['raw_compare_price'],
       );
-      final basePrice =
-          (comparePrice > 0 && comparePrice > price) ? comparePrice : price;
+      final basePrice = (comparePrice > 0 && comparePrice > price)
+          ? comparePrice
+          : price;
       total += basePrice * qty;
     }
     return total;
@@ -15540,9 +15548,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ),
                   children: [
                     const TextSpan(text: "Нажимая на кнопку "),
-                    const TextSpan(
-                      text: "«Заказать»",
-                    ),
+                    const TextSpan(text: "«Заказать»"),
                     const TextSpan(text: ", вы соглашаетесь с "),
                     TextSpan(
                       text: "Условиями политики конфиденциальности",
@@ -15579,7 +15585,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
               border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: Padding(
@@ -15638,11 +15646,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                           color: Colors.white.withValues(
                                             alpha: 0.75,
                                           ),
-                                          decoration: TextDecoration.lineThrough,
-                                          decorationColor:
-                                              Colors.white.withValues(
-                                                alpha: 0.75,
-                                              ),
+                                          decoration:
+                                              TextDecoration.lineThrough,
+                                          decorationColor: Colors.white
+                                              .withValues(alpha: 0.75),
                                           decorationThickness: 1.6,
                                         ),
                                       ),
@@ -15686,7 +15693,8 @@ class _NativeJsonDocumentPage extends StatefulWidget {
   const _NativeJsonDocumentPage({required this.title, required this.url});
 
   @override
-  State<_NativeJsonDocumentPage> createState() => _NativeJsonDocumentPageState();
+  State<_NativeJsonDocumentPage> createState() =>
+      _NativeJsonDocumentPageState();
 }
 
 class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
@@ -15746,7 +15754,8 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         if (!mounted) return;
         setState(() {
           _isLoading = false;
-          _errorText = 'Не удалось загрузить документ (${response.statusCode}).';
+          _errorText =
+              'Не удалось загрузить документ (${response.statusCode}).';
         });
         return;
       }
@@ -15842,7 +15851,10 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                       child: Text(
                         _errorText!,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 14, color: Colors.black54),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.black54,
+                        ),
                       ),
                     )
                   : Html(
@@ -25242,22 +25254,30 @@ class _OrderDetailsPage extends StatelessWidget {
                                 return Padding(
                                   padding: const EdgeInsets.all(12),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           InkWell(
-                                            borderRadius: BorderRadius.circular(8),
-                                            onTap: () => onOpenOrderItemProduct(item),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            onTap: () =>
+                                                onOpenOrderItemProduct(item),
                                             child: ClipRRect(
-                                              borderRadius: BorderRadius.circular(8),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                               child: SizedBox(
                                                 width: 52,
                                                 height: 52,
                                                 child: image.isEmpty
                                                     ? Container(
-                                                        color: Colors.grey.shade100,
+                                                        color: Colors
+                                                            .grey
+                                                            .shade100,
                                                         child: const Icon(
                                                           Icons
                                                               .image_not_supported_outlined,
@@ -25268,15 +25288,20 @@ class _OrderDetailsPage extends StatelessWidget {
                                                     : CachedNetworkImage(
                                                         imageUrl: image,
                                                         fit: BoxFit.cover,
-                                                        errorWidget: (_, __, ___) =>
-                                                            Container(
+                                                        errorWidget:
+                                                            (
+                                                              _,
+                                                              __,
+                                                              ___,
+                                                            ) => Container(
                                                               color: Colors
                                                                   .grey
                                                                   .shade100,
                                                               child: const Icon(
                                                                 Icons
                                                                     .broken_image_outlined,
-                                                                color: Colors.black26,
+                                                                color: Colors
+                                                                    .black26,
                                                                 size: 18,
                                                               ),
                                                             ),
@@ -25301,8 +25326,8 @@ class _OrderDetailsPage extends StatelessWidget {
                                                   style: const TextStyle(
                                                     fontSize: 15,
                                                     color: Colors.black87,
-                                                    decoration:
-                                                        TextDecoration.underline,
+                                                    decoration: TextDecoration
+                                                        .underline,
                                                   ),
                                                 ),
                                               ),
@@ -25330,7 +25355,8 @@ class _OrderDetailsPage extends StatelessWidget {
                                       Align(
                                         alignment: Alignment.centerRight,
                                         child: OutlinedButton(
-                                          onPressed: () => onRepeatOrderItem(item),
+                                          onPressed: () =>
+                                              onRepeatOrderItem(item),
                                           style: OutlinedButton.styleFrom(
                                             foregroundColor: Colors.black87,
                                             side: BorderSide(
