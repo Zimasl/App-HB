@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -3477,12 +3478,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final qty = item['cart_quantity'] as int? ?? 1;
       final raw = item['raw_price'] ?? item['price'];
       final price = (raw is num) ? raw.toDouble() : _parsePriceValue(raw);
+      final rawCompare = item['raw_compare_price'] ?? item['compare_price'];
+      final comparePrice = (rawCompare is num)
+          ? rawCompare.toDouble()
+          : _parsePriceValue(rawCompare);
       totalSum += price * qty;
       payloadItems.add({
         'id': id,
         'name': item['name']?.toString() ?? "",
         'quantity': qty,
         'price': price,
+        'compare_price': comparePrice > price ? comparePrice : price,
       });
     }
     Navigator.push(
@@ -11843,7 +11849,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             _buildBottomSheetHandle(),
             const SizedBox(height: 8),
             const Padding(
@@ -13859,6 +13865,10 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
+  static const String _privacyPolicyJsonUrl =
+      'https://hozyain-barin.ru/native/privacy_policy.json';
+  static const String _termsOfSaleJsonUrl =
+      'https://hozyain-barin.ru/native/terms_of_sale.json';
   final _addressController = TextEditingController();
   final _bonusAmountController = TextEditingController();
   int _deliveryMethod = 1; // 0 - доставка, 1 - самовывоз
@@ -13876,10 +13886,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _isSubmittingOrder = false;
   String? _orderNumber;
   String? _orderError;
+  late final TapGestureRecognizer _privacyPolicyTapRecognizer;
+  late final TapGestureRecognizer _termsOfSaleTapRecognizer;
 
   @override
   void initState() {
     super.initState();
+    _privacyPolicyTapRecognizer = TapGestureRecognizer()
+      ..onTap = _openPrivacyPolicyPage;
+    _termsOfSaleTapRecognizer = TapGestureRecognizer()
+      ..onTap = _openTermsOfSalePage;
     unawaited(_restoreCheckoutState());
     unawaited(_loadBonusBalance());
   }
@@ -14028,6 +14044,51 @@ class _CheckoutPageState extends State<CheckoutPage> {
           RegExp(r'\.$'),
           '',
         );
+  }
+
+  String _formatCheckoutPrice(double price) {
+    final normalized = price < 0 ? 0.0 : price;
+    final rounded = (normalized * 100).round() / 100;
+    final wholePart = (rounded - rounded.round()).abs() < 0.001
+        ? rounded.round().toString()
+        : rounded
+              .toStringAsFixed(2)
+              .replaceAll(RegExp(r'0+$'), '')
+              .replaceAll(RegExp(r'\.$'), '');
+    return wholePart.replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]} ',
+    );
+  }
+
+  double _parseCheckoutPriceValue(dynamic raw) {
+    if (raw is num) return raw.toDouble();
+    final text = (raw ?? '').toString().trim();
+    if (text.isEmpty) return 0;
+    final normalized = text
+        .replaceAll(RegExp(r'[^\d,.\-]'), '')
+        .replaceAll(' ', '')
+        .replaceAll(',', '.');
+    return double.tryParse(normalized) ?? 0;
+  }
+
+  double _computeOrderCompareTotal() {
+    double total = 0;
+    for (final item in widget.items) {
+      final qtyRaw = item['quantity'] ?? item['count'];
+      final qty = qtyRaw is num
+          ? qtyRaw.toDouble()
+          : double.tryParse(qtyRaw?.toString() ?? '') ?? 1;
+      if (qty <= 0) continue;
+      final price = _parseCheckoutPriceValue(item['price']);
+      final comparePrice = _parseCheckoutPriceValue(
+        item['compare_price'] ?? item['old_price'] ?? item['raw_compare_price'],
+      );
+      final basePrice =
+          (comparePrice > 0 && comparePrice > price) ? comparePrice : price;
+      total += basePrice * qty;
+    }
+    return total;
   }
 
   String _buildDeliveryShortAddress({
@@ -14275,14 +14336,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   @override
   void dispose() {
+    _privacyPolicyTapRecognizer.dispose();
+    _termsOfSaleTapRecognizer.dispose();
     _addressController.dispose();
     _bonusAmountController.dispose();
     super.dispose();
   }
 
-  Widget _section(String title, List<Widget> children) {
+  Widget _section(
+    String title,
+    List<Widget> children, {
+    double bottomMargin = 12,
+  }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: bottomMargin),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -14394,6 +14461,30 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _deliveryMethod = 1;
     });
     unawaited(_persistCheckoutState());
+  }
+
+  void _openPrivacyPolicyPage() {
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => const _NativeJsonDocumentPage(
+          title: 'Условия политики конфиденциальности',
+          url: _privacyPolicyJsonUrl,
+        ),
+      ),
+    );
+  }
+
+  void _openTermsOfSalePage() {
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => const _NativeJsonDocumentPage(
+          title: 'Условия гарантии и возврата',
+          url: _termsOfSaleJsonUrl,
+        ),
+      ),
+    );
   }
 
   @override
@@ -14523,6 +14614,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _selectedPickupPoint != null &&
         (selectedPickupName.isNotEmpty || selectedPickupAddress.isNotEmpty);
     final hasSelectedDelivery = selectedDeliverySummary.isNotEmpty;
+    final orderTotal = widget.total < 0 ? 0.0 : widget.total;
+    final orderCompareTotal = _computeOrderCompareTotal();
+    final payableTotal = (orderTotal - _bonusWriteOffValue).clamp(
+      0.0,
+      double.infinity,
+    );
+    final baseTotalForDisplay = math.max(orderCompareTotal, orderTotal);
+    final hasCrossedPrice = (baseTotalForDisplay - payableTotal) > 0.001;
     final deliveryDateTimeLabel = <String>[
       if (selectedDeliveryDate.isNotEmpty) selectedDeliveryDate,
       if (selectedDeliveryTime.isNotEmpty) selectedDeliveryTime,
@@ -15422,45 +15521,344 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ),
                 ),
               ],
-            ]),
-            const SizedBox(height: 4),
-            SizedBox(
-              height: 48,
-              child: ElevatedButton(
-                onPressed: _isSubmittingOrder ? null : _submitOrder,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            ], bottomMargin: 0),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E5E7)),
+              ),
+              child: Text.rich(
+                TextSpan(
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                    height: 1.3,
                   ),
-                  elevation: 0,
-                ),
-                child: _isSubmittingOrder
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text(
-                        "Подтвердить заказ",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
+                  children: [
+                    const TextSpan(text: "Нажимая на кнопку "),
+                    const TextSpan(
+                      text: "«Заказать»",
+                    ),
+                    const TextSpan(text: ", вы соглашаетесь с "),
+                    TextSpan(
+                      text: "Условиями политики конфиденциальности",
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        decoration: TextDecoration.underline,
                       ),
+                      recognizer: _privacyPolicyTapRecognizer,
+                    ),
+                    const TextSpan(text: " и "),
+                    TextSpan(
+                      text: "Условиями гарантии и возврата",
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        decoration: TextDecoration.underline,
+                      ),
+                      recognizer: _termsOfSaleTapRecognizer,
+                    ),
+                    const TextSpan(text: "."),
+                  ],
+                ),
               ),
             ),
-            if (_orderError != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _orderError!,
-                style: const TextStyle(fontSize: 13, color: Colors.red),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+      bottomNavigationBar: Container(
+        color: Colors.white,
+        child: SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 48,
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isSubmittingOrder ? null : _submitOrder,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: _isSubmittingOrder
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Row(
+                              children: [
+                                const Icon(
+                                  Icons.account_balance_wallet_rounded,
+                                  size: 18,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    "Заказать",
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (hasCrossedPrice)
+                                      Text(
+                                        "${_formatCheckoutPrice(baseTotalForDisplay)} ₽",
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w300,
+                                          color: Colors.white.withValues(
+                                            alpha: 0.75,
+                                          ),
+                                          decoration: TextDecoration.lineThrough,
+                                          decorationColor:
+                                              Colors.white.withValues(
+                                                alpha: 0.75,
+                                              ),
+                                          decorationThickness: 1.6,
+                                        ),
+                                      ),
+                                    if (hasCrossedPrice)
+                                      const SizedBox(width: 6),
+                                    Text(
+                                      "${_formatCheckoutPrice(payableTotal)} ₽",
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  if (_orderError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _orderError!,
+                      style: const TextStyle(fontSize: 13, color: Colors.red),
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NativeJsonDocumentPage extends StatefulWidget {
+  final String title;
+  final String url;
+
+  const _NativeJsonDocumentPage({required this.title, required this.url});
+
+  @override
+  State<_NativeJsonDocumentPage> createState() => _NativeJsonDocumentPageState();
+}
+
+class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
+  bool _isLoading = true;
+  String? _errorText;
+  late String _pageTitle;
+  String _htmlBody = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _pageTitle = widget.title;
+    unawaited(_loadDocument());
+  }
+
+  static String _normalizeHtml(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return '';
+    if (RegExp(r'<[^>]+>').hasMatch(value)) return value;
+    final escaped = const HtmlEscape().convert(value);
+    return escaped.replaceAll('\n', '<br/>');
+  }
+
+  static String _extractTextFromJson(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is num || raw is bool) return raw.toString();
+    if (raw is List) {
+      final parts = <String>[];
+      for (final item in raw) {
+        final text = _extractTextFromJson(item).trim();
+        if (text.isNotEmpty) parts.add(text);
+      }
+      return parts.join('\n\n');
+    }
+    if (raw is Map) {
+      const keys = ['content', 'text', 'description', 'body', 'value', 'html'];
+      for (final key in keys) {
+        final value = raw[key];
+        final text = _extractTextFromJson(value).trim();
+        if (text.isNotEmpty) return text;
+      }
+      final parts = <String>[];
+      for (final value in raw.values) {
+        final text = _extractTextFromJson(value).trim();
+        if (text.isNotEmpty) parts.add(text);
+      }
+      return parts.join('\n\n');
+    }
+    return raw.toString();
+  }
+
+  Future<void> _loadDocument() async {
+    try {
+      final response = await _httpGet(Uri.parse(widget.url));
+      if (response.statusCode != 200) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _errorText = 'Не удалось загрузить документ (${response.statusCode}).';
+        });
+        return;
+      }
+
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      dynamic source = decoded;
+      if (decoded is List && decoded.isNotEmpty) {
+        source = decoded.first;
+      }
+
+      if (source is Map) {
+        final titleRaw = source['title'] ?? source['name'];
+        final extractedTitle = titleRaw?.toString().trim() ?? '';
+        if (extractedTitle.isNotEmpty) _pageTitle = extractedTitle;
+      }
+
+      final bodyText = _extractTextFromJson(source);
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorText = null;
+        _htmlBody = _normalizeHtml(bodyText);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorText = 'Ошибка загрузки документа.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.white,
+        automaticallyImplyLeading: false,
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            IconButton(
+              icon: const Icon(
+                Icons.arrow_back_ios_new,
+                color: Colors.black,
+                size: 20,
+              ),
+              onPressed: () => Navigator.pop(context),
+            ),
+            Expanded(
+              child: Text(
+                _pageTitle,
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  color: Colors.black,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 48),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(5, 12, 5, 20),
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: _isLoading
+                  ? const SizedBox(
+                      height: 120,
+                      child: Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : _errorText != null
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        _errorText!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 14, color: Colors.black54),
+                      ),
+                    )
+                  : Html(
+                      data: _htmlBody,
+                      style: {
+                        'body': Style(
+                          margin: Margins.zero,
+                          padding: HtmlPaddings.zero,
+                          color: Colors.black87,
+                          fontSize: FontSize(14),
+                          lineHeight: const LineHeight(1.35),
+                        ),
+                        'p': Style(margin: Margins.only(bottom: 10)),
+                      },
+                    ),
+            ),
           ],
         ),
       ),
