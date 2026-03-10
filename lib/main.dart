@@ -1150,6 +1150,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<Map<String, dynamic>?>? _profileCheckoutStateFuture;
   final Map<String, Timer?> _nativeLoadingIndicatorTimers = {};
   final Map<String, List<MapEntry<String, String>>> _nativeFilterParams = {};
+  final ScrollController _subcategoryMainScrollController = ScrollController();
+  final ScrollController _subcategoryPreviewScrollController =
+      ScrollController();
+  String? _subcategoryMainCategoryId;
+  String? _subcategoryPreviewCategoryId;
 
   // Фильтры
   List<dynamic> _availableFeatures = [];
@@ -1419,6 +1424,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _catalogBackSwipeController.dispose();
     _catalogBackSwipeOffsetNotifier.dispose();
     _nativeScrollController.dispose();
+    _subcategoryMainScrollController.dispose();
+    _subcategoryPreviewScrollController.dispose();
     _discountScrollController.dispose();
     _compareTableScrollController.dispose();
     _compareStickyScrollController.dispose();
@@ -5197,10 +5204,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     bool isNative = nativeKey != null;
 
     if (!isNative) {
-      _launchUrl('https://hozyain-barin.ru$urlPath');
+      if (catId != null && catId.isNotEmpty) {
+        final customKey = "custom_$catId";
+        _openNativeCategoryById(
+          key: customKey,
+          categoryId: catId,
+          title: apiTitle.isNotEmpty ? apiTitle : "Категория",
+        );
+        return;
+      }
       if (Navigator.canPop(context)) {
         Navigator.pop(context);
       }
+      _showNativeOnlyNotice();
       return;
     }
 
@@ -5224,6 +5240,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  void _showNativeOnlyNotice() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text("В приложении доступны только нативные разделы."),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   void _navigateToSimple(String title, String path) {
     if (_isNativeCategoryPage &&
         (_isUserScrolling || _scrollingNotifier.value)) {
@@ -5234,10 +5262,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     bool isNative = nativeKey != null;
 
     if (!isNative) {
-      _launchUrl('https://hozyain-barin.ru$path');
       if (Navigator.canPop(context)) {
         Navigator.pop(context);
       }
+      _showNativeOnlyNotice();
       return;
     }
 
@@ -6296,9 +6324,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return CustomScrollView(
       physics: const NeverScrollableScrollPhysics(),
       slivers: [
-        if (previewKey == "men")
+        if (_shouldShowSubcategoriesForNativeKey(previewKey))
           const SliverToBoxAdapter(child: SizedBox(height: 5)),
-        if (previewKey == "men") _buildMenSubcategoriesSliver(),
+        if (_shouldShowSubcategoriesForNativeKey(previewKey))
+          _buildMenSubcategoriesSliver(
+            categoryId: _nativeCategoryIdForSubcategories(previewKey),
+            forPreview: true,
+          ),
         previewSliver,
         if (previewKey != "wishlist" &&
             previewKey != "compare" &&
@@ -6384,6 +6416,53 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (path.contains('/koshelki/')) return "wallets";
     if (path.contains('/aksessuary/')) return "accessories";
     return null;
+  }
+
+  String? _nativeCategoryIdForSubcategories(String nativeKey) {
+    switch (nativeKey) {
+      case "men":
+        return _menBagsCategoryId;
+      case "belt":
+        return _beltBagsCategoryId;
+      case "shoulder":
+        return _shoulderBagsCategoryId;
+      case "tablet":
+        return _tabletBagsCategoryId;
+      case "business":
+        return _businessBagsCategoryId;
+      case "women":
+        return _womenBagsCategoryId;
+      case "travel":
+        return _travelBagsCategoryId;
+      case "backpacks":
+        return _backpacksCategoryId;
+      case "belts":
+        return _beltsCategoryId;
+      case "wallets":
+        return _walletsCategoryId;
+      case "accessories":
+        return _accessoriesCategoryId;
+      default:
+        final customId = _nativeCustomCategoryIdByKey[nativeKey];
+        if (customId != null && customId.isNotEmpty) return customId;
+        if (nativeKey.startsWith('custom_') && nativeKey.length > 7) {
+          return nativeKey.substring(7);
+        }
+        return null;
+    }
+  }
+
+  bool _shouldShowSubcategoriesForNativeKey(String nativeKey) {
+    if (nativeKey.isEmpty ||
+        nativeKey == "wishlist" ||
+        nativeKey == "compare" ||
+        nativeKey == "cart" ||
+        nativeKey == "profile") {
+      return false;
+    }
+    final categoryId = _nativeCategoryIdForSubcategories(nativeKey);
+    if (categoryId == null || categoryId.isEmpty) return false;
+    return _getCategoryChildren(categoryId).isNotEmpty;
   }
 
   void _fetchActiveNativeCategoryIfNeeded() {
@@ -6716,6 +6795,35 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return name.isNotEmpty ? name : fallback;
   }
 
+  void _resetSubcategoryScrollIfNeeded({
+    required String targetCategoryId,
+    required bool forPreview,
+  }) {
+    final controller = forPreview
+        ? _subcategoryPreviewScrollController
+        : _subcategoryMainScrollController;
+    final lastCategoryId = forPreview
+        ? _subcategoryPreviewCategoryId
+        : _subcategoryMainCategoryId;
+    if (lastCategoryId == targetCategoryId) return;
+    if (forPreview) {
+      _subcategoryPreviewCategoryId = targetCategoryId;
+    } else {
+      _subcategoryMainCategoryId = targetCategoryId;
+    }
+
+    void resetToStart() {
+      if (!controller.hasClients) return;
+      controller.jumpTo(0);
+    }
+
+    if (controller.hasClients) {
+      resetToStart();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => resetToStart());
+    }
+  }
+
   bool _isProductInCategory(Map<dynamic, dynamic> product, String categoryId) {
     if (categoryId.isEmpty) return false;
     final dynamic sourceId = product['source_category_id'];
@@ -6906,10 +7014,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           parent: BouncingScrollPhysics(),
                         ),
                   slivers: [
-                    if (_nativeCategory == "men")
+                    if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
                       const SliverToBoxAdapter(child: SizedBox(height: 5)),
-                    if (_nativeCategory == "men")
-                      _buildMenSubcategoriesSliver(),
+                    if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
+                      _buildMenSubcategoriesSliver(
+                        categoryId: _nativeCategoryIdForSubcategories(
+                          _nativeCategory,
+                        ),
+                      ),
                     if (_nativeCategory == "compare")
                       _buildComparePage(_getActiveNativeList())
                     else if (_nativeCategory == "wishlist")
@@ -9945,15 +10057,31 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return image;
   }
 
-  Widget _buildMenSubcategoriesSliver() {
-    final children = _getCategoryChildren(_menBagsCategoryId);
+  Widget _buildMenSubcategoriesSliver({
+    String? categoryId,
+    bool forPreview = false,
+  }) {
+    final targetCategoryId = categoryId ?? _menBagsCategoryId;
+    final children = _getCategoryChildren(targetCategoryId);
     if (children.isEmpty) {
       return const SliverToBoxAdapter(child: SizedBox(height: 10));
     }
+    _resetSubcategoryScrollIfNeeded(
+      targetCategoryId: targetCategoryId,
+      forPreview: forPreview,
+    );
     return SliverToBoxAdapter(
       child: SizedBox(
         height: 136,
         child: ListView.builder(
+          key: ValueKey(
+            forPreview
+                ? 'subcategories_preview_$targetCategoryId'
+                : 'subcategories_main_$targetCategoryId',
+          ),
+          controller: forPreview
+              ? _subcategoryPreviewScrollController
+              : _subcategoryMainScrollController,
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
           itemCount: children.length,
@@ -12924,7 +13052,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           hasChildren: children.isNotEmpty,
           isExpanded: isExpanded,
           onTap: () {
-            _navigateToApiCategory(cat);
+            if (children.isNotEmpty) {
+              setDialogState(
+                () => _expandedCategoryId = isExpanded ? null : catId,
+              );
+            } else {
+              _navigateToApiCategory(cat);
+            }
           },
           onExpand: () => setDialogState(
             () => _expandedCategoryId = isExpanded ? null : catId,
