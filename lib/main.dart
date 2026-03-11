@@ -11679,7 +11679,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           },
                         ),
                         Divider(color: Colors.grey.shade100, thickness: 8),
-                        _buildSimpleContacts(),
                         const SizedBox(height: 30),
                       ],
                     ),
@@ -12199,6 +12198,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
                       ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _buildSimpleContacts(),
                       Divider(height: 1, color: Colors.grey.shade200),
                       _profileMenuTile(
                         icon: Icons.logout,
