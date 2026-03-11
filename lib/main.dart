@@ -14055,58 +14055,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
   }
 
-  Widget _buildCategoryItemDynamic(dynamic cat, StateSetter setDialogState) {
-    var rawChildren = cat['categories'] ?? cat['children'];
-    List<dynamic> children = (rawChildren is List)
-        ? rawChildren.where((sub) => sub['status'].toString() != "0").toList()
-        : [];
-    String catId = cat['id'].toString();
-    bool isExpanded = _expandedCategoryId == catId;
-
-    return Column(
-      children: [
-        _menuRow(
-          cat['name'].toString(),
-          "",
-          hasChildren: children.isNotEmpty,
-          isExpanded: isExpanded,
-          onTap: () {
-            if (children.isNotEmpty) {
-              setDialogState(
-                () => _expandedCategoryId = isExpanded ? null : catId,
-              );
-            } else {
-              _navigateToApiCategory(cat);
-            }
-          },
-          onExpand: () => setDialogState(
-            () => _expandedCategoryId = isExpanded ? null : catId,
-          ),
-        ),
-        if (isExpanded)
-          Column(
-            children: [
-              _menuRow(
-                "Все товары",
-                "",
-                isSub: true,
-                isBold: true,
-                onTap: () => _navigateToApiCategory(cat),
-              ),
-              ...children.map(
-                (sub) => _menuRow(
-                  sub['name'].toString(),
-                  "",
-                  isSub: true,
-                  onTap: () => _navigateToApiCategory(sub),
-                ),
-              ),
-            ],
-          ),
-      ],
-    );
-  }
-
   Widget _contactBox(String title, String sub, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
