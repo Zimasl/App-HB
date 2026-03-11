@@ -272,6 +272,7 @@ const String _prefsAuthPhotoUrlKey = 'hb.auth.photo_url';
 const String _prefsCheckoutStatePrefix = 'hb.checkout.state.';
 const String _prefsCartStateKey = 'hb.cart.state';
 const String _prefsViewedProductsKey = 'hb.viewed.products';
+const String _prefsSearchHistoryKey = 'hb.search.history';
 
 String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
@@ -1028,6 +1029,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "belts": [],
     "wallets": [],
     "accessories": [],
+    "search": [],
     "wishlist": [],
     "compare": [],
     "profile": [],
@@ -1044,6 +1046,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "belts": [],
     "wallets": [],
     "accessories": [],
+    "search": [],
     "wishlist": [],
     "compare": [],
     "profile": [],
@@ -1064,9 +1067,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   String _walletsCategoryId = "84";
   String _accessoriesCategoryId = "101";
   String _nativeCategory =
-      "men"; // men | belt | shoulder | tablet | business | women | travel | backpacks | belts | wallets | accessories | discount_men | discount_women | wishlist | compare
+      "men"; // men | belt | shoulder | tablet | business | women | travel | backpacks | belts | wallets | accessories | discount_men | discount_women | search | wishlist | compare
   final Set<String> _animatedProductIds = <String>{};
   static const int _nativePageSize = 30;
+  static const int _nativeSearchPageSize = 60;
+  String _activeSearchQuery = "";
+  bool _isBurgerMenuOpen = false;
+  List<String> _searchHistory = [];
   final Map<String, String> _nativeCustomCategoryIdByKey = {
     "discount_men": "156",
     "discount_women": "157",
@@ -1087,6 +1094,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": 0,
     "discount_men": 0,
     "discount_women": 0,
+    "search": 0,
     "wishlist": 0,
     "compare": 0,
     "profile": 0,
@@ -1105,6 +1113,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": true,
     "discount_men": true,
     "discount_women": true,
+    "search": true,
     "wishlist": false,
     "compare": false,
     "profile": false,
@@ -1123,6 +1132,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": false,
     "discount_men": false,
     "discount_women": false,
+    "search": false,
     "wishlist": false,
     "compare": false,
     "profile": false,
@@ -1142,6 +1152,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "accessories": false,
     "discount_men": false,
     "discount_women": false,
+    "search": false,
     "wishlist": false,
     "compare": false,
     "profile": false,
@@ -1210,6 +1221,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     unawaited(_restoreAuthSessionAndRefreshUi());
     unawaited(_restoreCartFromPrefs());
     unawaited(_restoreViewedProductsFromPrefs());
+    unawaited(_restoreSearchHistoryFromPrefs());
     _catalogBackSwipeController =
         AnimationController(
             vsync: this,
@@ -1902,6 +1914,274 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _nativeLoadingIndicatorTimers[key]?.cancel();
       _nativeLoadingIndicatorTimers[key] = null;
       if (mounted) setState(() => _isFilterLoading = false);
+    }
+  }
+
+  Future<void> _fetchNativeSearch({
+    required String query,
+    bool reset = true,
+  }) async {
+    const key = "search";
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty) return;
+    if (_nativeIsLoadingMore[key] == true) return;
+    if (!reset && _nativeHasMore[key] == false) return;
+    if (reset) {
+      if (_nativeInitialLoadingKeys.contains(key)) return;
+      _nativeInitialLoadingKeys.add(key);
+    }
+
+    try {
+      if (reset) {
+        if (mounted) setState(() => _isFilterLoading = true);
+        _nativeOffsets[key] = 0;
+        _nativeHasMore[key] = true;
+        _nativeIsLoadingMore[key] = false;
+        _nativeShowLoadingIndicator[key] = false;
+        _nativeLoadingIndicatorTimers[key]?.cancel();
+        _nativeLoadingIndicatorTimers[key] = null;
+        _setNativeListByKey(key, []);
+        _setOriginalNativeListByKey(key, []);
+        _nativeFilterParams[key] = [];
+        _availableFeatureValuesInCategory = {};
+        _pendingGalleryRequests.removeWhere((req) => req.categoryKey == key);
+        _queuedGalleryRequestKeys.removeWhere((k) => k.startsWith("$key::"));
+        _galleryRequestsInFlight.removeWhere((k) => k.startsWith("$key::"));
+      } else {
+        _nativeIsLoadingMore[key] = true;
+        _nativeShowLoadingIndicator[key] = false;
+        _nativeLoadingIndicatorTimers[key]?.cancel();
+        _nativeLoadingIndicatorTimers[key] = Timer(
+          const Duration(milliseconds: 600),
+          () {
+            if (mounted && _nativeIsLoadingMore[key] == true) {
+              _nativeShowLoadingIndicator[key] = true;
+              setState(() {});
+            }
+          },
+        );
+      }
+
+      final offset = _nativeOffsets[key] ?? 0;
+      final existing = _getNativeListByKey(key);
+      final existingOriginal = _getOriginalNativeListByKey(key);
+      final existingIds = <String>{};
+      for (final item in existing) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString() ?? "";
+        if (id.isNotEmpty) existingIds.add(id);
+      }
+      final queryParts = <String>[
+        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+        'limit=$_nativeSearchPageSize',
+        'offset=$offset',
+        'hash=${Uri.encodeQueryComponent('search/query=$trimmedQuery')}',
+        'sort=create_datetime',
+        'order=desc',
+        'status=1',
+        'in_stock=1',
+      ];
+      final url =
+          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
+      final response = await _httpGet(Uri.parse(url));
+
+      if (response.statusCode != 200) {
+        return;
+      }
+      final parsed = await compute(_parseNativeCategoryPayload, response.body);
+      final rawItems = parsed['items'];
+      final List<dynamic> initialProducts = (rawItems is List) ? rawItems : [];
+      final fetchedCountRaw = parsed['fetchedCount'];
+      final int fetchedCount = fetchedCountRaw is int
+          ? fetchedCountRaw
+          : (fetchedCountRaw is num
+                ? fetchedCountRaw.toInt()
+                : initialProducts.length);
+
+      if (_hasDiscountConfig) {
+        _applyDiscountConfigToProducts(initialProducts);
+      }
+
+      final List<dynamic> uniqueNew = [];
+      for (final item in initialProducts) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString() ?? "";
+        if (id.isEmpty || !existingIds.contains(id)) {
+          if (id.isNotEmpty) existingIds.add(id);
+          uniqueNew.add(item);
+        }
+      }
+
+      final merged = [...existing, ...uniqueNew];
+      final mergedOriginal = [...existingOriginal, ...uniqueNew];
+      final bool isInitialPage = reset && offset == 0;
+
+      if (mounted) {
+        setState(() {
+          _setNativeListByKey(key, merged);
+          _setOriginalNativeListByKey(key, mergedOriginal);
+          _isFilterLoading = false;
+          _currentSort = "default";
+        });
+      }
+
+      if (key == _nativeCategory) {
+        _updateAvailableFeatureValuesForProducts(uniqueNew);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (isInitialPage) {
+            _precacheCategoryPreviewImages(merged);
+          }
+          _scheduleVisibleGalleryLoad(key);
+          _loadMoreActiveNativeIfNeeded();
+        });
+      }
+
+      final startIndex = merged.length - uniqueNew.length;
+      final List<dynamic> queueProducts = isInitialPage
+          ? uniqueNew.take(10).toList()
+          : uniqueNew;
+      _enqueueGalleryRequests(queueProducts, startIndex, key);
+      _startGalleryProcessing();
+
+      _nativeOffsets[key] = offset + fetchedCount;
+      _nativeHasMore[key] = fetchedCount >= _nativeSearchPageSize;
+    } catch (e) {
+      debugPrint("Native search API error: $e");
+    } finally {
+      if (reset) {
+        _nativeInitialLoadingKeys.remove(key);
+      }
+      _nativeIsLoadingMore[key] = false;
+      _nativeShowLoadingIndicator[key] = false;
+      _nativeLoadingIndicatorTimers[key]?.cancel();
+      _nativeLoadingIndicatorTimers[key] = null;
+      if (mounted) setState(() => _isFilterLoading = false);
+    }
+  }
+
+  String _buildSearchCategoryHintSubtitle(
+    Map<String, dynamic> category, {
+    String parentName = "",
+  }) {
+    if (parentName.trim().isNotEmpty) return parentName.trim();
+    final children = _getCategoryChildren(category['id']?.toString() ?? "");
+    final names = children
+        .whereType<Map>()
+        .map((e) => e['name']?.toString().trim() ?? "")
+        .where((e) => e.isNotEmpty)
+        .take(2)
+        .toList();
+    if (names.length >= 2) return "${names[0]} и ${names[1]}";
+    if (names.length == 1) return names.first;
+    return "Категория";
+  }
+
+  List<Map<String, dynamic>> _buildNativeSearchCategoryHints(
+    String query, {
+    int limit = 2,
+  }) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.length < 2) return [];
+    final source = _allCategories.isNotEmpty ? _allCategories : _apiCategories;
+    if (source.isEmpty) return [];
+    final seenIds = <String>{};
+    final result = <Map<String, dynamic>>[];
+
+    void collect(List<dynamic> categories, String parentName) {
+      for (final raw in categories) {
+        if (result.length >= limit) return;
+        if (raw is! Map) continue;
+        if (raw['status']?.toString() == "0") continue;
+        final id = raw['id']?.toString() ?? "";
+        final name = raw['name']?.toString().trim() ?? "";
+        if (id.isEmpty || name.isEmpty) continue;
+
+        final normalizedName = _normalizeSearchText(name);
+        if (normalizedName.contains(normalizedQuery) && seenIds.add(id)) {
+          final category = Map<String, dynamic>.from(raw);
+          result.add({
+            "id": id,
+            "name": name,
+            "subtitle": _buildSearchCategoryHintSubtitle(
+              category,
+              parentName: parentName,
+            ),
+            "slug": _getCategorySlug(category),
+            "category": category,
+          });
+          if (result.length >= limit) return;
+        }
+
+        final children = _extractCategoryChildren(raw);
+        if (children.isNotEmpty) {
+          collect(children, name);
+          if (result.length >= limit) return;
+        }
+      }
+    }
+
+    collect(source, "");
+    return result;
+  }
+
+  Future<Map<String, dynamic>> _fetchNativeSearchHints(
+    String query, {
+    int productLimit = 5,
+    int categoryLimit = 2,
+  }) async {
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.length < 2) {
+      return {"products": <String>[], "categories": <Map<String, dynamic>>[]};
+    }
+    final categoryHints = _buildNativeSearchCategoryHints(
+      trimmedQuery,
+      limit: categoryLimit,
+    );
+    try {
+      final queryParts = <String>[
+        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+        'limit=${productLimit.clamp(3, 20)}',
+        'offset=0',
+        'hash=${Uri.encodeQueryComponent('search/query=$trimmedQuery')}',
+        'sort=create_datetime',
+        'order=desc',
+        'status=1',
+        'in_stock=1',
+      ];
+      final url =
+          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
+      final response = await _httpGet(Uri.parse(url));
+      if (response.statusCode != 200) {
+        return {"products": <String>[], "categories": categoryHints};
+      }
+      final parsed = await compute(_parseNativeCategoryPayload, response.body);
+      final rawItems = parsed['items'];
+      final List<dynamic> items = (rawItems is List) ? rawItems : [];
+
+      final normalizedQuery = _normalizeSearchText(trimmedQuery);
+      final seen = <String>{};
+      final hints = <String>[];
+      void addHint(String value) {
+        final text = value.trim();
+        if (text.isEmpty) return;
+        final normalized = _normalizeSearchText(text);
+        if (normalized.isEmpty || !seen.add(normalized)) return;
+        if (normalized == normalizedQuery) return;
+        if (normalized != normalizedQuery &&
+            !normalized.contains(normalizedQuery)) {
+          return;
+        }
+        hints.add(text);
+      }
+
+      for (final item in items) {
+        if (item is! Map) continue;
+        addHint(item['name']?.toString() ?? "");
+        if (hints.length >= productLimit) break;
+      }
+      return {"products": hints, "categories": categoryHints};
+    } catch (_) {
+      return {"products": <String>[], "categories": categoryHints};
     }
   }
 
@@ -5252,10 +5532,96 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  String _normalizeSearchText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('ё', 'е')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  Future<void> _restoreSearchHistoryFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final values = prefs.getStringList(_prefsSearchHistoryKey) ?? const [];
+      final normalized = <String>{};
+      final next = <String>[];
+      for (final raw in values) {
+        final value = raw.trim();
+        if (value.isEmpty) continue;
+        final key = _normalizeSearchText(value);
+        if (key.isEmpty || !normalized.add(key)) continue;
+        next.add(value);
+        if (next.length >= 12) break;
+      }
+      if (!mounted) {
+        _searchHistory = next;
+        return;
+      }
+      setState(() => _searchHistory = next);
+    } catch (_) {}
+  }
+
+  Future<void> _persistSearchHistoryToPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_prefsSearchHistoryKey, _searchHistory);
+    } catch (_) {}
+  }
+
+  void _rememberSearchQuery(String query) {
+    final value = query.trim();
+    if (value.isEmpty) return;
+    final normalizedValue = _normalizeSearchText(value);
+    _searchHistory = [
+      value,
+      ..._searchHistory.where(
+        (item) => _normalizeSearchText(item) != normalizedValue,
+      ),
+    ];
+    if (_searchHistory.length > 12) {
+      _searchHistory = _searchHistory.take(12).toList();
+    }
+    unawaited(_persistSearchHistoryToPrefs());
+  }
+
+  Future<void> _openNativeSearchResults(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    final prevNative = _nativeCategory;
+    _activeSearchQuery = trimmed;
+    _rememberCategoryForBackNavigation(nextKey: "search");
+    setState(() {
+      _pageTitle = "Поиск";
+      _isNativeCategoryPage = true;
+      _nativeCategory = "search";
+      _resetVisibleRangeForCategory(_nativeCategory);
+    });
+    if (prevNative != "search") {
+      _animatedProductIds.clear();
+      _resetNativeCategoryScroll();
+    }
+    await _fetchNativeSearch(query: trimmed, reset: true);
+    _scheduleVisibleGalleryLoad(_nativeCategory);
+  }
+
   void _navigateToSimple(String title, String path) {
     if (_isNativeCategoryPage &&
         (_isUserScrolling || _scrollingNotifier.value)) {
       return;
+    }
+    if (path.startsWith('/search/') && !path.contains('wishlist=true')) {
+      final queryValue = Uri.tryParse(
+        "https://hozyain-barin.ru$path",
+      )?.queryParameters['query'];
+      final query = queryValue?.trim() ?? "";
+      if (query.isNotEmpty) {
+        unawaited(_openNativeSearchResults(query));
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+        return;
+      }
     }
     final prevNative = _nativeCategory;
     final nativeKey = _resolveNativeCategory(null, path);
@@ -6477,7 +6843,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         nativeKey == "wishlist" ||
         nativeKey == "compare" ||
         nativeKey == "cart" ||
-        nativeKey == "profile") {
+        nativeKey == "profile" ||
+        nativeKey == "search") {
       return false;
     }
     final categoryId = _nativeCategoryIdForSubcategories(nativeKey);
@@ -6490,6 +6857,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _nativeCategory == "compare" ||
         _nativeCategory == "cart" ||
         _nativeCategory == "profile") {
+      return;
+    }
+    if (_nativeCategory == "search") {
+      if (_getNativeListByKey("search").isEmpty &&
+          _activeSearchQuery.isNotEmpty) {
+        _fetchNativeSearch(query: _activeSearchQuery);
+      }
       return;
     }
     final customId = _nativeCustomCategoryIdByKey[_nativeCategory];
@@ -6962,6 +7336,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         if (didPop) return;
 
         if (_isNativeCategoryPage) {
+          if (_nativeCategory == "search") {
+            _showSearchMenu(context);
+            return;
+          }
           _goBackFromCategory();
           return;
         }
@@ -10219,6 +10597,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return;
     }
     switch (key) {
+      case "search":
+        if (_activeSearchQuery.isNotEmpty) {
+          _fetchNativeSearch(query: _activeSearchQuery, reset: false);
+        }
+        break;
       case "belt":
         _fetchBeltBags(reset: false);
         break;
@@ -11074,25 +11457,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           onTap: _goHome,
           child: Image.asset('assets/images/logo.png', height: 28),
         ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _navBtn(
-              'assets/images/search.svg',
-              () => _showSearchMenu(context),
-              hPadding: 10,
-            ),
-            _navBtn(
-              'assets/images/phone.svg',
-              () => _showContactsMenu(context),
-            ),
-          ],
-        ),
+        _navBtn('assets/images/phone.svg', () => _showContactsMenu(context)),
       ],
     );
   }
 
   Widget _buildCategoryHeader() {
+    final bool isSearchHeader =
+        _isNativeCategoryPage && _nativeCategory == "search";
+    final screenWidth = MediaQuery.of(context).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final searchRadius = (14 * scale).clamp(12.0, 16.0);
+    final searchHeight = (40 * scale).clamp(36.0, 42.0);
+    final searchIconSize = (20 * scale).clamp(18.0, 22.0);
+    final activeQuery = _activeSearchQuery.trim();
     return Row(
       children: [
         IconButton(
@@ -11102,23 +11480,65 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             size: 20,
           ),
           onPressed: () {
+            if (isSearchHeader) {
+              _showSearchMenu(context);
+              return;
+            }
             _goBackFromCategory();
           },
         ),
         Expanded(
-          child: Text(
-            _pageTitle,
-            style: const TextStyle(
-              fontFamily: 'Roboto',
-              color: Colors.black,
-              fontSize: 20,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0,
-            ),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          child: isSearchHeader
+              ? InkWell(
+                  borderRadius: BorderRadius.circular(searchRadius),
+                  onTap: () => _showSearchMenu(context),
+                  child: Container(
+                    height: searchHeight,
+                    padding: EdgeInsets.symmetric(horizontal: 12 * scale),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(searchRadius),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.search,
+                          color: const Color(0xFF9CA3AF),
+                          size: searchIconSize,
+                        ),
+                        SizedBox(width: 8 * scale),
+                        Expanded(
+                          child: Text(
+                            activeQuery.isNotEmpty ? activeQuery : "Поиск",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'Roboto',
+                              color: const Color(0xFF111827),
+                              fontSize: (17 * scale).clamp(15.0, 18.0),
+                              fontWeight: FontWeight.w400,
+                              letterSpacing: 0,
+                              height: 1.0,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Text(
+                  _pageTitle,
+                  style: const TextStyle(
+                    fontFamily: 'Roboto',
+                    color: Colors.black,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
         ),
         if (_isNativeCategoryPage &&
             _nativeCategory != "wishlist" &&
@@ -12680,71 +13100,536 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  void _showSearchMenu(BuildContext context) {
-    final TextEditingController searchController = TextEditingController();
-    showGeneralDialog(
-      context: context,
+  void _showSearchMenu(BuildContext context, {bool openedFromBurger = false}) {
+    final rootContext = context;
+    final initialQuery = openedFromBurger ? "" : _activeSearchQuery;
+    final TextEditingController searchController = TextEditingController(
+      text: initialQuery,
+    );
+    searchController.selection = TextSelection.collapsed(
+      offset: searchController.text.length,
+    );
+    final screenWidth = MediaQuery.of(rootContext).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final barHeight = (48 * scale).clamp(45.0, 52.0);
+    final radius = (16 * scale).clamp(14.0, 18.0);
+    final iconSize = (22 * scale).clamp(20.0, 23.0);
+    final searchFontSize = (17 * scale).clamp(15.0, 18.0);
+    final searchTextStyle = TextStyle(
+      fontFamily: 'Roboto',
+      fontSize: searchFontSize,
+      color: const Color(0xFF111827),
+      fontWeight: FontWeight.w400,
+      height: 1.0,
+      letterSpacing: 0,
+    );
+    final hintTextStyle = searchTextStyle.copyWith(
+      color: const Color(0xFF6B7280),
+    );
+    Timer? hintsDebounce;
+    int hintsRequestId = 0;
+    bool hintsLoading = false;
+    bool hintsPrimed = false;
+    String? hintsMessage;
+    List<String> productHints = [];
+    List<Map<String, dynamic>> categoryHints = [];
+    List<String> history = List<String>.from(_searchHistory);
+
+    void closeSearch() {
+      Navigator.of(rootContext, rootNavigator: true).pop();
+    }
+
+    void closeSearchToBurger() {
+      closeSearch();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!_isBurgerMenuOpen) {
+          _openCustomMenu();
+        }
+      });
+    }
+
+    void submitSearch([String? forcedValue]) {
+      final value = (forcedValue ?? searchController.text).trim();
+      if (value.isEmpty) return;
+      _activeSearchQuery = value;
+      _rememberSearchQuery(value);
+      final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
+      closeSearch();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_isBurgerMenuOpen && rootNavigator.canPop()) {
+          rootNavigator.pop();
+        }
+        if (!mounted) return;
+        unawaited(_openNativeSearchResults(value));
+      });
+    }
+
+    void openCategorySuggestion(Map<String, dynamic> item) {
+      final rawCategory = item['category'];
+      if (rawCategory is! Map) return;
+      final category = Map<String, dynamic>.from(rawCategory);
+      final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
+      closeSearch();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_isBurgerMenuOpen && rootNavigator.canPop()) {
+          rootNavigator.pop();
+        }
+        if (!mounted) return;
+        _navigateToApiCategory(category);
+      });
+    }
+
+    void scheduleHints(StateSetter setDialogState, String rawText) {
+      final value = rawText.trim();
+      hintsDebounce?.cancel();
+      if (value.length < 2) {
+        setDialogState(() {
+          productHints = [];
+          categoryHints = [];
+          hintsLoading = false;
+          hintsMessage = null;
+        });
+        return;
+      }
+      final requestId = ++hintsRequestId;
+      setDialogState(() {
+        hintsLoading = true;
+        hintsMessage = null;
+      });
+      hintsDebounce = Timer(const Duration(milliseconds: 220), () async {
+        final fetched = await _fetchNativeSearchHints(
+          value,
+          productLimit: 5,
+          categoryLimit: 2,
+        );
+        if (!mounted || requestId != hintsRequestId) return;
+        final productsRaw = fetched['products'];
+        final categoriesRaw = fetched['categories'];
+        final nextProducts = (productsRaw is List)
+            ? productsRaw.map((e) => e.toString()).toList()
+            : <String>[];
+        final nextCategories = (categoriesRaw is List)
+            ? categoriesRaw
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
+            : <Map<String, dynamic>>[];
+        setDialogState(() {
+          productHints = nextProducts;
+          categoryHints = nextCategories;
+          hintsLoading = false;
+          hintsMessage = (nextProducts.isEmpty && nextCategories.isEmpty)
+              ? "Ничего не найдено"
+              : null;
+        });
+      });
+    }
+
+    final dialogFuture = showGeneralDialog(
+      context: rootContext,
       barrierDismissible: true,
       barrierLabel: 'Search',
-      transitionDuration: const Duration(milliseconds: 400),
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return SlideTransition(
-          position: Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
-              .animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeInOutQuad),
-              ),
-          child: child,
-        );
-      },
-      pageBuilder: (context, _, __) => Scaffold(
-        backgroundColor: Colors.white,
-        body: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(25, 5, 10, 5),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      barrierColor: Colors.transparent,
+      transitionDuration: Duration.zero,
+      transitionBuilder: (context, animation, secondaryAnimation, child) =>
+          child,
+      pageBuilder: (dialogContext, _, __) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          if (!hintsPrimed && searchController.text.trim().length >= 2) {
+            hintsPrimed = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              scheduleHints(setDialogState, searchController.text);
+            });
+          }
+          return Scaffold(
+            backgroundColor: Colors.white,
+            resizeToAvoidBottomInset: false,
+            body: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Column(
                   children: [
-                    const Text("Поиск", style: _modalHeaderStyle),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, color: Colors.black87),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: barHeight,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 14 * scale,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F4F6),
+                              borderRadius: BorderRadius.circular(radius),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.search,
+                                  color: const Color(0xFF9CA3AF),
+                                  size: iconSize,
+                                ),
+                                SizedBox(width: 10 * scale),
+                                Expanded(
+                                  child: TextField(
+                                    controller: searchController,
+                                    autofocus: true,
+                                    textInputAction: TextInputAction.search,
+                                    textAlignVertical: TextAlignVertical.center,
+                                    style: searchTextStyle,
+                                    cursorColor: const Color(0xFF111827),
+                                    decoration: InputDecoration(
+                                      hintText: "Поиск",
+                                      hintStyle: hintTextStyle,
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      isCollapsed: true,
+                                    ),
+                                    onChanged: (value) =>
+                                        scheduleHints(setDialogState, value),
+                                    onSubmitted: (_) => submitSearch(),
+                                    onTapOutside: (_) =>
+                                        FocusScope.of(dialogContext).unfocus(),
+                                  ),
+                                ),
+                                if (searchController.text.trim().isNotEmpty)
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () {
+                                      hintsDebounce?.cancel();
+                                      searchController.clear();
+                                      setDialogState(() {
+                                        productHints = [];
+                                        categoryHints = [];
+                                        hintsLoading = false;
+                                        hintsMessage = null;
+                                      });
+                                    },
+                                    child: Padding(
+                                      padding: EdgeInsets.all(2 * scale),
+                                      child: Icon(
+                                        Icons.cancel,
+                                        color: const Color(0xFFB8BDC7),
+                                        size: (19 * scale).clamp(17.0, 20.0),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 8 * scale),
+                        InkWell(
+                          onTap: closeSearchToBurger,
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 2 * scale,
+                              vertical: 6 * scale,
+                            ),
+                            child: Text(
+                              "Отмена",
+                              style: TextStyle(
+                                fontSize: (17 * scale).clamp(15.0, 18.0),
+                                color: const Color(0xFF6B7280),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 8),
+                    if (hintsLoading)
+                      const LinearProgressIndicator(
+                        minHeight: 1.6,
+                        color: Color(0xFF9CA3AF),
+                        backgroundColor: Color(0xFFE5E7EB),
+                      ),
+                    if (hintsMessage != null)
+                      Expanded(
+                        child: Center(
+                          child: Text(
+                            hintsMessage!,
+                            style: const TextStyle(
+                              color: Color(0xFF9CA3AF),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (productHints.isNotEmpty ||
+                        categoryHints.isNotEmpty)
+                      Expanded(
+                        child: ListView(
+                          children: [
+                            ...productHints.map((suggestion) {
+                              return Container(
+                                decoration: const BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(
+                                      color: Color(0xFFF1F1F1),
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                                child: InkWell(
+                                  onTap: () => submitSearch(suggestion),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                      vertical: 13,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.search,
+                                          color: const Color(0xFFB8BDC7),
+                                          size: (21 * scale).clamp(19.0, 23.0),
+                                        ),
+                                        SizedBox(width: 12 * scale),
+                                        Expanded(
+                                          child: Text(
+                                            suggestion,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: (15.5 * scale).clamp(
+                                                14.0,
+                                                16.5,
+                                              ),
+                                              color: const Color(0xFF1F2937),
+                                              fontWeight: FontWeight.w400,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                            if (categoryHints.isNotEmpty)
+                              const SizedBox(height: 10),
+                            ...categoryHints.map((item) {
+                              final name = item['name']?.toString() ?? "";
+                              final subtitle =
+                                  item['subtitle']?.toString() ?? "";
+                              final slug = item['slug']?.toString() ?? "";
+                              final assetPath = slug.isNotEmpty
+                                  ? "assets/categories/$slug.png"
+                                  : "";
+                              return InkWell(
+                                onTap: () => openCategorySuggestion(item),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 8,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: assetPath.isNotEmpty
+                                            ? Image.asset(
+                                                assetPath,
+                                                width: 44,
+                                                height: 44,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (_, __, ___) =>
+                                                    Container(
+                                                      width: 44,
+                                                      height: 44,
+                                                      color: const Color(
+                                                        0xFFF3F4F6,
+                                                      ),
+                                                      alignment:
+                                                          Alignment.center,
+                                                      child: const Icon(
+                                                        Icons
+                                                            .shopping_bag_outlined,
+                                                        color: Color(
+                                                          0xFF9CA3AF,
+                                                        ),
+                                                        size: 22,
+                                                      ),
+                                                    ),
+                                              )
+                                            : Container(
+                                                width: 44,
+                                                height: 44,
+                                                color: const Color(0xFFF3F4F6),
+                                                alignment: Alignment.center,
+                                                child: const Icon(
+                                                  Icons.shopping_bag_outlined,
+                                                  color: Color(0xFF9CA3AF),
+                                                  size: 22,
+                                                ),
+                                              ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w500,
+                                                color: Color(0xFF111827),
+                                              ),
+                                            ),
+                                            if (subtitle.trim().isNotEmpty)
+                                              Text(
+                                                subtitle,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: Color(0xFF6B7280),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(
+                                        Icons.chevron_right,
+                                        color: Color(0xFF9CA3AF),
+                                        size: 22,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      )
+                    else if (searchController.text.trim().isEmpty &&
+                        history.isNotEmpty)
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(top: 6, bottom: 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text(
+                                      "Вы искали",
+                                      style: TextStyle(
+                                        fontFamily: 'Roboto',
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF101828),
+                                      ),
+                                    ),
+                                  ),
+                                  InkWell(
+                                    onTap: () {
+                                      setDialogState(() {
+                                        history = [];
+                                        _searchHistory = [];
+                                      });
+                                      unawaited(_persistSearchHistoryToPrefs());
+                                    },
+                                    child: const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                        vertical: 4,
+                                      ),
+                                      child: Text(
+                                        "Очистить",
+                                        style: TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w400,
+                                          color: Color(0xFF8B8F97),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: history.map((item) {
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(18),
+                                    onTap: () => submitSearch(item),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF2F3F5),
+                                        borderRadius: BorderRadius.circular(18),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            item,
+                                            style: const TextStyle(
+                                              fontFamily: 'Roboto',
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w400,
+                                              color: Color(0xFF1F2937),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          InkWell(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            onTap: () {
+                                              setDialogState(() {
+                                                history.remove(item);
+                                                _searchHistory =
+                                                    List<String>.from(history);
+                                              });
+                                              unawaited(
+                                                _persistSearchHistoryToPrefs(),
+                                              );
+                                            },
+                                            child: const Icon(
+                                              Icons.close,
+                                              size: 18,
+                                              color: Color(0xFF9CA3AF),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
-              Container(height: 1, color: Colors.grey.shade200),
-              Padding(
-                padding: const EdgeInsets.all(25.0),
-                child: TextField(
-                  controller: searchController,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: 'Поиск',
-                    filled: true,
-                    fillColor: Colors.grey.shade100,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                  onSubmitted: (value) {
-                    if (value.trim().isNotEmpty) {
-                      _navigateToSimple(
-                        "Поиск",
-                        "/search/?query=${Uri.encodeComponent(value.trim())}",
-                      );
-                      Navigator.pop(context);
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
+    dialogFuture.whenComplete(() {
+      hintsDebounce?.cancel();
+      searchController.dispose();
+    });
   }
 
   void _showContactsMenu(BuildContext context) {
@@ -12808,311 +13693,366 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  void _openCustomMenu() {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Menu',
-      barrierColor: Colors.black54,
-      transitionDuration: const Duration(milliseconds: 400),
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return SlideTransition(
-          position: Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
-              .animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeInOutQuad),
+  void _closeMenuAndRun(BuildContext dialogContext, VoidCallback action) {
+    if (Navigator.canPop(dialogContext)) {
+      Navigator.pop(dialogContext);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      action();
+    });
+  }
+
+  void _openCategoryFromMenuSlug(String slug, {String title = "Категория"}) {
+    final categoryId = _findCategoryIdBySlug(_apiCategories, slug);
+    if (categoryId == null || categoryId.isEmpty) {
+      _showNativeOnlyNotice();
+      return;
+    }
+    final category = _findCategoryById(_apiCategories, categoryId);
+    if (category != null) {
+      _navigateToApiCategory(category);
+      return;
+    }
+    _openNativeCategoryById(
+      key: "custom_$categoryId",
+      categoryId: categoryId,
+      title: title,
+    );
+  }
+
+  List<dynamic> _buildBurgerMenuCategories() {
+    const orderedIds = ["16", "19", "4", "143", "84", "8", "101", "107", "147"];
+    final categoriesById = <String, dynamic>{};
+    for (final cat in _apiCategories) {
+      if (cat is! Map) continue;
+      if (cat['status']?.toString() == "0") continue;
+      final id = cat['id']?.toString() ?? "";
+      final name = cat['name']?.toString() ?? "";
+      if (id.isEmpty || name.isEmpty) continue;
+      categoriesById[id] = cat;
+    }
+    return orderedIds
+        .map((id) => categoriesById[id])
+        .where((cat) => cat != null)
+        .toList();
+  }
+
+  Widget _buildBurgerMenuSearch(BuildContext dialogContext) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final barHeight = (48 * scale).clamp(45.0, 52.0);
+    final sideSize = (48 * scale).clamp(45.0, 52.0);
+    final radius = (16 * scale).clamp(14.0, 18.0);
+    final iconSize = (22 * scale).clamp(20.0, 23.0);
+    final searchFontSize = (17 * scale).clamp(15.0, 18.0);
+    final searchTextStyle = TextStyle(
+      fontFamily: 'Roboto',
+      fontSize: searchFontSize,
+      color: const Color(0xFF6B7280),
+      fontWeight: FontWeight.w400,
+      height: 1.0,
+      letterSpacing: 0,
+    );
+    return Row(
+      children: [
+        Expanded(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(radius),
+            onTap: () => _showSearchMenu(dialogContext, openedFromBurger: true),
+            child: Container(
+              height: barHeight,
+              padding: EdgeInsets.symmetric(horizontal: 14 * scale),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(radius),
               ),
-          child: child,
-        );
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.search,
+                    color: const Color(0xFF9CA3AF),
+                    size: iconSize,
+                  ),
+                  SizedBox(width: 10 * scale),
+                  Expanded(child: Text("Поиск", style: searchTextStyle)),
+                  Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: const Color(0xFF6B7280),
+                    size: iconSize,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        SizedBox(width: 8 * scale),
+        InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: () =>
+              _closeMenuAndRun(dialogContext, () => _showContactsMenu(context)),
+          child: Container(
+            width: sideSize,
+            height: sideSize,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            child: Icon(
+              Icons.chat_bubble_outline_rounded,
+              color: const Color(0xFF4B5563),
+              size: iconSize,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBurgerPromoGrid(BuildContext dialogContext) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final spacing = (10 * scale).clamp(8.0, 12.0);
+    final tileRadius = (16 * scale).clamp(14.0, 18.0);
+    final iconBoxHeight = (78 * scale).clamp(72.0, 86.0);
+    final gridHeight = iconBoxHeight + (42 * scale);
+    final labelSize = (13 * scale).clamp(11.5, 13.5);
+    final iconSize = (30 * scale).clamp(26.0, 32.0);
+    final promoItems = <Map<String, dynamic>>[
+      {
+        "title": "Скидки",
+        "icon": Icons.percent_rounded,
+        "color": const Color(0xFFFFE3EA),
+        "onTap": () => _openNativeCategoryById(
+          key: "discount_men",
+          categoryId: "156",
+          title: "Скидки",
+        ),
       },
-      pageBuilder: (context, _, __) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Drawer(
-              width: MediaQuery.of(context).size.width,
-              backgroundColor: Colors.white,
-              elevation: 0,
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(25, 5, 10, 5),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Image.asset('assets/images/logo.png', height: 28),
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.black87,
-                            ),
+      {
+        "title": "Подарочные\nкарты",
+        "icon": Icons.card_giftcard_rounded,
+        "color": const Color(0xFFE6EEFF),
+        "onTap": () => _openCategoryFromMenuSlug(
+          "podarochnye-sertifikaty",
+          title: "Подарочные карты",
+        ),
+      },
+      {
+        "title": "Сервис по\nподбору товаров",
+        "icon": Icons.support_agent_rounded,
+        "color": const Color(0xFFE8F7FF),
+        "onTap": () =>
+            _closeMenuAndRun(dialogContext, () => _showContactsMenu(context)),
+      },
+      {
+        "title": "Акции",
+        "icon": Icons.local_offer_rounded,
+        "color": const Color(0xFFFFF0E3),
+        "onTap": () => _openNativeCategoryById(
+          key: "discount_women",
+          categoryId: "157",
+          title: "Акции",
+        ),
+      },
+    ];
+
+    return SizedBox(
+      height: gridHeight,
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: promoItems.length,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 4,
+          mainAxisSpacing: spacing,
+          crossAxisSpacing: spacing,
+          childAspectRatio: 0.67,
+        ),
+        itemBuilder: (context, index) {
+          final item = promoItems[index];
+          return InkWell(
+            borderRadius: BorderRadius.circular(tileRadius),
+            onTap: item["onTap"] as VoidCallback,
+            child: Column(
+              children: [
+                Container(
+                  height: iconBoxHeight,
+                  decoration: BoxDecoration(
+                    color: item["color"] as Color,
+                    borderRadius: BorderRadius.circular(tileRadius),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      item["icon"] as IconData,
+                      size: iconSize,
+                      color: const Color(0xFF1F2937),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 6 * scale),
+                Text(
+                  item["title"].toString(),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: labelSize,
+                    color: Colors.black87,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBurgerCategoriesGrid() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final spacing = (12 * scale).clamp(10.0, 14.0);
+    final radius = (16 * scale).clamp(14.0, 18.0);
+    final titleSize = (12 * scale).clamp(11.0, 12.8);
+    final categories = _buildBurgerMenuCategories();
+    if (categories.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: categories.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: spacing,
+        crossAxisSpacing: spacing,
+        childAspectRatio: 0.79,
+      ),
+      itemBuilder: (context, index) {
+        final cat = categories[index];
+        final name = cat['name']?.toString() ?? "";
+        final slug = _getCategorySlug(cat);
+        final pngPath = 'assets/categories/$slug.png';
+        final jpgPath = 'assets/categories/$slug.jpg';
+        return InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: () => _navigateToApiCategory(cat),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    10 * scale,
+                    10 * scale,
+                    10 * scale,
+                    0,
+                  ),
+                  child: Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                      height: 1.12,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      6 * scale,
+                      0,
+                      6 * scale,
+                      6 * scale,
+                    ),
+                    child: Image.asset(
+                      pngPath,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.bottomCenter,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        jpgPath,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.bottomCenter,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: const Color(0xFFE5E7EB),
+                          child: const Icon(
+                            Icons.shopping_bag_outlined,
+                            color: Color(0xFF9CA3AF),
+                            size: 30,
                           ),
-                        ],
+                        ),
                       ),
                     ),
-                    Container(height: 1, color: Colors.grey.shade200),
-                    Expanded(
-                      child: _isMenuLoading
-                          ? const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.black,
-                              ),
-                            )
-                          : ListView.builder(
-                              padding: EdgeInsets.zero,
-                              itemCount: (() {
-                                final int categoryCount = _apiCategories.length;
-                                const int menuCount = 8;
-                                const int staticCount = 14;
-                                return categoryCount + menuCount + staticCount;
-                              })(),
-                              itemBuilder: (context, index) {
-                                int cursor = 0;
-
-                                if (index == cursor) {
-                                  return const SizedBox(height: 10);
-                                }
-                                cursor++;
-
-                                final int categoryCount = _apiCategories.length;
-                                if (index >= cursor &&
-                                    index < cursor + categoryCount) {
-                                  final cat = _apiCategories[index - cursor];
-                                  return _buildCategoryItemDynamic(
-                                    cat,
-                                    setDialogState,
-                                  );
-                                }
-                                cursor += categoryCount;
-
-                                if (index == cursor) {
-                                  return const SizedBox(height: 15);
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return Container(
-                                    height: 1,
-                                    color: Colors.black87,
-                                    margin: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                    ),
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 8),
-                                    child: Text(
-                                      "Персонализация",
-                                      textAlign: TextAlign.center,
-                                      style: _boldMenuStyle,
-                                    ),
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return Container(
-                                    height: 1,
-                                    color: Colors.black87,
-                                    margin: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                    ),
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return const SizedBox(height: 10);
-                                }
-                                cursor++;
-
-                                const menuItems = [
-                                  {
-                                    "title": "О компании",
-                                    "url": "/o-kompanii/",
-                                  },
-                                  {
-                                    "title": "АДРЕСА | КОНТАТЫ",
-                                    "url": "/adryesa--kontakty/",
-                                  },
-                                  {"title": "Гарантия", "url": "/garantiya/"},
-                                  {
-                                    "title": "Политика конфиденциальности",
-                                    "url": "/politika-konfidentsialnosti/",
-                                  },
-                                  {
-                                    "title": "Доставка и оплата",
-                                    "url": "/dostavka-oplata/",
-                                  },
-                                  {
-                                    "title": "Система лояльности",
-                                    "url": "/novaya-bonusnaya-sistyema/",
-                                  },
-                                  {
-                                    "title": "Отзывы и предложения",
-                                    "url": "/otzyvy/",
-                                  },
-                                  {
-                                    "title": "Персонализация и тиснение вещей",
-                                    "url":
-                                        "/personalizatsiya-i-tesnenie-veshchey/",
-                                  },
-                                ];
-                                if (index >= cursor &&
-                                    index < cursor + menuItems.length) {
-                                  final item = menuItems[index - cursor];
-                                  return _menuRow(item["title"]!, item["url"]!);
-                                }
-                                cursor += menuItems.length;
-
-                                if (index == cursor) {
-                                  return const SizedBox(height: 20);
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return Divider(
-                                    color: Colors.grey.shade100,
-                                    thickness: 8,
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return _profileRow(
-                                    Icons.person_outline,
-                                    "Личный кабинет",
-                                    "/my/",
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return ValueListenableBuilder<int>(
-                                    valueListenable: _cartCountNotifier,
-                                    builder: (context, count, _) {
-                                      final badge = count > 0
-                                          ? count.toString()
-                                          : "";
-                                      return _profileRow(
-                                        Icons.shopping_cart_outlined,
-                                        "Корзина",
-                                        "/cart/",
-                                        badge: badge,
-                                      );
-                                    },
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return ValueListenableBuilder<int>(
-                                    valueListenable: _compareCountNotifier,
-                                    builder: (context, count, _) {
-                                      final badge = count > 0
-                                          ? count.toString()
-                                          : "";
-                                      return _profileRow(
-                                        Icons.bar_chart_outlined,
-                                        "Сравнение",
-                                        "/compare/",
-                                        badge: badge,
-                                      );
-                                    },
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return ValueListenableBuilder<int>(
-                                    valueListenable: _wishCountNotifier,
-                                    builder: (context, count, _) {
-                                      final badge = count > 0
-                                          ? count.toString()
-                                          : "";
-                                      return _profileRow(
-                                        Icons.favorite_border,
-                                        "Избранное",
-                                        "/search/?wishlist=true",
-                                        badge: badge,
-                                      );
-                                    },
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return Divider(
-                                    color: Colors.grey.shade100,
-                                    thickness: 8,
-                                  );
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return _buildSimpleContacts();
-                                }
-                                cursor++;
-                                if (index == cursor) {
-                                  return const SizedBox(height: 30);
-                                }
-
-                                return const SizedBox.shrink();
-                              },
-                            ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            );
-          },
+              ],
+            ),
+          ),
         );
       },
     );
   }
 
-  Widget _buildCategoryItemDynamic(dynamic cat, StateSetter setDialogState) {
-    var rawChildren = cat['categories'] ?? cat['children'];
-    List<dynamic> children = (rawChildren is List)
-        ? rawChildren.where((sub) => sub['status'].toString() != "0").toList()
-        : [];
-    String catId = cat['id'].toString();
-    bool isExpanded = _expandedCategoryId == catId;
-
-    return Column(
-      children: [
-        _menuRow(
-          cat['name'].toString(),
-          "",
-          hasChildren: children.isNotEmpty,
-          isExpanded: isExpanded,
-          onTap: () {
-            if (children.isNotEmpty) {
-              setDialogState(
-                () => _expandedCategoryId = isExpanded ? null : catId,
-              );
-            } else {
-              _navigateToApiCategory(cat);
-            }
-          },
-          onExpand: () => setDialogState(
-            () => _expandedCategoryId = isExpanded ? null : catId,
-          ),
-        ),
-        if (isExpanded)
-          Column(
-            children: [
-              _menuRow(
-                "Все товары",
-                "",
-                isSub: true,
-                isBold: true,
-                onTap: () => _navigateToApiCategory(cat),
-              ),
-              ...children.map(
-                (sub) => _menuRow(
-                  sub['name'].toString(),
-                  "",
-                  isSub: true,
-                  onTap: () => _navigateToApiCategory(sub),
+  void _openCustomMenu() {
+    if (_isBurgerMenuOpen) return;
+    _isBurgerMenuOpen = true;
+    final dialogFuture = showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Menu',
+      barrierColor: Colors.transparent,
+      transitionDuration: Duration.zero,
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return child;
+      },
+      pageBuilder: (context, _, __) {
+        return Scaffold(
+          backgroundColor: Colors.white,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _isMenuLoading
+                      ? const Center(
+                          child: CircularProgressIndicator(color: Colors.black),
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+                          children: [
+                            const SizedBox(height: 4),
+                            _buildBurgerMenuSearch(context),
+                            const SizedBox(height: 14),
+                            _buildBurgerPromoGrid(context),
+                            const SizedBox(height: 14),
+                            _buildBurgerCategoriesGrid(),
+                            const SizedBox(height: 14),
+                          ],
+                        ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-      ],
+          bottomNavigationBar: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: _buildBottomBar(),
+          ),
+        );
+      },
     );
+    dialogFuture.whenComplete(() {
+      _isBurgerMenuOpen = false;
+    });
   }
 
   Widget _contactBox(String title, String sub, VoidCallback onTap) {
@@ -14266,11 +15206,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.stars_outlined,
-                size: 16,
-                color: Colors.black87,
-              ),
+              const Icon(Icons.stars_outlined, size: 16, color: Colors.black87),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -14298,8 +15234,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             _useBonuses = !_useBonuses;
                             if (_useBonuses &&
                                 _bonusAmountController.text.trim().isEmpty) {
-                              _bonusAmountController.text =
-                                  _maxBonusWriteOff.round().toString();
+                              _bonusAmountController.text = _maxBonusWriteOff
+                                  .round()
+                                  .toString();
                             }
                           });
                           unawaited(_persistCheckoutState());
@@ -14360,10 +15297,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             const SizedBox(height: 6),
             Text(
               'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.black54,
-              ),
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ],
         ],
@@ -20750,7 +21684,8 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     final fullProduct = await _getProductInfoCached(targetId);
     if (!mounted || _currentProductId != targetId) return;
     if (fullProduct != null) {
-      final merged = Map<String, dynamic>.from(_currentProduct)..addAll(fullProduct);
+      final merged = Map<String, dynamic>.from(_currentProduct)
+        ..addAll(fullProduct);
       final resolvedPreview = _normalizeImages(
         widget.resolveImages(merged),
         toLarge: false,
@@ -20775,12 +21710,12 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
 
     final normalizedPreview = _normalizeImages(fetched, toLarge: false);
     final normalizedLarge = _normalizeImages(fetched, toLarge: true);
-    final nextPreview =
-        normalizedPreview.length > _previewImages.length
+    final nextPreview = normalizedPreview.length > _previewImages.length
         ? normalizedPreview
         : _previewImages;
-    final nextImages =
-        normalizedLarge.length > _images.length ? normalizedLarge : _images;
+    final nextImages = normalizedLarge.length > _images.length
+        ? normalizedLarge
+        : _images;
     if (nextPreview.length != _previewImages.length ||
         nextImages.length != _images.length) {
       setState(() {
@@ -23654,7 +24589,8 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                                       : "";
                                   return GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: () => _openProductImageGallery(index),
+                                    onTap: () =>
+                                        _openProductImageGallery(index),
                                     child: CachedNetworkImage(
                                       imageUrl: url,
                                       fit: BoxFit.cover,
