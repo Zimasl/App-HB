@@ -5946,6 +5946,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  Future<void> _logoutProfile() async {
+    _authContactId = null;
+    _authUserName = null;
+    _authPhone = null;
+    _authPhotoUrl = null;
+    await _persistAuthSessionToPrefs();
+    _reloadProfileData();
+    if (!mounted) return;
+    _goHome();
+    setState(() {});
+  }
+
   Future<void> _editProfileName() async {
     if (!_isAuthorized) {
       await _openProfileAuthPage();
@@ -6005,6 +6017,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
     _resetCatalogBackSwipeTracking();
     _updateCartFloatingButtonVisibility();
+  }
+
+  void _handleHomeNavTap() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.popUntil((route) => route.isFirst);
+    }
+    _goHome();
   }
 
   void _rememberCategoryForBackNavigation({required String nextKey}) {
@@ -11614,7 +11634,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                         ? 'Пользователь'
                                         : _authUserName!.trim(),
                                     style: const TextStyle(
-                                      fontSize: 34,
+                                      fontSize: 22,
                                       fontWeight: FontWeight.w500,
                                       height: 1.1,
                                     ),
@@ -11759,6 +11779,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
                       ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _profileMenuTile(
+                        icon: Icons.logout,
+                        title: "Выйти",
+                        onTap: _logoutProfile,
+                      ),
                     ],
                   ),
                 ),
@@ -11826,6 +11852,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
+          _navItem('assets/images/main.svg', 'Домой', _handleHomeNavTap),
           _navItem(
             'assets/images/nav_catalog.svg',
             'Каталог',
@@ -13197,10 +13224,13 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
+  static const String _privacyPolicyJsonUrl =
+      'https://hozyain-barin.ru/native/privacy_policy.json';
   final _phoneController = TextEditingController();
   final _codeController = TextEditingController();
   final _nameController = TextEditingController();
   final _codeFocus = FocusNode();
+  late final TapGestureRecognizer _privacyPolicyTapRecognizer;
   bool _isSettingPhoneText = false;
   final _phoneMask = MaskTextInputFormatter(
     mask: '+7 (###) ###-##-##',
@@ -13219,6 +13249,8 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void initState() {
     super.initState();
+    _privacyPolicyTapRecognizer = TapGestureRecognizer()
+      ..onTap = _openPrivacyPolicyPage;
     _phoneController.addListener(_ensurePhonePrefix);
     if (_phoneController.text.isEmpty) {
       _phoneController.text = '+7 ';
@@ -13231,12 +13263,25 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void dispose() {
     _phoneController.removeListener(_ensurePhonePrefix);
+    _privacyPolicyTapRecognizer.dispose();
     _phoneController.dispose();
     _codeController.dispose();
     _nameController.dispose();
     _codeFocus.dispose();
     _codeTimer?.cancel();
     super.dispose();
+  }
+
+  void _openPrivacyPolicyPage() {
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => const _NativeJsonDocumentPage(
+          title: 'Условия политики конфиденциальности',
+          url: _privacyPolicyJsonUrl,
+        ),
+      ),
+    );
   }
 
   String _normalizePhone(String input) => input.replaceAll(RegExp(r'\D'), '');
@@ -13813,10 +13858,30 @@ class _AuthPageState extends State<AuthPage> {
                         setState(() => _consent = value ?? false),
                     activeColor: Colors.black,
                   ),
-                  const Expanded(
-                    child: Text(
-                      "Нажимая кнопку, Вы соглашаетесь с Правилами и политикой конфиденциальности Компании.",
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black54,
+                          height: 1.3,
+                        ),
+                        children: [
+                          const TextSpan(
+                            text:
+                                "Нажимая кнопку, Вы соглашаетесь с Правилами и ",
+                          ),
+                          TextSpan(
+                            text: "политикой конфиденциальности",
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              decoration: TextDecoration.underline,
+                            ),
+                            recognizer: _privacyPolicyTapRecognizer,
+                          ),
+                          const TextSpan(text: " Компании."),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -14185,6 +14250,125 @@ class _CheckoutPageState extends State<CheckoutPage> {
         .toStringAsFixed(2)
         .replaceAll(RegExp(r'0+$'), '')
         .replaceAll(RegExp(r'\.$'), '');
+  }
+
+  Widget _buildBonusWriteOffPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F8F8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E5E7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.stars_outlined,
+                size: 16,
+                color: Colors.black87,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _isBonusLoading
+                      ? 'Загрузка бонусов...'
+                      : 'Доступно бонусов: ${_formatBonusBalance(_bonusBalance)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _bonusBalance <= 0
+                      ? null
+                      : () {
+                          setState(() {
+                            _useBonuses = !_useBonuses;
+                            if (_useBonuses &&
+                                _bonusAmountController.text.trim().isEmpty) {
+                              _bonusAmountController.text =
+                                  _maxBonusWriteOff.round().toString();
+                            }
+                          });
+                          unawaited(_persistCheckoutState());
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.black87,
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  child: Text(
+                    _useBonuses ? 'Не списывать бонусы' : 'Списать бонусы',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 96,
+                child: TextField(
+                  controller: _bonusAmountController,
+                  enabled: _useBonuses && _bonusBalance > 0,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (value) {
+                    final sanitized = _sanitizeBonusInput(value);
+                    if (sanitized != value) {
+                      _bonusAmountController.value = TextEditingValue(
+                        text: sanitized,
+                        selection: TextSelection.collapsed(
+                          offset: sanitized.length,
+                        ),
+                      );
+                    }
+                    unawaited(_persistCheckoutState());
+                    if (mounted) setState(() {});
+                  },
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '0',
+                    suffixText: 'б',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_bonusWriteOffValue > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black54,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _formatCheckoutPrice(double price) {
@@ -15533,136 +15717,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     style: const TextStyle(fontSize: 12, color: Colors.black54),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E5E7)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.stars_outlined,
-                            size: 16,
-                            color: Colors.black87,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _isBonusLoading
-                                  ? 'Загрузка бонусов...'
-                                  : 'Доступно бонусов: ${_formatBonusBalance(_bonusBalance)}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: _bonusBalance <= 0
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        _useBonuses = !_useBonuses;
-                                        if (_useBonuses &&
-                                            _bonusAmountController.text
-                                                .trim()
-                                                .isEmpty) {
-                                          _bonusAmountController.text =
-                                              _maxBonusWriteOff
-                                                  .round()
-                                                  .toString();
-                                        }
-                                      });
-                                      unawaited(_persistCheckoutState());
-                                    },
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.black87,
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                _useBonuses
-                                    ? 'Не списывать бонусы'
-                                    : 'Списать бонусы',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 96,
-                            child: TextField(
-                              controller: _bonusAmountController,
-                              enabled: _useBonuses && _bonusBalance > 0,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              onChanged: (value) {
-                                final sanitized = _sanitizeBonusInput(value);
-                                if (sanitized != value) {
-                                  _bonusAmountController.value =
-                                      TextEditingValue(
-                                        text: sanitized,
-                                        selection: TextSelection.collapsed(
-                                          offset: sanitized.length,
-                                        ),
-                                      );
-                                }
-                                unawaited(_persistCheckoutState());
-                                if (mounted) setState(() {});
-                              },
-                              decoration: InputDecoration(
-                                isDense: true,
-                                hintText: '0',
-                                suffixText: 'б',
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 9,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_bonusWriteOffValue > 0) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
               ],
+              const SizedBox(height: 10),
+              _buildBonusWriteOffPanel(),
             ], bottomMargin: 0),
             const SizedBox(height: 12),
             Container(
@@ -20671,15 +20728,83 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     final fetched = await loader(productId);
     if (!mounted || fetched.isEmpty) return;
     final normalized = _normalizeImages(fetched, toLarge: true);
+    final normalizedPreview = _normalizeImages(fetched, toLarge: false);
     setState(() {
       _images = normalized;
-      if (_previewImages.isEmpty) {
-        _previewImages = _normalizeImages(fetched, toLarge: false);
+      if (normalizedPreview.length > _previewImages.length) {
+        _previewImages = normalizedPreview;
       }
     });
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _precacheAround(_currentImage),
     );
+  }
+
+  Future<void> _ensureGalleryReady() async {
+    final targetId = _currentProductId;
+    if (targetId.isEmpty) return;
+
+    final currentKnownCount = math.max(_previewImages.length, _images.length);
+    if (currentKnownCount > 1) return;
+
+    final fullProduct = await _getProductInfoCached(targetId);
+    if (!mounted || _currentProductId != targetId) return;
+    if (fullProduct != null) {
+      final merged = Map<String, dynamic>.from(_currentProduct)..addAll(fullProduct);
+      final resolvedPreview = _normalizeImages(
+        widget.resolveImages(merged),
+        toLarge: false,
+      );
+      if (resolvedPreview.length > _previewImages.length) {
+        setState(() {
+          _currentProduct = merged;
+          _previewImages = resolvedPreview;
+          if (_images.length < resolvedPreview.length) {
+            _images = List<String>.from(resolvedPreview);
+          }
+        });
+      } else {
+        _currentProduct = merged;
+      }
+    }
+
+    final loader = widget.fetchImagesById;
+    if (loader == null || !mounted || _currentProductId != targetId) return;
+    final fetched = await loader(targetId);
+    if (!mounted || _currentProductId != targetId || fetched.isEmpty) return;
+
+    final normalizedPreview = _normalizeImages(fetched, toLarge: false);
+    final normalizedLarge = _normalizeImages(fetched, toLarge: true);
+    final nextPreview =
+        normalizedPreview.length > _previewImages.length
+        ? normalizedPreview
+        : _previewImages;
+    final nextImages =
+        normalizedLarge.length > _images.length ? normalizedLarge : _images;
+    if (nextPreview.length != _previewImages.length ||
+        nextImages.length != _images.length) {
+      setState(() {
+        _previewImages = nextPreview;
+        _images = nextImages;
+      });
+    }
+  }
+
+  Future<void> _openProductImageGallery(int initialIndex) async {
+    await _ensureGalleryReady();
+    if (!mounted) return;
+    final galleryImages =
+        _previewImages.length >= _images.length && _previewImages.isNotEmpty
+        ? _previewImages
+        : (_images.isNotEmpty
+              ? _images
+              : _normalizeImages(
+                  widget.resolveImages(_currentProduct),
+                  toLarge: false,
+                ));
+    if (galleryImages.isEmpty) return;
+    final safeIndex = initialIndex.clamp(0, galleryImages.length - 1);
+    _openImageGallery(galleryImages, safeIndex);
   }
 
   void _precacheAround(int index) {
@@ -23529,8 +23654,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                                       : "";
                                   return GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: () =>
-                                        _openImageGallery(images, index),
+                                    onTap: () => _openProductImageGallery(index),
                                     child: CachedNetworkImage(
                                       imageUrl: url,
                                       fit: BoxFit.cover,
