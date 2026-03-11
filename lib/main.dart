@@ -5946,6 +5946,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  Future<void> _logoutProfile() async {
+    _authContactId = null;
+    _authUserName = null;
+    _authPhone = null;
+    _authPhotoUrl = null;
+    await _persistAuthSessionToPrefs();
+    _reloadProfileData();
+    if (!mounted) return;
+    _goHome();
+    setState(() {});
+  }
+
   Future<void> _editProfileName() async {
     if (!_isAuthorized) {
       await _openProfileAuthPage();
@@ -6005,6 +6017,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
     _resetCatalogBackSwipeTracking();
     _updateCartFloatingButtonVisibility();
+  }
+
+  void _handleHomeNavTap() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.popUntil((route) => route.isFirst);
+    }
+    _goHome();
   }
 
   void _rememberCategoryForBackNavigation({required String nextKey}) {
@@ -11614,7 +11634,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                         ? 'Пользователь'
                                         : _authUserName!.trim(),
                                     style: const TextStyle(
-                                      fontSize: 34,
+                                      fontSize: 22,
                                       fontWeight: FontWeight.w500,
                                       height: 1.1,
                                     ),
@@ -11759,6 +11779,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
                       ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _profileMenuTile(
+                        icon: Icons.logout,
+                        title: "Выйти",
+                        onTap: _logoutProfile,
+                      ),
                     ],
                   ),
                 ),
@@ -11826,6 +11852,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
+          _navItemIcon(
+            Icons.home_rounded,
+            'Домой',
+            _handleHomeNavTap,
+          ),
           _navItem(
             'assets/images/nav_catalog.svg',
             'Каталог',
@@ -11895,6 +11926,67 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               clipBehavior: Clip.none,
               children: [
                 SvgPicture.asset(asset, height: 23),
+                if (badge != null && badge != "0" && badge != "")
+                  Positioned(
+                    right: -8,
+                    top: -5,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        badge,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'Roboto',
+                fontSize: 9,
+                color: Colors.black87,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _navItemIcon(
+    IconData icon,
+    String label,
+    VoidCallback onTap, {
+    String? badge,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, size: 23, color: Colors.black87),
                 if (badge != null && badge != "0" && badge != "")
                   Positioned(
                     right: -8,
@@ -13197,10 +13289,13 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
+  static const String _privacyPolicyJsonUrl =
+      'https://hozyain-barin.ru/native/privacy_policy.json';
   final _phoneController = TextEditingController();
   final _codeController = TextEditingController();
   final _nameController = TextEditingController();
   final _codeFocus = FocusNode();
+  late final TapGestureRecognizer _privacyPolicyTapRecognizer;
   bool _isSettingPhoneText = false;
   final _phoneMask = MaskTextInputFormatter(
     mask: '+7 (###) ###-##-##',
@@ -13219,6 +13314,8 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void initState() {
     super.initState();
+    _privacyPolicyTapRecognizer = TapGestureRecognizer()
+      ..onTap = _openPrivacyPolicyPage;
     _phoneController.addListener(_ensurePhonePrefix);
     if (_phoneController.text.isEmpty) {
       _phoneController.text = '+7 ';
@@ -13231,12 +13328,25 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void dispose() {
     _phoneController.removeListener(_ensurePhonePrefix);
+    _privacyPolicyTapRecognizer.dispose();
     _phoneController.dispose();
     _codeController.dispose();
     _nameController.dispose();
     _codeFocus.dispose();
     _codeTimer?.cancel();
     super.dispose();
+  }
+
+  void _openPrivacyPolicyPage() {
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => const _NativeJsonDocumentPage(
+          title: 'Условия политики конфиденциальности',
+          url: _privacyPolicyJsonUrl,
+        ),
+      ),
+    );
   }
 
   String _normalizePhone(String input) => input.replaceAll(RegExp(r'\D'), '');
@@ -13813,10 +13923,30 @@ class _AuthPageState extends State<AuthPage> {
                         setState(() => _consent = value ?? false),
                     activeColor: Colors.black,
                   ),
-                  const Expanded(
-                    child: Text(
-                      "Нажимая кнопку, Вы соглашаетесь с Правилами и политикой конфиденциальности Компании.",
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black54,
+                          height: 1.3,
+                        ),
+                        children: [
+                          const TextSpan(
+                            text:
+                                "Нажимая кнопку, Вы соглашаетесь с Правилами и ",
+                          ),
+                          TextSpan(
+                            text: "политикой конфиденциальности",
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              decoration: TextDecoration.underline,
+                            ),
+                            recognizer: _privacyPolicyTapRecognizer,
+                          ),
+                          const TextSpan(text: " Компании."),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -14185,6 +14315,125 @@ class _CheckoutPageState extends State<CheckoutPage> {
         .toStringAsFixed(2)
         .replaceAll(RegExp(r'0+$'), '')
         .replaceAll(RegExp(r'\.$'), '');
+  }
+
+  Widget _buildBonusWriteOffPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F8F8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E5E7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.stars_outlined,
+                size: 16,
+                color: Colors.black87,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _isBonusLoading
+                      ? 'Загрузка бонусов...'
+                      : 'Доступно бонусов: ${_formatBonusBalance(_bonusBalance)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _bonusBalance <= 0
+                      ? null
+                      : () {
+                          setState(() {
+                            _useBonuses = !_useBonuses;
+                            if (_useBonuses &&
+                                _bonusAmountController.text.trim().isEmpty) {
+                              _bonusAmountController.text =
+                                  _maxBonusWriteOff.round().toString();
+                            }
+                          });
+                          unawaited(_persistCheckoutState());
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.black87,
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  child: Text(
+                    _useBonuses ? 'Не списывать бонусы' : 'Списать бонусы',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 96,
+                child: TextField(
+                  controller: _bonusAmountController,
+                  enabled: _useBonuses && _bonusBalance > 0,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (value) {
+                    final sanitized = _sanitizeBonusInput(value);
+                    if (sanitized != value) {
+                      _bonusAmountController.value = TextEditingValue(
+                        text: sanitized,
+                        selection: TextSelection.collapsed(
+                          offset: sanitized.length,
+                        ),
+                      );
+                    }
+                    unawaited(_persistCheckoutState());
+                    if (mounted) setState(() {});
+                  },
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '0',
+                    suffixText: 'б',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_bonusWriteOffValue > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black54,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _formatCheckoutPrice(double price) {
@@ -15533,136 +15782,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     style: const TextStyle(fontSize: 12, color: Colors.black54),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E5E7)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.stars_outlined,
-                            size: 16,
-                            color: Colors.black87,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _isBonusLoading
-                                  ? 'Загрузка бонусов...'
-                                  : 'Доступно бонусов: ${_formatBonusBalance(_bonusBalance)}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: _bonusBalance <= 0
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        _useBonuses = !_useBonuses;
-                                        if (_useBonuses &&
-                                            _bonusAmountController.text
-                                                .trim()
-                                                .isEmpty) {
-                                          _bonusAmountController.text =
-                                              _maxBonusWriteOff
-                                                  .round()
-                                                  .toString();
-                                        }
-                                      });
-                                      unawaited(_persistCheckoutState());
-                                    },
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.black87,
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                _useBonuses
-                                    ? 'Не списывать бонусы'
-                                    : 'Списать бонусы',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 96,
-                            child: TextField(
-                              controller: _bonusAmountController,
-                              enabled: _useBonuses && _bonusBalance > 0,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              onChanged: (value) {
-                                final sanitized = _sanitizeBonusInput(value);
-                                if (sanitized != value) {
-                                  _bonusAmountController.value =
-                                      TextEditingValue(
-                                        text: sanitized,
-                                        selection: TextSelection.collapsed(
-                                          offset: sanitized.length,
-                                        ),
-                                      );
-                                }
-                                unawaited(_persistCheckoutState());
-                                if (mounted) setState(() {});
-                              },
-                              decoration: InputDecoration(
-                                isDense: true,
-                                hintText: '0',
-                                suffixText: 'б',
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 9,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_bonusWriteOffValue > 0) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'К списанию: ${_formatBonusBalance(_bonusWriteOffValue)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
               ],
+              const SizedBox(height: 10),
+              _buildBonusWriteOffPanel(),
             ], bottomMargin: 0),
             const SizedBox(height: 12),
             Container(
