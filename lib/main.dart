@@ -11852,11 +11852,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _navItemIcon(
-            Icons.home_rounded,
-            'Домой',
-            _handleHomeNavTap,
-          ),
+          _navItem('assets/images/main.svg', 'Домой', _handleHomeNavTap),
           _navItem(
             'assets/images/nav_catalog.svg',
             'Каталог',
@@ -11926,67 +11922,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               clipBehavior: Clip.none,
               children: [
                 SvgPicture.asset(asset, height: 23),
-                if (badge != null && badge != "0" && badge != "")
-                  Positioned(
-                    right: -8,
-                    top: -5,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        badge,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Roboto',
-                fontSize: 9,
-                color: Colors.black87,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _navItemIcon(
-    IconData icon,
-    String label,
-    VoidCallback onTap, {
-    String? badge,
-  }) {
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(icon, size: 23, color: Colors.black87),
                 if (badge != null && badge != "0" && badge != "")
                   Positioned(
                     right: -8,
@@ -20793,15 +20728,83 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     final fetched = await loader(productId);
     if (!mounted || fetched.isEmpty) return;
     final normalized = _normalizeImages(fetched, toLarge: true);
+    final normalizedPreview = _normalizeImages(fetched, toLarge: false);
     setState(() {
       _images = normalized;
-      if (_previewImages.isEmpty) {
-        _previewImages = _normalizeImages(fetched, toLarge: false);
+      if (normalizedPreview.length > _previewImages.length) {
+        _previewImages = normalizedPreview;
       }
     });
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _precacheAround(_currentImage),
     );
+  }
+
+  Future<void> _ensureGalleryReady() async {
+    final targetId = _currentProductId;
+    if (targetId.isEmpty) return;
+
+    final currentKnownCount = math.max(_previewImages.length, _images.length);
+    if (currentKnownCount > 1) return;
+
+    final fullProduct = await _getProductInfoCached(targetId);
+    if (!mounted || _currentProductId != targetId) return;
+    if (fullProduct != null) {
+      final merged = Map<String, dynamic>.from(_currentProduct)..addAll(fullProduct);
+      final resolvedPreview = _normalizeImages(
+        widget.resolveImages(merged),
+        toLarge: false,
+      );
+      if (resolvedPreview.length > _previewImages.length) {
+        setState(() {
+          _currentProduct = merged;
+          _previewImages = resolvedPreview;
+          if (_images.length < resolvedPreview.length) {
+            _images = List<String>.from(resolvedPreview);
+          }
+        });
+      } else {
+        _currentProduct = merged;
+      }
+    }
+
+    final loader = widget.fetchImagesById;
+    if (loader == null || !mounted || _currentProductId != targetId) return;
+    final fetched = await loader(targetId);
+    if (!mounted || _currentProductId != targetId || fetched.isEmpty) return;
+
+    final normalizedPreview = _normalizeImages(fetched, toLarge: false);
+    final normalizedLarge = _normalizeImages(fetched, toLarge: true);
+    final nextPreview =
+        normalizedPreview.length > _previewImages.length
+        ? normalizedPreview
+        : _previewImages;
+    final nextImages =
+        normalizedLarge.length > _images.length ? normalizedLarge : _images;
+    if (nextPreview.length != _previewImages.length ||
+        nextImages.length != _images.length) {
+      setState(() {
+        _previewImages = nextPreview;
+        _images = nextImages;
+      });
+    }
+  }
+
+  Future<void> _openProductImageGallery(int initialIndex) async {
+    await _ensureGalleryReady();
+    if (!mounted) return;
+    final galleryImages =
+        _previewImages.length >= _images.length && _previewImages.isNotEmpty
+        ? _previewImages
+        : (_images.isNotEmpty
+              ? _images
+              : _normalizeImages(
+                  widget.resolveImages(_currentProduct),
+                  toLarge: false,
+                ));
+    if (galleryImages.isEmpty) return;
+    final safeIndex = initialIndex.clamp(0, galleryImages.length - 1);
+    _openImageGallery(galleryImages, safeIndex);
   }
 
   void _precacheAround(int index) {
@@ -23651,8 +23654,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                                       : "";
                                   return GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTap: () =>
-                                        _openImageGallery(images, index),
+                                    onTap: () => _openProductImageGallery(index),
                                     child: CachedNetworkImage(
                                       imageUrl: url,
                                       fit: BoxFit.cover,
