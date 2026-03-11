@@ -6629,6 +6629,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         SliverToBoxAdapter(
           child: RepaintBoundary(child: _buildMainBannerSlider()),
         ),
+        if (!_isAuthorized)
+          SliverToBoxAdapter(
+            child: RepaintBoundary(child: _buildHeaderLoyaltyCard()),
+          ),
         SliverToBoxAdapter(
           child: RepaintBoundary(child: _buildCategoryScroll()),
         ),
@@ -6739,19 +6743,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         color: Colors.white,
         child: Column(
           children: [
-            SafeArea(
-              bottom: false,
-              child: SizedBox(
-                height: kToolbarHeight,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: showHomePreview
-                      ? _buildMainHeader()
-                      : _buildCategoryHeaderPreview(previewTitle),
+            if (!showHomePreview) ...[
+              SafeArea(
+                bottom: false,
+                child: SizedBox(
+                  height: kToolbarHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: _buildCategoryHeaderPreview(previewTitle),
+                  ),
                 ),
               ),
-            ),
-            Container(color: Colors.grey.shade200, height: 1),
+              Container(color: Colors.grey.shade200, height: 1),
+            ],
             Expanded(
               child: showHomePreview
                   ? _buildHomeScrollPreview()
@@ -7347,25 +7351,25 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Scaffold(
         key: _scaffoldKey,
         backgroundColor: Colors.white,
-        appBar: AppBar(
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.white,
-          shadowColor: Colors.transparent,
-          automaticallyImplyLeading: false,
-          titleSpacing: 0,
-          title: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: _isNativeCategoryPage
-                ? _buildCategoryHeader()
-                : _buildMainHeader(),
-          ),
-          bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(1.0),
-            child: Container(color: Colors.grey.shade200, height: 1.0),
-          ),
-        ),
+        appBar: _isNativeCategoryPage
+            ? AppBar(
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.white,
+                shadowColor: Colors.transparent,
+                automaticallyImplyLeading: false,
+                titleSpacing: 0,
+                title: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: _buildCategoryHeader(),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(1.0),
+                  child: Container(color: Colors.grey.shade200, height: 1.0),
+                ),
+              )
+            : null,
         body: Stack(
           children: [
             // 1. Главная страница (всегда в памяти для сохранения скролла)
@@ -7378,6 +7382,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   SliverToBoxAdapter(
                     child: RepaintBoundary(child: _buildMainBannerSlider()),
                   ),
+                  if (!_isAuthorized)
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(child: _buildHeaderLoyaltyCard()),
+                    ),
                   SliverToBoxAdapter(
                     child: RepaintBoundary(child: _buildCategoryScroll()),
                   ),
@@ -11254,91 +11262,263 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Widget _buildMainBannerSlider() {
-    double screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final bannerWidth = screenWidth;
+    final bannerHeight = bannerWidth;
+    final topInset = MediaQuery.of(context).padding.top;
 
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFF2B2B2F),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(height: topInset + 6),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0x33FFFFFF), width: 1),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x26000000),
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: bannerHeight - 20,
+                    child: _buildMainBannerCarouselContent(
+                      width: bannerWidth - 20,
+                      height: bannerHeight - 20,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: _buildHeaderSearchOverlay(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainBannerCarouselContent({
+    required double width,
+    required double height,
+  }) {
     if (_apiBanners.isEmpty) {
-      // Резервируем место под слайдер, чтобы не было прыжков при загрузке
       return Container(
-        width: screenWidth,
-        height: screenWidth,
-        margin: const EdgeInsets.only(bottom: 25),
-        color: Colors.grey.shade50,
+        color: Colors.grey.shade100,
         child: const Center(
-          child: CircularProgressIndicator(
-            color: Colors.black12,
-            strokeWidth: 2,
-          ),
+          child: CircularProgressIndicator(color: Colors.black26, strokeWidth: 2),
         ),
       );
     }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 25),
-      child: CarouselSlider(
-        options: CarouselOptions(
-          height: screenWidth,
-          viewportFraction: 1.0,
-          autoPlay: true,
-          autoPlayInterval: const Duration(seconds: 5),
-        ),
-        items: _apiBanners.map((item) {
-          return GestureDetector(
-            onTap: () {
-              if (item['link'] != null) {
-                _navigateToSimple(item['title'] ?? "Акция", item['link']);
-              }
-            },
-            child: Container(
-              width: screenWidth,
-              color: Colors.white,
-              child: Stack(
-                children: [
-                  CachedNetworkImage(
-                    imageUrl: item['image'] ?? "",
-                    width: screenWidth,
-                    height: screenWidth,
-                    fit: BoxFit.fitWidth,
-                    placeholder: (context, url) => Container(
-                      color: Colors.grey.shade100,
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.black26,
-                          strokeWidth: 2,
-                        ),
+    return CarouselSlider(
+      options: CarouselOptions(
+        height: height,
+        viewportFraction: 1.0,
+        autoPlay: true,
+        autoPlayInterval: const Duration(seconds: 5),
+      ),
+      items: _apiBanners.map((item) {
+        return GestureDetector(
+          onTap: () {
+            if (item['link'] != null) {
+              _navigateToSimple(item['title'] ?? "Акция", item['link']);
+            }
+          },
+          child: SizedBox(
+            width: width,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CachedNetworkImage(
+                  imageUrl: item['image'] ?? "",
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    color: Colors.grey.shade100,
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        color: Colors.black26,
+                        strokeWidth: 2,
                       ),
                     ),
-                    errorWidget: (context, url, error) =>
-                        const Icon(Icons.error),
                   ),
-                  if (item['title'] != null &&
-                      item['title'].toString().isNotEmpty)
-                    Positioned(
-                      left: 20,
-                      top: 40,
-                      child: Text(
-                        item['title'].toString().toUpperCase(),
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          color: Colors.white,
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          height: 1.0, // Уменьшил с 1.1
-                          letterSpacing: 0,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black45,
-                              blurRadius: 10,
-                              offset: Offset(2, 2),
-                            ),
-                          ],
-                        ),
+                  errorWidget: (context, url, error) => Container(
+                    color: Colors.grey.shade100,
+                    child: const Icon(Icons.error_outline, color: Colors.black38),
+                  ),
+                ),
+                if (item['title'] != null && item['title'].toString().isNotEmpty)
+                  Positioned(
+                    left: 20,
+                    top: 72,
+                    child: Text(
+                      item['title'].toString().toUpperCase(),
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        color: Colors.white,
+                        fontSize: 30,
+                        fontWeight: FontWeight.bold,
+                        height: 1.0,
+                        letterSpacing: 0,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 10,
+                            offset: Offset(1, 2),
+                          ),
+                        ],
                       ),
                     ),
-                ],
+                  ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildHeaderSearchOverlay() {
+    return InkWell(
+      onTap: () => _showSearchMenu(context),
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        height: 46,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xB33A3A3F),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0x66FFFFFF)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 5,
+              offset: Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.search, color: Color(0xFFB0B0B8), size: 24),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Поиск кожаных изделий...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  color: Color(0xFFD6D6DC),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                ),
               ),
             ),
-          );
-        }).toList(),
+            IconButton(
+              onPressed: () => _showSearchMenu(context),
+              icon: const Icon(
+                Icons.qr_code_scanner_rounded,
+                color: Color(0xFFB0B0B8),
+                size: 20,
+              ),
+              visualDensity: VisualDensity.compact,
+              splashRadius: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderLoyaltyCard() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F7FA),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x18000000),
+            blurRadius: 14,
+            offset: Offset(0, 5),
+          ),
+          BoxShadow(
+            color: Color(0x16000000),
+            blurRadius: 10,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE9E4E1),
+              borderRadius: BorderRadius.circular(21),
+            ),
+            child: Image.asset('assets/images/hb_icon.png', fit: BoxFit.contain),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Зарегестрируйтесь, чтоб копить бонусы',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                color: Color(0xFF1F2433),
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                height: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            height: 38,
+            child: ElevatedButton(
+              onPressed: _openProfileAuthPage,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2254D6),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+              ),
+              child: const Text(
+                'Регистрация',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -11445,20 +11625,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildMainHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        _navBtn('assets/images/menu.svg', () => _openCustomMenu()),
-        GestureDetector(
-          onTap: _goHome,
-          child: Image.asset('assets/images/logo.png', height: 28),
-        ),
-        _navBtn('assets/images/phone.svg', () => _showContactsMenu(context)),
-      ],
     );
   }
 
@@ -12381,21 +12547,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _navBtn(String icon, VoidCallback onTap, {double hPadding = 12}) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: hPadding, vertical: 12),
-        child: SvgPicture.asset(
-          icon,
-          height: 18,
-          colorFilter: const ColorFilter.mode(Colors.black, BlendMode.srcIn),
         ),
       ),
     );
