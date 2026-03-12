@@ -16,6 +16,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:image_picker_android/image_picker_android.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart'
+    show
+        Geolocator,
+        LocationAccuracy,
+        LocationPermission,
+        LocationSettings,
+        Position;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
@@ -273,6 +280,7 @@ const String _prefsCheckoutStatePrefix = 'hb.checkout.state.';
 const String _prefsCartStateKey = 'hb.cart.state';
 const String _prefsViewedProductsKey = 'hb.viewed.products';
 const String _prefsSearchHistoryKey = 'hb.search.history';
+const String _prefsHeaderCityKey = 'hb.header.city';
 
 String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
@@ -865,8 +873,9 @@ void main() async {
   ]);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
-      statusBarColor: Colors.white,
-      statusBarIconBrightness: Brightness.dark,
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
       systemNavigationBarColor: Colors.white,
       systemNavigationBarIconBrightness: Brightness.dark,
       systemNavigationBarDividerColor: Colors.white,
@@ -1162,6 +1171,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   };
   final List<Map<String, dynamic>> _viewedProducts = <Map<String, dynamic>>[];
   Future<Map<String, dynamic>?>? _profileCheckoutStateFuture;
+  String? _headerSelectedCity;
+  String? _geoDetectedCity;
+  bool _isDetectingGeoCity = false;
   final Map<String, Timer?> _nativeLoadingIndicatorTimers = {};
   final Map<String, List<MapEntry<String, String>>> _nativeFilterParams = {};
   final ScrollController _subcategoryMainScrollController = ScrollController();
@@ -1222,6 +1234,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void initState() {
     super.initState();
     unawaited(_restoreAuthSessionAndRefreshUi());
+    unawaited(_restoreHeaderCityFromPrefs());
     unawaited(_restoreCartFromPrefs());
     unawaited(_restoreViewedProductsFromPrefs());
     unawaited(_restoreSearchHistoryFromPrefs());
@@ -1254,6 +1267,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadAllData();
+      unawaited(_bootstrapHeaderGeoCity());
       _scheduleNativePrefetch();
       CategoryCounterService.loadCounts().then((_) {
         if (mounted) setState(() {});
@@ -1432,6 +1446,229 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         .toStringAsFixed(2)
         .replaceAll(RegExp(r'0+$'), '')
         .replaceAll(RegExp(r'\.$'), '');
+  }
+
+  String _normalizeCityName(String raw) {
+    var city = raw.trim();
+    if (city.isEmpty) return '';
+    city = city.replaceFirst(
+      RegExp(r'^(г\.?|город)\s+', caseSensitive: false),
+      '',
+    );
+    return city.trim();
+  }
+
+  Future<void> _restoreHeaderCityFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = _normalizeCityName(
+      prefs.getString(_prefsHeaderCityKey) ?? '',
+    );
+    if (saved.isEmpty || !mounted) return;
+    setState(() {
+      _headerSelectedCity = saved;
+    });
+  }
+
+  Future<void> _persistHeaderCityToPrefs(String city) async {
+    final prefs = await SharedPreferences.getInstance();
+    final normalized = _normalizeCityName(city);
+    if (normalized.isEmpty) {
+      await prefs.remove(_prefsHeaderCityKey);
+      return;
+    }
+    await prefs.setString(_prefsHeaderCityKey, normalized);
+  }
+
+  Future<void> _bootstrapHeaderGeoCity() async {
+    await _tryDetectCityFromGeolocation(requestPermissionIfNeeded: true);
+  }
+
+  Future<void> _tryDetectCityFromGeolocation({
+    bool requestPermissionIfNeeded = false,
+  }) async {
+    if (_isDetectingGeoCity) return;
+    if (mounted) {
+      setState(() {
+        _isDetectingGeoCity = true;
+      });
+    } else {
+      _isDetectingGeoCity = true;
+    }
+    try {
+      final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!isServiceEnabled) return;
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied &&
+          requestPermissionIfNeeded) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+      } catch (_) {}
+      position ??= await Geolocator.getLastKnownPosition();
+      if (position == null) return;
+
+      final detectedCity = await _reverseGeocodeCity(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      if (detectedCity == null || detectedCity.isEmpty || !mounted) return;
+
+      final shouldAdoptDetectedCity =
+          (_headerSelectedCity?.trim().isEmpty ?? true);
+      setState(() {
+        _geoDetectedCity = detectedCity;
+        if (shouldAdoptDetectedCity) {
+          _headerSelectedCity = detectedCity;
+        }
+      });
+      if (shouldAdoptDetectedCity) {
+        await _persistHeaderCityToPrefs(detectedCity);
+      }
+    } catch (_) {
+      // Keep header city fallbacks when geolocation is unavailable.
+    } finally {
+      if (!mounted) {
+        _isDetectingGeoCity = false;
+      } else {
+        setState(() {
+          _isDetectingGeoCity = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _reverseGeocodeCity({
+    required double latitude,
+    required double longitude,
+  }) async {
+    if (_yandexSuggestApiKey.isEmpty) return null;
+    final uri = Uri.parse(
+      'https://geocode-maps.yandex.ru/1.x/'
+      '?apikey=$_yandexSuggestApiKey'
+      '&format=json'
+      '&lang=ru_RU'
+      '&kind=locality'
+      '&geocode=$longitude,$latitude',
+    );
+    final response = await _httpGetYandex(uri);
+    if (response.statusCode != 200) return null;
+    final decoded = json.decode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) return null;
+    return _extractCityFromYandexGeocode(Map<String, dynamic>.from(decoded));
+  }
+
+  String? _extractCityFromYandexGeocode(Map<String, dynamic> payload) {
+    final response = payload['response'];
+    if (response is! Map) return null;
+    final collection = response['GeoObjectCollection'];
+    if (collection is! Map) return null;
+    final members = collection['featureMember'];
+    if (members is! List) return null;
+
+    for (final raw in members) {
+      if (raw is! Map) continue;
+      final geoObject = raw['GeoObject'];
+      if (geoObject is! Map) continue;
+
+      final byName = _normalizeCityName(geoObject['name']?.toString() ?? '');
+      if (byName.isNotEmpty) return byName;
+
+      final meta = geoObject['metaDataProperty'];
+      final geocoderMeta = (meta is Map) ? meta['GeocoderMetaData'] : null;
+      final address = (geocoderMeta is Map) ? geocoderMeta['Address'] : null;
+      final components = (address is Map) ? address['Components'] : null;
+      if (components is List) {
+        for (final component in components) {
+          if (component is! Map) continue;
+          final kind = component['kind']?.toString() ?? '';
+          if (kind != 'locality' && kind != 'province') continue;
+          final name = _normalizeCityName(component['name']?.toString() ?? '');
+          if (name.isNotEmpty) return name;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> _openHeaderCityPicker() async {
+    if ((_geoDetectedCity?.trim().isEmpty ?? true)) {
+      await _tryDetectCityFromGeolocation(requestPermissionIfNeeded: true);
+    }
+    if (!mounted) return;
+
+    final detectedCity = _normalizeCityName(_geoDetectedCity ?? '');
+    final initialCity = _normalizeCityName(
+      _headerSelectedCity?.trim().isNotEmpty == true
+          ? _headerSelectedCity!
+          : detectedCity,
+    );
+    final controller = TextEditingController(text: initialCity);
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Ваш город'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (detectedCity.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Определено автоматически: $detectedCity',
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 13,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ),
+              TextField(
+                controller: controller,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(hintText: 'Введите город'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Отмена'),
+            ),
+            if (detectedCity.isNotEmpty)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(detectedCity),
+                child: const Text('По геолокации'),
+              ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    final normalized = _normalizeCityName(picked ?? '');
+    if (normalized.isEmpty || !mounted) return;
+    setState(() {
+      _headerSelectedCity = normalized;
+    });
+    await _persistHeaderCityToPrefs(normalized);
   }
 
   @override
@@ -6684,12 +6921,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       physics: const NeverScrollableScrollPhysics(),
       slivers: [
         SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildMainBannerSlider()),
+          child: RepaintBoundary(child: _buildTopHeroHeader()),
         ),
-        if (!_isAuthorized)
-          SliverToBoxAdapter(
-            child: RepaintBoundary(child: _buildHeaderLoyaltyCard()),
-          ),
+        SliverToBoxAdapter(
+          child: RepaintBoundary(child: _buildMainContentHead()),
+        ),
         SliverToBoxAdapter(
           child: RepaintBoundary(child: _buildCategoryScroll()),
         ),
@@ -7437,12 +7673,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 physics: const BouncingScrollPhysics(),
                 slivers: [
                   SliverToBoxAdapter(
-                    child: RepaintBoundary(child: _buildMainBannerSlider()),
+                    child: RepaintBoundary(child: _buildTopHeroHeader()),
                   ),
-                  if (!_isAuthorized)
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildHeaderLoyaltyCard()),
-                    ),
+                  SliverToBoxAdapter(
+                    child: RepaintBoundary(child: _buildMainContentHead()),
+                  ),
                   SliverToBoxAdapter(
                     child: RepaintBoundary(child: _buildCategoryScroll()),
                   ),
@@ -7588,15 +7823,28 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           )
         : rootContent;
 
+    final overlayStyle = _isNativeCategoryPage
+        ? const SystemUiOverlayStyle(
+            statusBarColor: Colors.white,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+            systemNavigationBarColor: Colors.white,
+            systemNavigationBarIconBrightness: Brightness.dark,
+            systemNavigationBarDividerColor: Colors.white,
+            systemNavigationBarContrastEnforced: false,
+          )
+        : const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.light,
+            statusBarBrightness: Brightness.dark,
+            systemNavigationBarColor: Colors.white,
+            systemNavigationBarIconBrightness: Brightness.dark,
+            systemNavigationBarDividerColor: Colors.white,
+            systemNavigationBarContrastEnforced: false,
+          );
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: const SystemUiOverlayStyle(
-        statusBarColor: Colors.white,
-        statusBarIconBrightness: Brightness.dark,
-        systemNavigationBarColor: Colors.white,
-        systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.white,
-        systemNavigationBarContrastEnforced: false,
-      ),
+      value: overlayStyle,
       child: content,
     );
   }
@@ -11171,17 +11419,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildPromoBannerScroll() {
     if (_promoBanners.isEmpty) return const SizedBox.shrink();
     double screenWidth = MediaQuery.of(context).size.width;
-    double itemWidth = screenWidth * 0.63;
+    double itemWidth = screenWidth * 0.60;
 
     return Container(
-      height: itemWidth * 0.89,
+      height: itemWidth * 0.76,
       margin: const EdgeInsets.only(
         bottom: 20,
       ), // Унифицированный отступ 20 вниз
       color: Colors.white,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 6), // Уменьшен отступ
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         itemCount: _promoBanners.length,
         itemBuilder: (context, index) {
           final item = _promoBanners[index];
@@ -11194,9 +11442,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               },
               child: Container(
                 width: itemWidth,
-                margin: const EdgeInsets.symmetric(horizontal: 6),
+                margin: const EdgeInsets.symmetric(horizontal: 7),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
                   color: Colors.white,
                 ),
                 clipBehavior: Clip.antiAlias,
@@ -11318,56 +11566,289 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildMainBannerSlider() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final bannerWidth = screenWidth;
-    final bannerHeight = bannerWidth;
-    final topInset = MediaQuery.of(context).padding.top;
+  String _extractCityFromAddressLine(String rawAddress) {
+    final trimmed = rawAddress.trim();
+    if (trimmed.isEmpty) return '';
+    final parts = trimmed
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '';
+    return _normalizeCityName(parts.first);
+  }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF2B2B2F),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
-      ),
-      child: ClipRRect(
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  String _extractHeaderCityFromCheckoutState(
+    Map<String, dynamic>? checkoutState,
+  ) {
+    final pickupAddress = (checkoutState?['selectedPickupPoint'] is Map)
+        ? (checkoutState?['selectedPickupPoint']['address']
+                  ?.toString()
+                  .trim() ??
+              '')
+        : '';
+    final pickupCity = _extractCityFromAddressLine(pickupAddress);
+    if (pickupCity.isNotEmpty) return pickupCity;
+    final deliveryAddress =
+        checkoutState?['selectedDeliveryAddress']?.toString().trim() ?? '';
+    final deliveryCity = _extractCityFromAddressLine(deliveryAddress);
+    if (deliveryCity.isNotEmpty) return deliveryCity;
+    return '';
+  }
+
+  String _effectiveHeaderCity(Map<String, dynamic>? checkoutState) {
+    final selected = _normalizeCityName(_headerSelectedCity ?? '');
+    if (selected.isNotEmpty) return selected;
+    final geo = _normalizeCityName(_geoDetectedCity ?? '');
+    if (geo.isNotEmpty) return geo;
+    final checkoutCity = _extractHeaderCityFromCheckoutState(checkoutState);
+    if (checkoutCity.isNotEmpty) return checkoutCity;
+    return _isDetectingGeoCity ? 'Определяем город...' : 'Выберите город';
+  }
+
+  Widget _buildHeroProfileInfoRow() {
+    final future = _profileCheckoutStateFuture ??=
+        _restoreCheckoutStateFromPrefs(_authContactId);
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: future,
+      builder: (context, snapshot) {
+        final city = _effectiveHeaderCity(snapshot.data);
+        return Row(
           children: [
-            SizedBox(height: topInset + 6),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0x33FFFFFF), width: 1),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x26000000),
-                      blurRadius: 10,
-                      offset: Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: bannerHeight - 20,
-                    child: _buildMainBannerCarouselContent(
-                      width: bannerWidth - 20,
-                      height: bannerHeight - 20,
-                    ),
+            Expanded(
+              child: InkWell(
+                onTap: _openHeaderCityPicker,
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on,
+                        color: Color(0xFFEC5B13),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Город доставки: $city',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: _buildHeaderSearchOverlay(),
-            ),
+            if (_isAuthorized) ...[
+              const SizedBox(width: 8),
+              FutureBuilder<double?>(
+                future: _fetchBonusPlusBalance(),
+                builder: (context, bonusSnapshot) {
+                  final bonus = bonusSnapshot.data;
+                  final bonusText = bonus == null
+                      ? 'Бонусы: 0'
+                      : 'Бонусы: ${_formatBonusBalance(bonus)}';
+                  return InkWell(
+                    onTap: _handleProfileNavTap,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0x33EC5B13),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0x55EC5B13)),
+                      ),
+                      child: Text(
+                        bonusText,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFFF8A4A),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTopHeroHeader() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final topInset = MediaQuery.of(context).padding.top;
+    final heroHeight = (screenWidth * 0.88).clamp(280.0, 360.0);
+
+    return Container(
+      color: const Color(0xFF221610),
+      child: Column(
+        children: [
+          SizedBox(height: topInset + 2),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: _buildHeroProfileInfoRow(),
+          ),
+          const SizedBox(height: 2),
+          SizedBox(
+            width: double.infinity,
+            height: heroHeight,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'assets/images/stitch_backpack_hero.jpg',
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      Container(color: const Color(0xFF2B2B2F)),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: ClipRect(
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: Container(
+                        height: 18,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Color(0x7A221610), Color(0x00221610)],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0x00221610), Color(0xCC221610)],
+                      stops: [0.58, 1.0],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  right: 12,
+                  child: _buildHeaderSearchOverlay(),
+                ),
+                const Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 24,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hozyain Barin',
+                        style: TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 42 / 2,
+                          height: 1.1,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              color: Color(0x66000000),
+                              blurRadius: 8,
+                              offset: Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Искусство кожи в каждой детали',
+                        style: TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 14,
+                          color: Color(0xFFE5E7EB),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    height: 26,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(26),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainContentHead() {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        children: [
+          if (!_isAuthorized) _buildHeaderLoyaltyCard(),
+          _buildMainBannerSlider(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainBannerSlider() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final bannerWidth = screenWidth - 32;
+    final bannerHeight = (bannerWidth * 0.64).clamp(180.0, 270.0);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: SizedBox(
+          width: double.infinity,
+          height: bannerHeight,
+          child: _buildMainBannerCarouselContent(
+            width: bannerWidth,
+            height: bannerHeight,
+          ),
         ),
       ),
     );
@@ -11377,6 +11858,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required double width,
     required double height,
   }) {
+    final titleTop = (height * 0.26).clamp(40.0, 72.0);
     if (_apiBanners.isEmpty) {
       return Container(
         color: Colors.grey.shade100,
@@ -11431,7 +11913,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     item['title'].toString().isNotEmpty)
                   Positioned(
                     left: 20,
-                    top: 72,
+                    top: titleTop,
                     child: Text(
                       item['title'].toString().toUpperCase(),
                       style: const TextStyle(
@@ -11462,35 +11944,35 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildHeaderSearchOverlay() {
     return InkWell(
       onTap: () => _showSearchMenu(context),
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        height: 46,
+        height: 48,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: const Color(0xB33A3A3F),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0x66FFFFFF)),
+          color: const Color(0x1AF8F6F6),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0x1AF8F6F6)),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x14000000),
-              blurRadius: 5,
+              color: Color(0x12000000),
+              blurRadius: 4,
               offset: Offset(0, 1),
             ),
           ],
         ),
         child: Row(
           children: [
-            const Icon(Icons.search, color: Color(0xFFB0B0B8), size: 24),
+            const Icon(Icons.search, color: Color(0x99FFFFFF), size: 22),
             const SizedBox(width: 10),
             const Expanded(
               child: Text(
-                'Поиск кожаных изделий...',
+                'Поиск изделий',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'Roboto',
-                  color: Color(0xFFD6D6DC),
-                  fontSize: 13,
+                  color: Color(0x99FFFFFF),
+                  fontSize: 14,
                   fontWeight: FontWeight.w400,
                 ),
               ),
@@ -11499,7 +11981,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               onPressed: () => _showSearchMenu(context),
               icon: const Icon(
                 Icons.qr_code_scanner_rounded,
-                color: Color(0xFFB0B0B8),
+                color: Color(0x99FFFFFF),
                 size: 20,
               ),
               visualDensity: VisualDensity.compact,
@@ -11513,73 +11995,85 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildHeaderLoyaltyCard() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 14),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F7FA),
-        borderRadius: BorderRadius.circular(16),
+        color: const Color(0xFFF8FAFD),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE7EAF0)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x18000000),
+            color: Color(0x14000000),
             blurRadius: 14,
-            offset: Offset(0, 5),
-          ),
-          BoxShadow(
-            color: Color(0x16000000),
-            blurRadius: 10,
-            offset: Offset(0, -2),
+            offset: Offset(0, 6),
           ),
         ],
       ),
       child: Row(
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: 42,
+            height: 42,
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: const Color(0xFFE9E4E1),
-              borderRadius: BorderRadius.circular(21),
+              color: const Color(0xFFECEFF3),
+              borderRadius: BorderRadius.circular(20),
             ),
-            child: Image.asset(
-              'assets/images/hb_icon.png',
-              fit: BoxFit.contain,
+            child: Image.asset('assets/images/icon.png', fit: BoxFit.cover),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Вступай в Клуб Хозяин Барин',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    color: Color(0xFF111827),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.15,
+                  ),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  'Получай 7% бонусами',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    color: Color(0xFF6B7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    height: 1.2,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              'Зарегестрируйтесь, чтоб копить бонусы',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Roboto',
-                color: Color(0xFF1F2433),
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                height: 1.2,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
           SizedBox(
-            height: 38,
+            height: 40,
             child: ElevatedButton(
               onPressed: _openProfileAuthPage,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2254D6),
-                foregroundColor: Colors.white,
+                backgroundColor: const Color(0xFFE5E7EB),
+                foregroundColor: const Color(0xFF4B5563),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 22),
               ),
               child: const Text(
-                'Регистрация',
+                'Вступить',
                 style: TextStyle(
                   fontFamily: 'Roboto',
-                  fontSize: 12,
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -12055,6 +12549,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   String _extractProfileCity(Map<String, dynamic>? checkoutState) {
+    final selected = _normalizeCityName(_headerSelectedCity ?? '');
+    if (selected.isNotEmpty) return selected;
+    final geo = _normalizeCityName(_geoDetectedCity ?? '');
+    if (geo.isNotEmpty) return geo;
     final fromDelivery =
         checkoutState?['selectedDeliveryAddress']?.toString().trim() ?? '';
     if (fromDelivery.isNotEmpty) {
@@ -12079,7 +12577,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           .toList();
       if (parts.isNotEmpty) return parts.first;
     }
-    return 'Владивосток (Приморский край)';
+    return 'Выберите город';
   }
 
   Widget _profileMenuTile({
@@ -12381,7 +12879,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       _profileMenuTile(
                         icon: Icons.location_on_outlined,
                         title: city,
-                        onTap: () => _navigateToSimple("Профиль", "/my/"),
+                        onTap: _openHeaderCityPicker,
                       ),
                       if (deliveryAddress.isNotEmpty) ...[
                         Divider(height: 1, color: Colors.grey.shade200),
@@ -15481,7 +15979,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   int _deliveryMethod = 1; // 0 - доставка, 1 - самовывоз
   int _paymentMethod = 0; // 0 - онлайн, 1 - при получении
   int _onlinePaymentOption = 0; // 0 - YooKassa, 1 - банковская карта
-  bool _useBonuses = false;
+  bool _useBonuses = true;
   double _bonusBalance = 0;
   bool _isBonusLoading = false;
   Map<String, dynamic>? _selectedPickupPoint;
@@ -15519,10 +16017,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
           int.tryParse(saved['paymentMethod']?.toString() ?? '0') ?? 0;
       _onlinePaymentOption =
           int.tryParse(saved['onlinePaymentOption']?.toString() ?? '0') ?? 0;
-      _useBonuses =
-          saved['useBonuses'] == true ||
-          saved['useBonuses']?.toString() == '1' ||
-          saved['useBonuses']?.toString().toLowerCase() == 'true';
+      final hasSavedUseBonuses = saved.containsKey('useBonuses');
+      _useBonuses = hasSavedUseBonuses
+          ? (saved['useBonuses'] == true ||
+                saved['useBonuses']?.toString() == '1' ||
+                saved['useBonuses']?.toString().toLowerCase() == 'true')
+          : true;
       _bonusAmountController.text =
           saved['bonusAmount']?.toString().trim() ?? '';
 
@@ -15634,7 +16134,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (!mounted) return;
       setState(() {
         _bonusBalance = balance < 0 ? 0 : balance;
-        if (_useBonuses && _bonusAmountController.text.trim().isEmpty) {
+        if (_bonusBalance > 0 &&
+            _bonusAmountController.text.trim().isEmpty &&
+            _useBonuses) {
           _bonusAmountController.text = _maxBonusWriteOff.round().toString();
         } else if (_bonusAmountController.text.trim().isNotEmpty) {
           _bonusAmountController.text = _sanitizeBonusInput(
@@ -15692,8 +16194,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton(
-                  onPressed: _bonusBalance <= 0
+                child: InkWell(
+                  onTap: _bonusBalance <= 0
                       ? null
                       : () {
                           setState(() {
@@ -15707,12 +16209,40 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           });
                           unawaited(_persistCheckoutState());
                         },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.black87,
-                    side: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  child: Text(
-                    _useBonuses ? 'Не списывать бонусы' : 'Списать бонусы',
+                  borderRadius: BorderRadius.circular(8),
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: _useBonuses,
+                        visualDensity: VisualDensity.compact,
+                        onChanged: _bonusBalance <= 0
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _useBonuses = value ?? false;
+                                  if (_useBonuses &&
+                                      _bonusAmountController.text
+                                          .trim()
+                                          .isEmpty) {
+                                    _bonusAmountController.text =
+                                        _maxBonusWriteOff.round().toString();
+                                  }
+                                });
+                                unawaited(_persistCheckoutState());
+                              },
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Списать бонусы',
+                        style: TextStyle(
+                          color: _bonusBalance > 0
+                              ? Colors.black87
+                              : Colors.black38,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -15721,7 +16251,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 width: 96,
                 child: TextField(
                   controller: _bonusAmountController,
-                  enabled: _useBonuses && _bonusBalance > 0,
+                  enabled: _bonusBalance > 0,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -15734,6 +16264,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           offset: sanitized.length,
                         ),
                       );
+                    }
+                    if (!_useBonuses &&
+                        sanitized.isNotEmpty &&
+                        (double.tryParse(sanitized.replaceAll(',', '.')) ?? 0) >
+                            0) {
+                      _useBonuses = true;
                     }
                     unawaited(_persistCheckoutState());
                     if (mounted) setState(() {});

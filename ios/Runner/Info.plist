@@ -46,9 +46,9 @@
 		<key>UIApplicationSupportsIndirectInputEvents</key>
 		<true/>
 		<key>UIStatusBarHidden</key>
-		<true/>
-		<key>UIViewControllerBasedStatusBarAppearance</key>
 		<false/>
+		<key>UIViewControllerBasedStatusBarAppearance</key>
+		<true/>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Нужно для выбора фото к отзыву.</string>
 		<key>NSCameraUsageDescription</key>

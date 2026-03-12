@@ -97,6 +97,9 @@ PODS:
     - Flutter
   - FMobileSdk (2.0.0-1231)
   - FunctionalSwift (2.3.3)
+  - geolocator_apple (1.2.0):
+    - Flutter
+    - FlutterMacOS
   - image_picker_ios (0.0.1):
     - Flutter
   - KSCrash/Core (2.1.2)
@@ -158,6 +161,8 @@ PODS:
     - OneSignalXCFramework/OneSignalOSCore
     - OneSignalXCFramework/OneSignalOutcomes
   - OpenSSL-Universal (3.3.3001)
+  - package_info_plus (0.4.5):
+    - Flutter
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -220,8 +225,10 @@ DEPENDENCIES:
   - app_links (from `.symlinks/plugins/app_links/ios`)
   - Flutter (from `Flutter`)
   - flutter_native_splash (from `.symlinks/plugins/flutter_native_splash/ios`)
+  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - onesignal_flutter (from `.symlinks/plugins/onesignal_flutter/ios`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
   - share_plus (from `.symlinks/plugins/share_plus/ios`)
@@ -282,10 +289,14 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_native_splash:
     :path: ".symlinks/plugins/flutter_native_splash/ios"
+  geolocator_apple:
+    :path: ".symlinks/plugins/geolocator_apple/darwin"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   onesignal_flutter:
     :path: ".symlinks/plugins/onesignal_flutter/ios"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
   path_provider_foundation:
     :path: ".symlinks/plugins/path_provider_foundation/darwin"
   permission_handler_apple:
@@ -331,12 +342,14 @@ SPEC CHECKSUMS:
   flutter_native_splash: c32d145d68aeda5502d5f543ee38c192065986cf
   FMobileSdk: a7b555198f03785af1a6064db57545c49694c1cf
   FunctionalSwift: bc40a208dd4f29100767aba35602cc231e8d355a
+  geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
   image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
   KSCrash: bd950ede6c40a50bfc9f246c38a7f3408705fa3c
   MoneyAuth: 2cf9c4426951d3e1db2e838f3b7a349fb318a152
   onesignal_flutter: 6e6254c04f61c8d71d2b9a511bd19f8977eb44e4
   OneSignalXCFramework: ea9e14a95b92ad48d9b35037cbae88a9542bdea3
   OpenSSL-Universal: 6082b0bf950e5636fe0d78def171184e2b3899c2
+  package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   share_plus: 50da8cb520a8f0f65671c6c6a99b3617ed10a58a
