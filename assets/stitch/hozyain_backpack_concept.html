@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ru"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#221610",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .leather-gradient {
+            background: linear-gradient(to bottom, rgba(34, 22, 16, 0) 60%, rgba(34, 22, 16, 1) 100%);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 antialiased">
+<div class="relative flex min-h-screen flex-col overflow-x-hidden">
+<!-- Header Section -->
+<header class="bg-background-dark text-slate-100 pt-4 relative overflow-hidden">
+<div class="px-4 flex items-center justify-between mb-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">location_on</span>
+<div>
+<p class="text-[10px] uppercase tracking-wider opacity-60">Адрес доставки</p>
+<p class="text-sm font-bold">Москва, ул. Арбат, 12</p>
+</div>
+</div>
+<div class="bg-primary/20 border border-primary/30 rounded-full px-3 py-1">
+<p class="text-primary text-xs font-bold leading-normal tracking-wide">Бонусы: 750</p>
+</div>
+</div>
+<!-- Search Bar -->
+<div class="px-4 relative z-20">
+<label class="flex flex-col w-full">
+<div class="flex w-full items-center rounded-xl bg-slate-100/10 backdrop-blur-md border border-slate-100/10 h-12 px-4 gap-3">
+<span class="material-symbols-outlined text-slate-100/60">search</span>
+<input class="flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-slate-100/60 p-0" placeholder="Поиск изделий" value=""/>
+<span class="material-symbols-outlined text-slate-100/60">barcode_scanner</span>
+</div>
+</label>
+</div>
+<!-- Hero Image with smooth transition -->
+<div class="relative w-full h-80 mt-[-20px] z-10">
+<div class="absolute inset-0 w-full h-full bg-cover bg-center" data-alt="Handcrafted premium brown leather backpack close-up" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCMT9SubTu-PXoaa0TwXuMmOxtlNeRhHncpJnQfCni2qY_BqAwrEv_PzQcUU8L859VJ9V3-6y3fWWWn5E8KMrZuGfznUwsXQjy-M0OHkMd0CLMf6IjK2shiTqlk9O5JlTalIDd3lMiSBVRrkU6DB50Bq7_v92PB-qODmKTwtvs5op-FftuCBPo8Sk15aVuQNibN7hm97nSIWDhaUfC2P7jgyAL_J0GwKjUnEboSI1ow0n7Ihsqi9mJ8RtnfynUY5fxxukf0dMi6NEMv');">
+</div>
+<!-- The "Smooth transition" requested -->
+<div class="absolute inset-0 leather-gradient"></div>
+<div class="absolute bottom-8 left-4 right-4">
+<h1 class="text-3xl font-bold leading-tight tracking-tight text-white drop-shadow-lg">Hozyain Barin</h1>
+<p class="text-slate-200 text-sm mt-1">Искусство кожи в каждой детали</p>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 -mt-4 relative z-30 rounded-t-3xl bg-background-light dark:bg-background-dark pb-24">
+<!-- Featured Collections -->
+<section class="pt-6">
+<div class="px-4 flex items-center justify-between mb-4">
+<h2 class="text-xl font-bold">Избранные коллекции</h2>
+<a class="text-primary text-sm font-semibold" href="#">Все</a>
+</div>
+<div class="flex overflow-x-auto gap-4 px-4 no-scrollbar">
+<div class="flex-none w-64 aspect-[16/9] rounded-xl relative overflow-hidden shadow-lg border border-slate-200 dark:border-slate-800">
+<img class="w-full h-full object-cover" data-alt="Classic office leather collection showcase" src="https://lh3.googleusercontent.com/aida-public/AB6AXuChPvb3ngowZ_y5RRNfFH90s26MPrG093SP8Uim7hh5bNxIhlW7YnPBJgvsNFsE0t---wv_uyn5haCcOpaDB--LU5M0_gdyRg52wkgwoLzGsu7SeKIMFGEU8pSjQ09S2bZQM9mIWHOKJ3NCpIZKoG3_gxuAXKP0MCmcT5pOsHquGYSUn_1H69_bn8_pDf4yuISy1dT9BCyaSAv4O8OXa9ipubVGnmklwr7BSxLCk5DP4lDuUdQiOP3jv8DLauHCg7Jpu5SuijjhItQS"/>
+<div class="absolute inset-0 bg-black/30 flex items-end p-3">
+<span class="text-white font-bold text-sm">Офисная классика</span>
+</div>
+</div>
+<div class="flex-none w-64 aspect-[16/9] rounded-xl relative overflow-hidden shadow-lg border border-slate-200 dark:border-slate-800">
+<img class="w-full h-full object-cover" data-alt="Travel series leather goods display" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA4ObPT6Zl4z9kL8xrw4T2mXJLTI_1dDpGFU8blMjhdRi_NeTTii85CFHfAqq4ioK4q2QPjoU-jd6Y4GsvbsVtXJXtUeNjGstTPcrEu-x7tEap6yPdBo97Y4A3w5e8GyaXXacE-5yJfnKwLWkzFrhrqP5d-TJxsNfSNXPQZlHISHMgLXIX5mz98sdvRtmhwkHEKJtPYk2So8HuVZt5RZLQq2kIicn5zfug_mMzoHYv2ZbjRYxfdn23fk74ltXiUVvAynH4n8vQzz5Sz"/>
+<div class="absolute inset-0 bg-black/30 flex items-end p-3">
+<span class="text-white font-bold text-sm">Путешествия</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Loyalty Section -->
+<section class="px-4 mt-8">
+<div class="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-100 dark:border-slate-700">
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-bold text-lg">Бонусы Барина</h3>
+<span class="material-symbols-outlined text-primary">card_membership</span>
+</div>
+<div class="mb-4">
+<div class="flex justify-between items-center mb-2">
+<span class="text-xs font-medium text-slate-500">До следующего уровня</span>
+<span class="text-xs font-bold">750 / 1000</span>
+</div>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 75%"></div>
+</div>
+</div>
+<button class="w-full bg-primary text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-xl">redeem</span>
+                        Получить подарок
+                    </button>
+</div>
+</section>
+<!-- Categories Grid -->
+<section class="px-4 mt-8">
+<h2 class="text-xl font-bold mb-4">Категории</h2>
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-white dark:bg-slate-800 p-4 rounded-xl flex flex-col items-center gap-3 shadow-sm border border-slate-100 dark:border-slate-700">
+<div class="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">work</span>
+</div>
+<span class="text-sm font-bold">Портфели</span>
+</div>
+<div class="bg-white dark:bg-slate-800 p-4 rounded-xl flex flex-col items-center gap-3 shadow-sm border border-slate-100 dark:border-slate-700">
+<div class="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">account_balance_wallet</span>
+</div>
+<span class="text-sm font-bold">Кошельки</span>
+</div>
+<div class="bg-white dark:bg-slate-800 p-4 rounded-xl flex flex-col items-center gap-3 shadow-sm border border-slate-100 dark:border-slate-700">
+<div class="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">watch</span>
+</div>
+<span class="text-sm font-bold">Ремешки</span>
+</div>
+<div class="bg-white dark:bg-slate-800 p-4 rounded-xl flex flex-col items-center gap-3 shadow-sm border border-slate-100 dark:border-slate-700">
+<div class="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">luggage</span>
+</div>
+<span class="text-sm font-bold">Дорожные сумки</span>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation Bar -->
+<nav class="fixed bottom-0 left-0 right-0 bg-white/80 dark:bg-background-dark/80 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 px-6 pb-6 pt-3 flex justify-between items-center z-50">
+<a class="flex flex-col items-center gap-1 text-primary" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">home</span>
+<span class="text-[10px] font-bold">Главная</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500" href="#">
+<span class="material-symbols-outlined">grid_view</span>
+<span class="text-[10px] font-bold">Каталог</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500" href="#">
+<span class="material-symbols-outlined">favorite</span>
+<span class="text-[10px] font-bold">Избранное</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="text-[10px] font-bold">Профиль</span>
+</a>
+</nav>
+</div>
+</body></html>
