@@ -14274,9 +14274,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final children = parentId.isNotEmpty
         ? _getCategoryChildren(parentId)
         : <dynamic>[];
-    final textSize = 16.0;
-    final iconBoxSize = 60.0;
-    final iconRadius = 16.0;
+    const textSize = 16.0;
+    const iconBoxSize = 60.0;
+    const iconRadius = 16.0;
 
     Widget rowTile({
       required String label,
@@ -14335,10 +14335,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   label,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: textSize,
                     fontWeight: FontWeight.w400,
-                    color: const Color(0xFF111827),
+                    color: Color(0xFF111827),
                     height: 1.08,
                   ),
                 ),
