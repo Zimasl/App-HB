@@ -986,6 +986,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   bool _isNativeCategoryPage = false;
   final List<({String key, String title, String? customCategoryId})>
   _nativeCategoryBackStack = [];
+  bool _returnToCatalogOnBack = false;
+  String? _returnToCatalogParentCategoryId;
+  bool _openSearchMenuOnBackToSearch = false;
   int? _catalogBackSwipePointer;
   Offset? _catalogBackSwipeStart;
   bool _catalogBackSwipeScrollLocked = false;
@@ -3243,10 +3246,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required String key,
     required String categoryId,
     required String title,
+    bool resetBackStack = false,
+    String? returnToCatalogParentCategoryId,
   }) {
     final prevNative = _nativeCategory;
     _nativeCustomCategoryIdByKey[key] = categoryId;
-    _rememberCategoryForBackNavigation(nextKey: key);
+    if (resetBackStack) {
+      _nativeCategoryBackStack.clear();
+      _returnToCatalogOnBack = true;
+      _returnToCatalogParentCategoryId = returnToCatalogParentCategoryId;
+    } else {
+      _rememberCategoryForBackNavigation(nextKey: key);
+      if (!_isNativeCategoryPage) {
+        _returnToCatalogOnBack = false;
+        _returnToCatalogParentCategoryId = null;
+      }
+    }
     setState(() {
       _pageTitle = title;
       _isNativeCategoryPage = true;
@@ -5471,7 +5486,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _applyDiscountConfigToAllLoadedProducts();
   }
 
-  void _navigateToApiCategory(dynamic cat) {
+  void _navigateToApiCategory(
+    dynamic cat, {
+    bool resetBackStack = false,
+    String? returnToCatalogParentCategoryId,
+  }) {
     if (_isNativeCategoryPage &&
         (_isUserScrolling || _scrollingNotifier.value)) {
       return;
@@ -5490,6 +5509,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           key: customKey,
           categoryId: catId,
           title: apiTitle.isNotEmpty ? apiTitle : "Категория",
+          resetBackStack: resetBackStack,
+          returnToCatalogParentCategoryId: returnToCatalogParentCategoryId,
         );
         return;
       }
@@ -5500,7 +5521,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return;
     }
 
-    _rememberCategoryForBackNavigation(nextKey: nativeKey);
+    if (resetBackStack) {
+      _nativeCategoryBackStack.clear();
+      _returnToCatalogOnBack = true;
+      _returnToCatalogParentCategoryId = returnToCatalogParentCategoryId;
+    } else {
+      _rememberCategoryForBackNavigation(nextKey: nativeKey);
+      if (!_isNativeCategoryPage) {
+        _returnToCatalogOnBack = false;
+        _returnToCatalogParentCategoryId = null;
+      }
+    }
     setState(() {
       _pageTitle = apiTitle;
       _isNativeCategoryPage = true;
@@ -5590,6 +5621,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (trimmed.isEmpty) return;
     final prevNative = _nativeCategory;
     _activeSearchQuery = trimmed;
+    _openSearchMenuOnBackToSearch = false;
     _rememberCategoryForBackNavigation(nextKey: "search");
     setState(() {
       _pageTitle = "Поиск";
@@ -6380,6 +6412,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _pageTitle = "";
       _catalogBackSwipeScrollLocked = false;
       _nativeCategoryBackStack.clear();
+      _returnToCatalogOnBack = false;
+      _returnToCatalogParentCategoryId = null;
+      _openSearchMenuOnBackToSearch = false;
     });
     _resetCatalogBackSwipeTracking();
     _updateCartFloatingButtonVisibility();
@@ -6417,12 +6452,26 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void _goBackFromCategory() {
     if (!_isNativeCategoryPage) return;
     if (_nativeCategoryBackStack.isEmpty) {
+      if (_returnToCatalogOnBack) {
+        final parentCategoryId = _returnToCatalogParentCategoryId;
+        _goHome();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _openCustomMenu(initialParentCategoryId: parentCategoryId);
+        });
+        return;
+      }
       _goHome();
       return;
     }
 
     final previous = _nativeCategoryBackStack.removeLast();
     final prevNative = _nativeCategory;
+    final shouldOpenSearchMenuAfterBack =
+        previous.key == "search" && _openSearchMenuOnBackToSearch;
+    if (shouldOpenSearchMenuAfterBack) {
+      _openSearchMenuOnBackToSearch = false;
+    }
     final customCategoryId = previous.customCategoryId;
     if (customCategoryId != null && customCategoryId.isNotEmpty) {
       _nativeCustomCategoryIdByKey[previous.key] = customCategoryId;
@@ -6467,6 +6516,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _fetchActiveNativeCategoryIfNeeded();
     _scheduleVisibleGalleryLoad(_nativeCategory);
     _resetCatalogBackSwipeTracking();
+    if (shouldOpenSearchMenuAfterBack) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_isNativeCategoryPage && _nativeCategory == "search") {
+          _showSearchMenu(context);
+        }
+      });
+    }
   }
 
   bool get _canHandleCatalogEdgeBackSwipe {
@@ -11324,7 +11381,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return Container(
         color: Colors.grey.shade100,
         child: const Center(
-          child: CircularProgressIndicator(color: Colors.black26, strokeWidth: 2),
+          child: CircularProgressIndicator(
+            color: Colors.black26,
+            strokeWidth: 2,
+          ),
         ),
       );
     }
@@ -11361,10 +11421,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ),
                   errorWidget: (context, url, error) => Container(
                     color: Colors.grey.shade100,
-                    child: const Icon(Icons.error_outline, color: Colors.black38),
+                    child: const Icon(
+                      Icons.error_outline,
+                      color: Colors.black38,
+                    ),
                   ),
                 ),
-                if (item['title'] != null && item['title'].toString().isNotEmpty)
+                if (item['title'] != null &&
+                    item['title'].toString().isNotEmpty)
                   Positioned(
                     left: 20,
                     top: 72,
@@ -11477,7 +11541,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               color: const Color(0xFFE9E4E1),
               borderRadius: BorderRadius.circular(21),
             ),
-            child: Image.asset('assets/images/hb_icon.png', fit: BoxFit.contain),
+            child: Image.asset(
+              'assets/images/hb_icon.png',
+              fit: BoxFit.contain,
+            ),
           ),
           const SizedBox(width: 10),
           const Expanded(
@@ -13305,6 +13372,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final value = (forcedValue ?? searchController.text).trim();
       if (value.isEmpty) return;
       _activeSearchQuery = value;
+      _openSearchMenuOnBackToSearch = false;
       _rememberSearchQuery(value);
       final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
       closeSearch();
@@ -13321,6 +13389,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final rawCategory = item['category'];
       if (rawCategory is! Map) return;
       final category = Map<String, dynamic>.from(rawCategory);
+      final typedQuery = searchController.text.trim();
+      final fallbackQuery = _activeSearchQuery.trim();
+      final effectiveQuery = typedQuery.isNotEmpty ? typedQuery : fallbackQuery;
+      _openSearchMenuOnBackToSearch = false;
+      if (effectiveQuery.isNotEmpty) {
+        _activeSearchQuery = effectiveQuery;
+        _openSearchMenuOnBackToSearch = true;
+        _rememberSearchQuery(effectiveQuery);
+        _setNativeListByKey("search", []);
+        _setOriginalNativeListByKey("search", []);
+        _nativeOffsets["search"] = 0;
+        _nativeHasMore["search"] = true;
+      }
       final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
       closeSearch();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -13328,6 +13409,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           rootNavigator.pop();
         }
         if (!mounted) return;
+        if (effectiveQuery.isNotEmpty) {
+          _nativeCategoryBackStack
+            ..clear()
+            ..add((key: "search", title: "Поиск", customCategoryId: null));
+          _returnToCatalogOnBack = false;
+          _returnToCatalogParentCategoryId = null;
+        }
         _navigateToApiCategory(category);
       });
     }
@@ -13855,7 +13943,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
   }
 
-  void _openCategoryFromMenuSlug(String slug, {String title = "Категория"}) {
+  void _openCategoryFromMenuSlug(
+    String slug, {
+    String title = "Категория",
+    bool resetBackStack = false,
+    String? returnToCatalogParentCategoryId,
+  }) {
     final categoryId = _findCategoryIdBySlug(_apiCategories, slug);
     if (categoryId == null || categoryId.isEmpty) {
       _showNativeOnlyNotice();
@@ -13863,13 +13956,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
     final category = _findCategoryById(_apiCategories, categoryId);
     if (category != null) {
-      _navigateToApiCategory(category);
+      _navigateToApiCategory(
+        category,
+        resetBackStack: resetBackStack,
+        returnToCatalogParentCategoryId: returnToCatalogParentCategoryId,
+      );
       return;
     }
     _openNativeCategoryById(
       key: "custom_$categoryId",
       categoryId: categoryId,
       title: title,
+      resetBackStack: resetBackStack,
+      returnToCatalogParentCategoryId: returnToCatalogParentCategoryId,
     );
   }
 
@@ -13890,7 +13989,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         .toList();
   }
 
-  Widget _buildBurgerMenuSearch(BuildContext dialogContext) {
+  Widget _buildBurgerMenuSearch(
+    BuildContext dialogContext, {
+    VoidCallback? onBack,
+  }) {
     final screenWidth = MediaQuery.of(context).size.width;
     final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
     final barHeight = (48 * scale).clamp(45.0, 52.0);
@@ -13908,6 +14010,26 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
     return Row(
       children: [
+        if (onBack != null) ...[
+          InkWell(
+            borderRadius: BorderRadius.circular(radius),
+            onTap: onBack,
+            child: Container(
+              width: sideSize,
+              height: sideSize,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(radius),
+              ),
+              child: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: const Color(0xFF4B5563),
+                size: (18 * scale).clamp(16.0, 20.0),
+              ),
+            ),
+          ),
+          SizedBox(width: 8 * scale),
+        ],
         Expanded(
           child: InkWell(
             borderRadius: BorderRadius.circular(radius),
@@ -13938,25 +14060,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             ),
           ),
         ),
-        SizedBox(width: 8 * scale),
-        InkWell(
-          borderRadius: BorderRadius.circular(radius),
-          onTap: () =>
-              _closeMenuAndRun(dialogContext, () => _showContactsMenu(context)),
-          child: Container(
-            width: sideSize,
-            height: sideSize,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
-              borderRadius: BorderRadius.circular(radius),
-            ),
-            child: Icon(
-              Icons.chat_bubble_outline_rounded,
-              color: const Color(0xFF4B5563),
-              size: iconSize,
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -13979,6 +14082,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           key: "discount_men",
           categoryId: "156",
           title: "Скидки",
+          resetBackStack: true,
         ),
       },
       {
@@ -13988,6 +14092,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         "onTap": () => _openCategoryFromMenuSlug(
           "podarochnye-sertifikaty",
           title: "Подарочные карты",
+          resetBackStack: true,
         ),
       },
       {
@@ -14005,6 +14110,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           key: "discount_women",
           categoryId: "157",
           title: "Акции",
+          resetBackStack: true,
         ),
       },
     ];
@@ -14061,7 +14167,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildBurgerCategoriesGrid() {
+  Widget _buildBurgerCategoriesGrid({ValueChanged<dynamic>? onCategoryTap}) {
     final screenWidth = MediaQuery.of(context).size.width;
     final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
     final spacing = (12 * scale).clamp(10.0, 14.0);
@@ -14089,7 +14195,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final jpgPath = 'assets/categories/$slug.jpg';
         return InkWell(
           borderRadius: BorderRadius.circular(radius),
-          onTap: () => _navigateToApiCategory(cat),
+          onTap: () {
+            if (onCategoryTap != null) {
+              onCategoryTap(cat);
+              return;
+            }
+            _navigateToApiCategory(cat);
+          },
           child: Container(
             decoration: BoxDecoration(
               color: const Color(0xFFF3F4F6),
@@ -14154,9 +14266,164 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  void _openCustomMenu() {
+  Widget _buildBurgerSubcategoriesList({required dynamic parentCategory}) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final scale = (screenWidth / 390).clamp(0.92, 1.08).toDouble();
+    final title = parentCategory['name']?.toString() ?? "Категория";
+    final parentId = parentCategory['id']?.toString() ?? "";
+    final children = parentId.isNotEmpty
+        ? _getCategoryChildren(parentId)
+        : <dynamic>[];
+    final textSize = 16.0;
+    final iconBoxSize = 60.0;
+    final iconRadius = 16.0;
+
+    Widget rowTile({
+      required String label,
+      required VoidCallback onTap,
+      String assetPath = "",
+      bool isAllProducts = false,
+    }) {
+      final jpgPath = assetPath.replaceAll('.png', '.jpg');
+      Widget fallbackIcon() => Icon(
+        Icons.shopping_bag_outlined,
+        size: (26 * scale).clamp(22.0, 30.0),
+        color: const Color(0xFF9CA3AF),
+      );
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: (4 * scale).clamp(2.0, 6.0)),
+          child: Row(
+            children: [
+              Container(
+                width: iconBoxSize,
+                height: iconBoxSize,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F4F6),
+                  borderRadius: BorderRadius.circular(iconRadius),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Center(
+                  child: isAllProducts
+                      ? Icon(
+                          Icons.grid_view_rounded,
+                          size: (28 * scale).clamp(24.0, 30.0),
+                          color: const Color(0xFF94A3B8),
+                        )
+                      : Padding(
+                          padding: EdgeInsets.all((6 * scale).clamp(4.0, 8.0)),
+                          child: assetPath.isNotEmpty
+                              ? Image.asset(
+                                  assetPath,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (_, __, ___) => Image.asset(
+                                    jpgPath,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (_, __, ___) =>
+                                        fallbackIcon(),
+                                  ),
+                                )
+                              : fallbackIcon(),
+                        ),
+                ),
+              ),
+              SizedBox(width: (12 * scale).clamp(10.0, 14.0)),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: textSize,
+                    fontWeight: FontWeight.w400,
+                    color: const Color(0xFF111827),
+                    height: 1.08,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) {
+      return rowTile(
+        label: "Все товары",
+        onTap: () => _navigateToApiCategory(
+          parentCategory,
+          resetBackStack: true,
+          returnToCatalogParentCategoryId: parentId,
+        ),
+        isAllProducts: true,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: (10 * scale).clamp(8.0, 14.0)),
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: (22 * scale).clamp(18.0, 22.0),
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 14),
+        ...children.map((sub) {
+          final slug = _getCategorySlug(sub);
+          final assetPath = slug.isNotEmpty
+              ? "assets/categories/$slug.png"
+              : "";
+          final label = sub['name']?.toString() ?? "Подкатегория";
+          return rowTile(
+            label: label,
+            assetPath: assetPath,
+            onTap: () => _navigateToApiCategory(
+              sub,
+              resetBackStack: true,
+              returnToCatalogParentCategoryId: parentId,
+            ),
+          );
+        }),
+        rowTile(
+          label: "Все товары",
+          onTap: () => _navigateToApiCategory(
+            parentCategory,
+            resetBackStack: true,
+            returnToCatalogParentCategoryId: parentId,
+          ),
+          isAllProducts: true,
+        ),
+      ],
+    );
+  }
+
+  void _openCustomMenu({String? initialParentCategoryId}) {
     if (_isBurgerMenuOpen) return;
     _isBurgerMenuOpen = true;
+    dynamic selectedMenuCategory;
+    if (initialParentCategoryId != null && initialParentCategoryId.isNotEmpty) {
+      final initial = _findCategoryById(
+        _apiCategories,
+        initialParentCategoryId,
+      );
+      if (initial != null) {
+        final initialId = initial['id']?.toString() ?? "";
+        final hasChildren = initialId.isNotEmpty
+            ? _getCategoryChildren(initialId).isNotEmpty
+            : false;
+        if (hasChildren) {
+          selectedMenuCategory = initial;
+        }
+      }
+    }
     final dialogFuture = showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -14166,41 +14433,88 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         return child;
       },
-      pageBuilder: (context, _, __) {
-        return Scaffold(
-          backgroundColor: Colors.white,
-          body: SafeArea(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: _isMenuLoading
-                      ? const Center(
-                          child: CircularProgressIndicator(color: Colors.black),
-                        )
-                      : ListView(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-                          children: [
-                            const SizedBox(height: 4),
-                            _buildBurgerMenuSearch(context),
-                            const SizedBox(height: 14),
-                            _buildBurgerPromoGrid(context),
-                            const SizedBox(height: 14),
-                            _buildBurgerCategoriesGrid(),
-                            const SizedBox(height: 14),
-                          ],
-                        ),
+      pageBuilder: (dialogContext, _, __) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void handleMenuBack() {
+            if (selectedMenuCategory != null) {
+              setDialogState(() {
+                selectedMenuCategory = null;
+              });
+              return;
+            }
+            Navigator.of(context).maybePop();
+          }
+
+          final categoriesSection = selectedMenuCategory == null
+              ? _buildBurgerCategoriesGrid(
+                  onCategoryTap: (cat) {
+                    final categoryId = cat['id']?.toString() ?? "";
+                    final hasChildren = categoryId.isNotEmpty
+                        ? _getCategoryChildren(categoryId).isNotEmpty
+                        : false;
+                    if (!hasChildren) {
+                      _navigateToApiCategory(cat, resetBackStack: true);
+                      return;
+                    }
+                    setDialogState(() {
+                      selectedMenuCategory = cat;
+                    });
+                  },
+                )
+              : _buildBurgerSubcategoriesList(
+                  parentCategory: selectedMenuCategory,
+                );
+          return PopScope(
+            canPop: selectedMenuCategory == null,
+            onPopInvokedWithResult: (didPop, result) {
+              if (didPop) return;
+              handleMenuBack();
+            },
+            child: Scaffold(
+              backgroundColor: Colors.white,
+              body: SafeArea(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _isMenuLoading
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.black,
+                              ),
+                            )
+                          : ListView(
+                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+                              children: [
+                                const SizedBox(height: 4),
+                                _buildBurgerMenuSearch(
+                                  dialogContext,
+                                  onBack: selectedMenuCategory == null
+                                      ? null
+                                      : handleMenuBack,
+                                ),
+                                const SizedBox(height: 14),
+                                if (selectedMenuCategory == null) ...[
+                                  _buildBurgerPromoGrid(dialogContext),
+                                  const SizedBox(height: 14),
+                                ],
+                                categoriesSection,
+                                const SizedBox(height: 14),
+                              ],
+                            ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+              bottomNavigationBar: SafeArea(
+                top: false,
+                left: false,
+                right: false,
+                child: _buildBottomBar(),
+              ),
             ),
-          ),
-          bottomNavigationBar: SafeArea(
-            top: false,
-            left: false,
-            right: false,
-            child: _buildBottomBar(),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
     dialogFuture.whenComplete(() {
       _isBurgerMenuOpen = false;
