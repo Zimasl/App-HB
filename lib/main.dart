@@ -107,7 +107,7 @@ const TextStyle _cardNameStyle = TextStyle(
 );
 const Set<String> _newCategoryIds = {"147"};
 const String _shopApiToken = "f616081435730714b089ec1115bac63b";
-const double _catalogBackSwipeEdgeWidth = 24;
+const double _catalogBackSwipeEdgeWidth = 28;
 const double _catalogBackSwipeMinDistance = 72;
 const double _catalogBackSwipeMaxVerticalDrift = 96;
 const double _catalogBackSwipeCompleteRatio = 0.28;
@@ -8030,8 +8030,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildWishlistGrid(List<dynamic> items) {
     if (items.isEmpty) {
       return _buildEmptyState(
-        title: "Список избранного пуст",
-        subtitle: "Для добавления товаров в избранное",
+        imageAsset: 'assets/images/favourite.jpg',
+        actionLabel: 'Добавить товар',
       );
     }
     final screenWidth = MediaQuery.of(context).size.width;
@@ -8060,10 +8060,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildCartPage(List<Map<String, dynamic>> items) {
     if (items.isEmpty) {
-      return _buildEmptyState(
-        title: "Корзина пуста",
-        subtitle: "Добавьте товары из каталога",
-      );
+      return _buildCartEmptyState();
     }
     final showSelectionUI = items.length > 1;
     final selectedItems = showSelectionUI
@@ -9883,55 +9880,74 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildEmptyState({required String title, required String subtitle}) {
+  Widget _buildCartEmptyState() {
+    return _buildEmptyState(
+      imageAsset: 'assets/images/cart.jpg',
+      actionLabel: 'Начать покупки',
+    );
+  }
+
+  Widget _buildEmptyState({
+    required String imageAsset,
+    required String actionLabel,
+  }) {
     return SliverFillRemaining(
       hasScrollBody: false,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Transform.translate(
-            offset: const Offset(0, -30),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const buttonHeight = 46.0;
+          const verticalGaps = 22.0;
+          final maxImageHeight =
+              (constraints.maxHeight - buttonHeight - verticalGaps)
+                  .clamp(220.0, 620.0)
+                  .toDouble();
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Image.asset(
-                  'assets/images/apple_touch_icon.png',
-                  width: 280,
-                  height: 280,
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  title,
-                  style: _boldMenuStyle.copyWith(fontSize: 24),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  subtitle,
-                  style: _subMenuStyle.copyWith(
-                    fontSize: 16,
-                    color: Colors.black54,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 6),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _openCustomMenu,
-                  child: Text(
-                    "перейдите в каталог",
-                    style: _subMenuStyle.copyWith(
-                      fontSize: 15,
-                      color: const Color(0xFF4A4A4A),
-                      fontWeight: FontWeight.bold,
+                SizedBox(
+                  height: maxImageHeight,
+                  child: Center(
+                    child: Image.asset(
+                      imageAsset,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.center,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey.shade100,
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.image_not_supported_outlined),
+                      ),
                     ),
-                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: buttonHeight,
+                  child: ElevatedButton(
+                    onPressed: _openCustomMenu,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      actionLabel,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -9940,15 +9956,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final products = items.whereType<Map>().toList();
     if (products.isEmpty) {
       return _buildEmptyState(
-        title: "Список сравнения пуст",
-        subtitle: "Для добавления товаров к сравнению",
+        imageAsset: 'assets/images/compare.jpg',
+        actionLabel: 'Добавить товар',
       );
     }
     final grouped = _groupCompareProducts(products);
     if (grouped.isEmpty) {
       return _buildEmptyState(
-        title: "Список сравнения пуст",
-        subtitle: "Для добавления товаров к сравнению",
+        imageAsset: 'assets/images/compare.jpg',
+        actionLabel: 'Добавить товар',
       );
     }
 
@@ -14060,7 +14076,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         ),
                         SizedBox(width: 8 * scale),
                         InkWell(
-                          onTap: closeSearchToBurger,
+                          onTap: openedFromBurger
+                              ? closeSearchToBurger
+                              : closeSearch,
                           child: Padding(
                             padding: EdgeInsets.symmetric(
                               horizontal: 2 * scale,
@@ -14907,6 +14925,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (_isBurgerMenuOpen) return;
     _isBurgerMenuOpen = true;
     dynamic selectedMenuCategory;
+    int? menuBackSwipePointer;
+    Offset? menuBackSwipeStart;
+    double menuBackSwipeOffset = 0;
+    bool menuBackSwipeScrollLocked = false;
     if (initialParentCategoryId != null && initialParentCategoryId.isNotEmpty) {
       final initial = _findCategoryById(
         _apiCategories,
@@ -14937,38 +14959,113 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             if (selectedMenuCategory != null) {
               setDialogState(() {
                 selectedMenuCategory = null;
+                menuBackSwipeOffset = 0;
+                menuBackSwipeScrollLocked = false;
               });
               return;
+            }
+            if (menuBackSwipeOffset != 0) {
+              setDialogState(() => menuBackSwipeOffset = 0);
             }
             Navigator.of(context).maybePop();
           }
 
-          final categoriesSection = selectedMenuCategory == null
-              ? _buildBurgerCategoriesGrid(
-                  onCategoryTap: (cat) {
-                    final categoryId = cat['id']?.toString() ?? "";
-                    final hasChildren = categoryId.isNotEmpty
-                        ? _getCategoryChildren(categoryId).isNotEmpty
-                        : false;
-                    if (!hasChildren) {
-                      _navigateToApiCategory(cat, resetBackStack: true);
-                      return;
-                    }
-                    setDialogState(() {
-                      selectedMenuCategory = cat;
-                    });
-                  },
-                )
-              : _buildBurgerSubcategoriesList(
-                  parentCategory: selectedMenuCategory,
-                );
-          return PopScope(
-            canPop: selectedMenuCategory == null,
-            onPopInvokedWithResult: (didPop, result) {
-              if (didPop) return;
-              handleMenuBack();
-            },
-            child: Scaffold(
+          void setMenuSwipeScrollLock(bool locked) {
+            if (menuBackSwipeScrollLocked == locked) return;
+            setDialogState(() {
+              menuBackSwipeScrollLocked = locked;
+            });
+          }
+
+          void resetMenuSwipeTracking() {
+            menuBackSwipePointer = null;
+            menuBackSwipeStart = null;
+            setMenuSwipeScrollLock(false);
+          }
+
+          void handleMenuPointerDown(PointerDownEvent event) {
+            if (!Platform.isIOS) return;
+            if (menuBackSwipePointer != null) return;
+            if (event.position.dx > (_catalogBackSwipeEdgeWidth + 4)) return;
+            menuBackSwipePointer = event.pointer;
+            menuBackSwipeStart =
+                event.position - Offset(menuBackSwipeOffset, 0);
+            setMenuSwipeScrollLock(true);
+          }
+
+          void handleMenuPointerMove(PointerMoveEvent event) {
+            if (menuBackSwipePointer != event.pointer) return;
+            final start = menuBackSwipeStart;
+            if (start == null) return;
+            final width = MediaQuery.of(dialogContext).size.width;
+            final delta = event.position - start;
+            if (delta.dy.abs() > _catalogBackSwipeMaxVerticalDrift) {
+              resetMenuSwipeTracking();
+              if (menuBackSwipeOffset != 0) {
+                setDialogState(() => menuBackSwipeOffset = 0);
+              }
+              return;
+            }
+            if (delta.dx <= 0) return;
+            final clampedDx = delta.dx.clamp(0.0, width * 0.98).toDouble();
+            if ((menuBackSwipeOffset - clampedDx).abs() >= 0.5) {
+              setDialogState(() => menuBackSwipeOffset = clampedDx);
+            }
+          }
+
+          void handleMenuPointerUp(PointerUpEvent event) {
+            if (menuBackSwipePointer != event.pointer) return;
+            resetMenuSwipeTracking();
+            final width = MediaQuery.of(dialogContext).size.width;
+            final completeThreshold = math.max(
+              _catalogBackSwipeMinDistance,
+              width * _catalogBackSwipeCompleteRatio,
+            );
+            final shouldComplete = menuBackSwipeOffset >= completeThreshold;
+            if (!shouldComplete) {
+              if (menuBackSwipeOffset != 0) {
+                setDialogState(() => menuBackSwipeOffset = 0);
+              }
+              return;
+            }
+            if (selectedMenuCategory != null) {
+              setDialogState(() {
+                selectedMenuCategory = null;
+                menuBackSwipeOffset = 0;
+                menuBackSwipeScrollLocked = false;
+              });
+            } else {
+              Navigator.of(context).maybePop();
+            }
+          }
+
+          Widget buildMenuScaffold({
+            required dynamic activeCategory,
+            required bool interactive,
+            VoidCallback? onBack,
+          }) {
+            final categoriesSection = activeCategory == null
+                ? _buildBurgerCategoriesGrid(
+                    onCategoryTap: (cat) {
+                      if (!interactive) return;
+                      final categoryId = cat['id']?.toString() ?? "";
+                      final hasChildren = categoryId.isNotEmpty
+                          ? _getCategoryChildren(categoryId).isNotEmpty
+                          : false;
+                      if (!hasChildren) {
+                        _navigateToApiCategory(cat, resetBackStack: true);
+                        return;
+                      }
+                      setDialogState(() {
+                        selectedMenuCategory = cat;
+                        menuBackSwipeOffset = 0;
+                        menuBackSwipeScrollLocked = false;
+                      });
+                    },
+                  )
+                : _buildBurgerSubcategoriesList(parentCategory: activeCategory);
+
+            return Scaffold(
               backgroundColor: Colors.white,
               body: SafeArea(
                 child: Stack(
@@ -14981,17 +15078,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               ),
                             )
                           : ListView(
+                              physics: menuBackSwipeScrollLocked
+                                  ? const NeverScrollableScrollPhysics()
+                                  : const BouncingScrollPhysics(),
                               padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
                               children: [
                                 const SizedBox(height: 4),
                                 _buildBurgerMenuSearch(
                                   dialogContext,
-                                  onBack: selectedMenuCategory == null
+                                  onBack: activeCategory == null
                                       ? null
-                                      : handleMenuBack,
+                                      : onBack,
                                 ),
                                 const SizedBox(height: 14),
-                                if (selectedMenuCategory == null) ...[
+                                if (activeCategory == null) ...[
                                   _buildBurgerPromoGrid(dialogContext),
                                   const SizedBox(height: 14),
                                 ],
@@ -15009,6 +15109,68 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 right: false,
                 child: _buildBottomBar(),
               ),
+            );
+          }
+
+          final activeScaffold = buildMenuScaffold(
+            activeCategory: selectedMenuCategory,
+            interactive: true,
+            onBack: handleMenuBack,
+          );
+          final translatedActive = Transform.translate(
+            offset: Offset(menuBackSwipeOffset, 0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                boxShadow: menuBackSwipeOffset > 0
+                    ? [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.16),
+                          blurRadius: 16,
+                          offset: const Offset(-2, 0),
+                        ),
+                      ]
+                    : const [],
+              ),
+              child: activeScaffold,
+            ),
+          );
+
+          Widget layeredContent;
+          if (selectedMenuCategory != null && menuBackSwipeOffset > 0) {
+            layeredContent = Stack(
+              fit: StackFit.expand,
+              children: [
+                IgnorePointer(
+                  child: buildMenuScaffold(
+                    activeCategory: null,
+                    interactive: false,
+                  ),
+                ),
+                translatedActive,
+              ],
+            );
+          } else {
+            layeredContent = translatedActive;
+          }
+
+          return Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: handleMenuPointerDown,
+            onPointerMove: handleMenuPointerMove,
+            onPointerUp: handleMenuPointerUp,
+            onPointerCancel: (_) {
+              resetMenuSwipeTracking();
+              if (menuBackSwipeOffset != 0) {
+                setDialogState(() => menuBackSwipeOffset = 0);
+              }
+            },
+            child: PopScope(
+              canPop: selectedMenuCategory == null,
+              onPopInvokedWithResult: (didPop, result) {
+                if (didPop) return;
+                handleMenuBack();
+              },
+              child: layeredContent,
             ),
           );
         },
@@ -16160,6 +16322,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         .replaceAll(RegExp(r'\.$'), '');
   }
 
+  void _dismissKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   Widget _buildBonusWriteOffPanel() {
     return Container(
       width: double.infinity,
@@ -16255,6 +16421,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
+                  onTapOutside: (_) => _dismissKeyboard(),
                   onChanged: (value) {
                     final sanitized = _sanitizeBonusInput(value);
                     if (sanitized != value) {
@@ -16926,52 +17093,401 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(5, 12, 5, 20),
-          children: [
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          "Контактная информация",
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.black,
-                            letterSpacing: 0,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _dismissKeyboard,
+          child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(5, 12, 5, 20),
+            children: [
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            "Контактная информация",
+                            style: TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.black,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ),
+                        if (_isAuthorized)
+                          TextButton(
+                            onPressed: _openAuthPage,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.blue,
+                            ),
+                            child: const Text("Изменить"),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (!_isAuthorized) ...[
+                      SizedBox(
+                        height: 40,
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _openAuthPage,
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFEDEDED),
+                            foregroundColor: Colors.black87,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 1,
+                          ),
+                          label: const Text(
+                            "Заполнить данные",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                            ),
                           ),
                         ),
                       ),
-                      if (_isAuthorized)
-                        TextButton(
-                          onPressed: _openAuthPage,
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.blue,
+                    ] else ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundColor: Colors.grey.shade200,
+                            backgroundImage: _authAvatarProvider(_authPhotoUrl),
+                            child:
+                                (_authPhotoUrl == null ||
+                                    _authPhotoUrl!.isEmpty ||
+                                    _authAvatarProvider(_authPhotoUrl) == null)
+                                ? const Icon(
+                                    Icons.person,
+                                    color: Colors.black54,
+                                  )
+                                : null,
                           ),
-                          child: const Text("Изменить"),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _authUserName?.isNotEmpty == true
+                                      ? _authUserName!
+                                      : "Пользователь",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatPhoneMasked(_authPhone ?? ""),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              _section("Способ получения", [
+                Container(
+                  height: 34,
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _deliveryMethod = 1);
+                            unawaited(_persistCheckoutState());
+                          },
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: _deliveryMethod == 1
+                                  ? Colors.white
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: _deliveryMethod == 1
+                                  ? const [
+                                      BoxShadow(
+                                        color: Color(0x22000000),
+                                        blurRadius: 6,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: const Text(
+                              "Самовывоз",
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
                         ),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _deliveryMethod = 0);
+                            unawaited(_persistCheckoutState());
+                          },
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: _deliveryMethod == 0
+                                  ? Colors.white
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: _deliveryMethod == 0
+                                  ? const [
+                                      BoxShadow(
+                                        color: Color(0x22000000),
+                                        blurRadius: 6,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: const Text(
+                              "Доставка",
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  if (!_isAuthorized) ...[
+                ),
+                const SizedBox(height: 12),
+                if (_deliveryMethod == 1) ...[
+                  if (!hasSelectedPickup)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(
+                        height: 150,
+                        width: double.infinity,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/images/gps-map.jpg',
+                              fit: BoxFit.cover,
+                            ),
+                            const Positioned.fill(
+                              child: ColoredBox(color: Color(0x08000000)),
+                            ),
+                            Center(
+                              child: SizedBox(
+                                height: 40,
+                                width: 270,
+                                child: ElevatedButton.icon(
+                                  onPressed: _openPickupPointsPage,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFEDEDED),
+                                    foregroundColor: Colors.black87,
+                                    side: const BorderSide(
+                                      color: Color(0xFFD5D8DD),
+                                      width: 1,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    elevation: 1,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.location_on_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text(
+                                    "Выбрать пункт самовывоза",
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Material(
+                      color: Colors.white,
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: const BorderSide(color: Color(0xFFE3E4E8)),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              color: Colors.white,
+                              padding: const EdgeInsets.fromLTRB(
+                                16,
+                                12,
+                                16,
+                                12,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Transform.translate(
+                                        offset: const Offset(-3, 0),
+                                        child: const Padding(
+                                          padding: EdgeInsets.only(top: 1),
+                                          child: Icon(
+                                            Icons.location_on_outlined,
+                                            size: 18,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          selectedPickupName,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black87,
+                                            height: 1.2,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (selectedPickupAddress.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      selectedPickupAddress,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        color: Color(0xFF4C5159),
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                  ],
+                                  if (selectedPickupWorktime.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      selectedPickupWorktime,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Color(0xFF8A8F98),
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                  ],
+                                  if (pickupAvailabilitySpan != null) ...[
+                                    const SizedBox(height: 4),
+                                    Text.rich(
+                                      pickupAvailabilitySpan,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Container(
+                              height: 1,
+                              color: const Color(0xFFE3E4E8),
+                            ),
+                            Container(
+                              color: const Color(0xFFEDEDED),
+                              child: SizedBox(
+                                height: 46,
+                                child: InkWell(
+                                  onTap: _openPickupPointsPage,
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            "Изменить пункт самовывоза",
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w400,
+                                              color: Colors.black87,
+                                            ),
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          size: 22,
+                                          color: Colors.black38,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ] else ...[
+                  if (!hasSelectedDelivery)
                     SizedBox(
                       height: 40,
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _openAuthPage,
-                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        onPressed: _openDeliveryAddressPage,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFEDEDED),
                           foregroundColor: Colors.black87,
@@ -16980,412 +17496,62 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ),
                           elevation: 1,
                         ),
+                        icon: const Icon(Icons.location_on_outlined, size: 18),
                         label: const Text(
-                          "Заполнить данные",
+                          "Указать данные доставки",
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
                           ),
                         ),
                       ),
-                    ),
-                  ] else ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        CircleAvatar(
-                          radius: 20,
-                          backgroundColor: Colors.grey.shade200,
-                          backgroundImage: _authAvatarProvider(_authPhotoUrl),
-                          child:
-                              (_authPhotoUrl == null ||
-                                  _authPhotoUrl!.isEmpty ||
-                                  _authAvatarProvider(_authPhotoUrl) == null)
-                              ? const Icon(Icons.person, color: Colors.black54)
-                              : null,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _authUserName?.isNotEmpty == true
-                                    ? _authUserName!
-                                    : "Пользователь",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _formatPhoneMasked(_authPhone ?? ""),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            _section("Способ получения", [
-              Container(
-                height: 34,
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _deliveryMethod = 1);
-                          unawaited(_persistCheckoutState());
-                        },
-                        child: Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _deliveryMethod == 1
-                                ? Colors.white
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: _deliveryMethod == 1
-                                ? const [
-                                    BoxShadow(
-                                      color: Color(0x22000000),
-                                      blurRadius: 6,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                          child: const Text(
-                            "Самовывоз",
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
+                    )
+                  else ...[
+                    Material(
+                      color: Colors.white,
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: const BorderSide(color: Color(0xFFE3E4E8)),
                       ),
-                    ),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _deliveryMethod = 0);
-                          unawaited(_persistCheckoutState());
-                        },
-                        child: Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _deliveryMethod == 0
-                                ? Colors.white
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: _deliveryMethod == 0
-                                ? const [
-                                    BoxShadow(
-                                      color: Color(0x22000000),
-                                      blurRadius: 6,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                          child: const Text(
-                            "Доставка",
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_deliveryMethod == 1) ...[
-                if (!hasSelectedPickup)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      height: 150,
-                      width: double.infinity,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.asset(
-                            'assets/images/gps-map.jpg',
-                            fit: BoxFit.cover,
-                          ),
-                          const Positioned.fill(
-                            child: ColoredBox(color: Color(0x08000000)),
-                          ),
-                          Center(
-                            child: SizedBox(
-                              height: 40,
-                              width: 270,
-                              child: ElevatedButton.icon(
-                                onPressed: _openPickupPointsPage,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFEDEDED),
-                                  foregroundColor: Colors.black87,
-                                  side: const BorderSide(
-                                    color: Color(0xFFD5D8DD),
-                                    width: 1,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 1,
-                                ),
-                                icon: const Icon(
-                                  Icons.location_on_outlined,
-                                  size: 18,
-                                ),
-                                label: const Text(
-                                  "Выбрать пункт самовывоза",
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w400,
-                                  ),
-                                ),
+                      clipBehavior: Clip.antiAlias,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              color: Colors.white,
+                              padding: const EdgeInsets.fromLTRB(
+                                16,
+                                14,
+                                16,
+                                12,
                               ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  Material(
-                    color: Colors.white,
-                    elevation: 1,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: const BorderSide(color: Color(0xFFE3E4E8)),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: double.infinity,
-                            color: Colors.white,
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Transform.translate(
-                                      offset: const Offset(-3, 0),
-                                      child: const Padding(
-                                        padding: EdgeInsets.only(top: 1),
-                                        child: Icon(
-                                          Icons.location_on_outlined,
-                                          size: 18,
-                                          color: Colors.black,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        selectedPickupName,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.black87,
-                                          height: 1.2,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (selectedPickupAddress.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    selectedPickupAddress,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Color(0xFF4C5159),
-                                      height: 1.2,
-                                    ),
-                                  ),
-                                ],
-                                if (selectedPickupWorktime.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    selectedPickupWorktime,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      color: Color(0xFF8A8F98),
-                                      height: 1.2,
-                                    ),
-                                  ),
-                                ],
-                                if (pickupAvailabilitySpan != null) ...[
-                                  const SizedBox(height: 4),
-                                  Text.rich(
-                                    pickupAvailabilitySpan,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          Container(height: 1, color: const Color(0xFFE3E4E8)),
-                          Container(
-                            color: const Color(0xFFEDEDED),
-                            child: SizedBox(
-                              height: 46,
-                              child: InkWell(
-                                onTap: _openPickupPointsPage,
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16),
-                                  child: Row(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Expanded(
-                                        child: Text(
-                                          "Изменить пункт самовывоза",
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w400,
-                                            color: Colors.black87,
+                                      Transform.translate(
+                                        offset: const Offset(-1, 0),
+                                        child: const Padding(
+                                          padding: EdgeInsets.only(top: 1),
+                                          child: Icon(
+                                            Icons.location_on_outlined,
+                                            size: 18,
+                                            color: Colors.black54,
                                           ),
                                         ),
-                                      ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        size: 22,
-                                        color: Colors.black38,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ] else ...[
-                if (!hasSelectedDelivery)
-                  SizedBox(
-                    height: 40,
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _openDeliveryAddressPage,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEDEDED),
-                        foregroundColor: Colors.black87,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 1,
-                      ),
-                      icon: const Icon(Icons.location_on_outlined, size: 18),
-                      label: const Text(
-                        "Указать данные доставки",
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ),
-                  )
-                else ...[
-                  Material(
-                    color: Colors.white,
-                    elevation: 1,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: const BorderSide(color: Color(0xFFE3E4E8)),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: double.infinity,
-                            color: Colors.white,
-                            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Transform.translate(
-                                      offset: const Offset(-1, 0),
-                                      child: const Padding(
-                                        padding: EdgeInsets.only(top: 1),
-                                        child: Icon(
-                                          Icons.location_on_outlined,
-                                          size: 18,
-                                          color: Colors.black54,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        selectedDeliverySummary,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w400,
-                                          color: Colors.black87,
-                                          height: 1.2,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (deliveryDateTimeLabel.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.schedule_outlined,
-                                        size: 16,
-                                        color: Colors.black54,
                                       ),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
-                                          deliveryDateTimeLabel,
-                                          maxLines: 1,
+                                          selectedDeliverySummary,
+                                          maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                             fontSize: 15,
@@ -17397,182 +17563,115 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                       ),
                                     ],
                                   ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          Container(height: 1, color: const Color(0xFFE3E4E8)),
-                          Container(
-                            color: const Color(0xFFEDEDED),
-                            child: SizedBox(
-                              height: 46,
-                              child: InkWell(
-                                onTap: () => _openDeliveryAddressPage(
-                                  openSheetOnStart: true,
-                                ),
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          "Изменить данные доставки",
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w400,
-                                            color: Colors.black87,
+                                  if (deliveryDateTimeLabel.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.schedule_outlined,
+                                          size: 16,
+                                          color: Colors.black54,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            deliveryDateTimeLabel,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w400,
+                                              color: Colors.black87,
+                                              height: 1.2,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        size: 22,
-                                        color: Colors.black38,
-                                      ),
-                                    ],
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Container(
+                              height: 1,
+                              color: const Color(0xFFE3E4E8),
+                            ),
+                            Container(
+                              color: const Color(0xFFEDEDED),
+                              child: SizedBox(
+                                height: 46,
+                                child: InkWell(
+                                  onTap: () => _openDeliveryAddressPage(
+                                    openSheetOnStart: true,
+                                  ),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            "Изменить данные доставки",
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w400,
+                                              color: Colors.black87,
+                                            ),
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          size: 22,
+                                          color: Colors.black38,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
-            ]),
-            _section("Способ оплаты", [
-              Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        setState(() => _paymentMethod = 0);
-                        unawaited(_persistCheckoutState());
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        decoration: BoxDecoration(
-                          color: _paymentMethod == 0
-                              ? Colors.black
-                              : const Color(0xFFF3F3F4),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _paymentMethod == 0
-                                ? Colors.black
-                                : const Color(0xFFE5E5E7),
-                          ),
-                        ),
-                        child: Text(
-                          "Онлайн",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: _paymentMethod == 0
-                                ? Colors.white
-                                : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        setState(() => _paymentMethod = 1);
-                        unawaited(_persistCheckoutState());
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        decoration: BoxDecoration(
-                          color: _paymentMethod == 1
-                              ? Colors.black
-                              : const Color(0xFFF3F3F4),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _paymentMethod == 1
-                                ? Colors.black
-                                : const Color(0xFFE5E5E7),
-                          ),
-                        ),
-                        child: Text(
-                          "При получении",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: _paymentMethod == 1
-                                ? Colors.white
-                                : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_paymentMethod == 0) ...[
-                const SizedBox(height: 12),
+              ]),
+              _section("Способ оплаты", [
                 Row(
                   children: [
                     Expanded(
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         onTap: () {
-                          setState(() => _onlinePaymentOption = 0);
+                          setState(() => _paymentMethod = 0);
                           unawaited(_persistCheckoutState());
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
+                            color: _paymentMethod == 0
+                                ? Colors.black
+                                : const Color(0xFFF3F3F4),
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              width: 2,
-                              color: _onlinePaymentOption == 0
+                              color: _paymentMethod == 0
                                   ? Colors.black
                                   : const Color(0xFFE5E5E7),
                             ),
-                            color: Colors.white,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.account_balance_wallet_rounded,
-                                    size: 18,
-                                    color: _onlinePaymentOption == 0
-                                        ? Colors.black
-                                        : Colors.black54,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  const Text(
-                                    "YooKassa",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                "Через YooKassa",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            "Онлайн",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _paymentMethod == 0
+                                  ? Colors.white
+                                  : Colors.black87,
+                            ),
                           ),
                         ),
                       ),
@@ -17580,127 +17679,228 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         onTap: () {
-                          setState(() => _onlinePaymentOption = 1);
+                          setState(() => _paymentMethod = 1);
                           unawaited(_persistCheckoutState());
                         },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
+                            color: _paymentMethod == 1
+                                ? Colors.black
+                                : const Color(0xFFF3F3F4),
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              width: 2,
-                              color: _onlinePaymentOption == 1
+                              color: _paymentMethod == 1
                                   ? Colors.black
                                   : const Color(0xFFE5E5E7),
                             ),
-                            color: Colors.white,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.credit_card_rounded,
-                                    size: 18,
-                                    color: _onlinePaymentOption == 1
-                                        ? Colors.black
-                                        : Colors.black54,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  const Text(
-                                    "Карта",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                "Банковская карта",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            "При получении",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _paymentMethod == 1
+                                  ? Colors.white
+                                  : Colors.black87,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+                if (_paymentMethod == 0) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            setState(() => _onlinePaymentOption = 0);
+                            unawaited(_persistCheckoutState());
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                width: 2,
+                                color: _onlinePaymentOption == 0
+                                    ? Colors.black
+                                    : const Color(0xFFE5E5E7),
+                              ),
+                              color: Colors.white,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.account_balance_wallet_rounded,
+                                      size: 18,
+                                      color: _onlinePaymentOption == 0
+                                          ? Colors.black
+                                          : Colors.black54,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Text(
+                                      "YooKassa",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  "Через YooKassa",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            setState(() => _onlinePaymentOption = 1);
+                            unawaited(_persistCheckoutState());
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                width: 2,
+                                color: _onlinePaymentOption == 1
+                                    ? Colors.black
+                                    : const Color(0xFFE5E5E7),
+                              ),
+                              color: Colors.white,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.credit_card_rounded,
+                                      size: 18,
+                                      color: _onlinePaymentOption == 1
+                                          ? Colors.black
+                                          : Colors.black54,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Text(
+                                      "Карта",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  "Банковская карта",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF5F5F5),
-                    borderRadius: BorderRadius.circular(10),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F5F5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _onlinePaymentOption == 0
+                          ? "Оплата пройдет через YooKassa."
+                          : "Оплата пройдет банковской картой через YooKassa.",
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
                   ),
-                  child: Text(
-                    _onlinePaymentOption == 0
-                        ? "Оплата пройдет через YooKassa."
-                        : "Оплата пройдет банковской картой через YooKassa.",
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ],
+                const SizedBox(height: 10),
+                _buildBonusWriteOffPanel(),
+              ], bottomMargin: 0),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F8F8),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE5E5E7)),
+                ),
+                child: Text.rich(
+                  TextSpan(
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                      height: 1.3,
+                    ),
+                    children: [
+                      const TextSpan(text: "Нажимая на кнопку "),
+                      const TextSpan(text: "«Заказать»"),
+                      const TextSpan(text: ", вы соглашаетесь с "),
+                      TextSpan(
+                        text: "Условиями политики конфиденциальности",
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          decoration: TextDecoration.underline,
+                        ),
+                        recognizer: _privacyPolicyTapRecognizer,
+                      ),
+                      const TextSpan(text: " и "),
+                      TextSpan(
+                        text: "Условиями гарантии и возврата",
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          decoration: TextDecoration.underline,
+                        ),
+                        recognizer: _termsOfSaleTapRecognizer,
+                      ),
+                      const TextSpan(text: "."),
+                    ],
                   ),
                 ),
-              ],
-              const SizedBox(height: 10),
-              _buildBonusWriteOffPanel(),
-            ], bottomMargin: 0),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8F8F8),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE5E5E7)),
               ),
-              child: Text.rich(
-                TextSpan(
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
-                    height: 1.3,
-                  ),
-                  children: [
-                    const TextSpan(text: "Нажимая на кнопку "),
-                    const TextSpan(text: "«Заказать»"),
-                    const TextSpan(text: ", вы соглашаетесь с "),
-                    TextSpan(
-                      text: "Условиями политики конфиденциальности",
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        decoration: TextDecoration.underline,
-                      ),
-                      recognizer: _privacyPolicyTapRecognizer,
-                    ),
-                    const TextSpan(text: " и "),
-                    TextSpan(
-                      text: "Условиями гарантии и возврата",
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        decoration: TextDecoration.underline,
-                      ),
-                      recognizer: _termsOfSaleTapRecognizer,
-                    ),
-                    const TextSpan(text: "."),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-          ],
+              const SizedBox(height: 4),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: Container(
