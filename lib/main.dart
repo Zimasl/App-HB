@@ -1027,6 +1027,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   List<dynamic> _allCategories = [];
 
   List<dynamic> _apiBanners = [];
+  static const List<String> _heroBannerAssets = <String>[
+    'assets/images/spring.jpg',
+    'assets/images/spring_02.jpg',
+  ];
+  int _heroBannerIndex = 0;
+  Timer? _heroBannerRotateTimer;
   List<dynamic> _promoBanners = [];
   List<dynamic> _discountedProducts = [];
   final Map<String, List<dynamic>> _nativeLists = {
@@ -1233,6 +1239,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   @override
   void initState() {
     super.initState();
+    _rotateHeroBanner(randomize: true);
+    _startHeroBannerRotationTimer();
     unawaited(_restoreAuthSessionAndRefreshUi());
     unawaited(_restoreHeaderCityFromPrefs());
     unawaited(_restoreCartFromPrefs());
@@ -1673,6 +1681,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   @override
   void dispose() {
+    _heroBannerRotateTimer?.cancel();
     _catalogBackSwipeController.dispose();
     _catalogBackSwipeOffsetNotifier.dispose();
     _nativeScrollController.dispose();
@@ -1727,6 +1736,51 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
     _productDetailsCompleters.clear();
     super.dispose();
+  }
+
+  String get _currentHeroBannerAsset =>
+      _heroBannerAssets[_heroBannerIndex % _heroBannerAssets.length];
+
+  void _rotateHeroBanner({bool randomize = false}) {
+    if (_heroBannerAssets.isEmpty) return;
+    final current = _heroBannerIndex % _heroBannerAssets.length;
+    int next = current;
+    if (_heroBannerAssets.length == 1) {
+      next = 0;
+    } else if (randomize) {
+      final random = math.Random();
+      while (next == current) {
+        next = random.nextInt(_heroBannerAssets.length);
+      }
+    } else {
+      next = (current + 1) % _heroBannerAssets.length;
+    }
+    if (!mounted) {
+      _heroBannerIndex = next;
+      return;
+    }
+    setState(() {
+      _heroBannerIndex = next;
+    });
+  }
+
+  void _startHeroBannerRotationTimer() {
+    _heroBannerRotateTimer?.cancel();
+    _heroBannerRotateTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      _rotateHeroBanner();
+    });
+  }
+
+  Future<void> _refreshHomeContent() async {
+    _rotateHeroBanner(randomize: true);
+    await Future.wait<void>([
+      _fetchBanners(),
+      _fetchPromoBanners(),
+      _fetchDiscountedProducts(),
+      CategoryCounterService.loadCounts(),
+    ]);
+    if (mounted) setState(() {});
   }
 
   void _loadAllData() {
@@ -7668,30 +7722,35 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             // 1. Главная страница (всегда в памяти для сохранения скролла)
             Offstage(
               offstage: _isNativeCategoryPage,
-              child: CustomScrollView(
-                key: const PageStorageKey('home_scroll'),
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: RepaintBoundary(child: _buildTopHeroHeader()),
+              child: RefreshIndicator(
+                onRefresh: _refreshHomeContent,
+                child: CustomScrollView(
+                  key: const PageStorageKey('home_scroll'),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
                   ),
-                  SliverToBoxAdapter(
-                    child: RepaintBoundary(child: _buildMainContentHead()),
-                  ),
-                  SliverToBoxAdapter(
-                    child: RepaintBoundary(child: _buildCategoryScroll()),
-                  ),
-                  SliverToBoxAdapter(
-                    child: RepaintBoundary(child: _buildPromoBannerScroll()),
-                  ),
-                  SliverToBoxAdapter(
-                    child: RepaintBoundary(
-                      child: _buildDiscountedProductsSection(),
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(child: _buildTopHeroHeader()),
                     ),
-                  ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 20)),
-                  SliverToBoxAdapter(child: _buildAboutSection()),
-                ],
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(child: _buildMainContentHead()),
+                    ),
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(child: _buildCategoryScroll()),
+                    ),
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(child: _buildPromoBannerScroll()),
+                    ),
+                    SliverToBoxAdapter(
+                      child: RepaintBoundary(
+                        child: _buildDiscountedProductsSection(),
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                    SliverToBoxAdapter(child: _buildAboutSection()),
+                  ],
+                ),
               ),
             ),
 
@@ -11636,18 +11695,25 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 onTap: _openHeaderCityPicker,
                 borderRadius: BorderRadius.circular(10),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Row(
                     children: [
                       const Icon(
                         Icons.location_on,
-                        color: Color(0xFFEC5B13),
+                        color: Color(0xFFEF4444),
                         size: 18,
+                        shadows: [
+                          Shadow(
+                            color: Color(0x66000000),
+                            blurRadius: 6,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
                       ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          'Город доставки: $city',
+                          city,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -11655,6 +11721,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                             color: Colors.white,
+                            shadows: [
+                              Shadow(
+                                color: Color(0x66000000),
+                                blurRadius: 6,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -11674,16 +11747,23 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       : 'Бонусы: ${_formatBonusBalance(bonus)}';
                   return InkWell(
                     onTap: _handleProfileNavTap,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(14),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
-                        vertical: 6,
+                        vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0x33EC5B13),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0x55EC5B13)),
+                        color: const Color(0xCCFFFFFF),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x14000000),
+                            blurRadius: 12,
+                            offset: Offset(0, 3),
+                          ),
+                        ],
                       ),
                       child: Text(
                         bonusText,
@@ -11691,12 +11771,37 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           fontFamily: 'Roboto',
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFFF8A4A),
+                          color: Color(0xFF6B7280),
                         ),
                       ),
                     ),
                   );
                 },
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: () => _showContactsMenu(context),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCCFFFFFF),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 12,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    color: Color(0xFF6B7280),
+                    size: 20,
+                  ),
+                ),
               ),
             ],
           ],
@@ -11708,145 +11813,74 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildTopHeroHeader() {
     final screenWidth = MediaQuery.of(context).size.width;
     final topInset = MediaQuery.of(context).padding.top;
-    final heroHeight = (screenWidth * 0.88).clamp(280.0, 360.0);
+    final heroHeight = screenWidth * (950 / 1400);
+    final profileTop = topInset + 8;
+    final searchTop = profileTop + 48;
 
-    return Container(
-      color: const Color(0xFF221610),
-      child: Column(
-        children: [
-          SizedBox(height: topInset + 2),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: _buildHeroProfileInfoRow(),
-          ),
-          const SizedBox(height: 2),
-          SizedBox(
-            width: double.infinity,
-            height: heroHeight,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.asset(
-                  'assets/images/stitch_backpack_hero.jpg',
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      Container(color: const Color(0xFF2B2B2F)),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  child: ClipRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-                      child: Container(
-                        height: 18,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [Color(0x7A221610), Color(0x00221610)],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0x00221610), Color(0xCC221610)],
-                      stops: [0.58, 1.0],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  right: 12,
-                  child: _buildHeaderSearchOverlay(),
-                ),
-                const Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 24,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Hozyain Barin',
-                        style: TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 42 / 2,
-                          height: 1.1,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          shadows: [
-                            Shadow(
-                              color: Color(0x66000000),
-                              blurRadius: 8,
-                              offset: Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Искусство кожи в каждой детали',
-                        style: TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 14,
-                          color: Color(0xFFE5E7EB),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    height: 26,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(26),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+    return SizedBox(
+      width: double.infinity,
+      height: heroHeight,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              _currentHeroBannerAsset,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  Container(color: const Color(0xFF2B2B2F)),
             ),
-          ),
-        ],
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x40000000),
+                    Color(0x14000000),
+                    Color(0x00000000),
+                  ],
+                  stops: [0.0, 0.22, 0.58],
+                ),
+              ),
+            ),
+            Positioned(
+              top: profileTop,
+              left: 12,
+              right: 12,
+              child: _buildHeroProfileInfoRow(),
+            ),
+            Positioned(
+              top: searchTop,
+              left: 12,
+              right: 12,
+              child: _buildHeaderSearchOverlay(),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildMainContentHead() {
-    return Container(
-      color: Colors.white,
-      child: Column(
-        children: [
-          if (!_isAuthorized) _buildHeaderLoyaltyCard(),
-          _buildMainBannerSlider(),
-        ],
-      ),
+    return Column(
+      children: [
+        if (!_isAuthorized) _buildHeaderLoyaltyCard(),
+        _buildMainBannerSlider(),
+      ],
     );
   }
 
   Widget _buildMainBannerSlider() {
     final screenWidth = MediaQuery.of(context).size.width;
-    final bannerWidth = screenWidth - 32;
+    final bannerWidth = screenWidth - 20;
     final bannerHeight = (bannerWidth * 0.64).clamp(180.0, 270.0);
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      margin: const EdgeInsets.fromLTRB(10, 16, 10, 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: const [
           BoxShadow(
@@ -11857,7 +11891,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         child: SizedBox(
           width: double.infinity,
           height: bannerHeight,
@@ -11960,25 +11994,25 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildHeaderSearchOverlay() {
     return InkWell(
       onTap: () => _showSearchMenu(context),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        height: 48,
+        height: 46,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: const Color(0x1AF8F6F6),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0x1AF8F6F6)),
+          color: const Color(0xCCFFFFFF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x12000000),
-              blurRadius: 4,
-              offset: Offset(0, 1),
+              color: Color(0x14000000),
+              blurRadius: 12,
+              offset: Offset(0, 3),
             ),
           ],
         ),
         child: Row(
           children: [
-            const Icon(Icons.search, color: Color(0x99FFFFFF), size: 22),
+            const Icon(Icons.search, color: Color(0xFF6B7280), size: 22),
             const SizedBox(width: 10),
             const Expanded(
               child: Text(
@@ -11987,7 +12021,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'Roboto',
-                  color: Color(0x99FFFFFF),
+                  color: Color(0xFF6B7280),
                   fontSize: 14,
                   fontWeight: FontWeight.w400,
                 ),
@@ -11997,7 +12031,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               onPressed: () => _showSearchMenu(context),
               icon: const Icon(
                 Icons.qr_code_scanner_rounded,
-                color: Color(0x99FFFFFF),
+                color: Color(0xFF6B7280),
                 size: 20,
               ),
               visualDensity: VisualDensity.compact,
