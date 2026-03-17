@@ -6975,13 +6975,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       physics: const NeverScrollableScrollPhysics(),
       slivers: [
         SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildTopHeroHeader()),
-        ),
-        SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildMainContentHead()),
-        ),
-        SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildCategoryScroll()),
+          child: RepaintBoundary(child: _buildHomeShowcaseBlock()),
         ),
         SliverToBoxAdapter(
           child: RepaintBoundary(child: _buildPromoBannerScroll()),
@@ -7108,11 +7102,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ? _buildHomeScrollPreview()
                   : _buildCategoryScrollPreview(previewKey),
             ),
-            SafeArea(
-              top: false,
-              left: false,
-              right: false,
-              child: _buildBottomBar(showTopBorder: previewKey != "cart"),
+            Container(
+              color: Colors.white,
+              child: SafeArea(
+                top: false,
+                left: false,
+                right: false,
+                child: _buildBottomBar(showTopBorder: previewKey != "cart"),
+              ),
             ),
           ],
         ),
@@ -7697,7 +7694,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       },
       child: Scaffold(
         key: _scaffoldKey,
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFFF2F3F5),
         appBar: _isNativeCategoryPage
             ? AppBar(
                 elevation: 0,
@@ -7731,13 +7728,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ),
                   slivers: [
                     SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildTopHeroHeader()),
-                    ),
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildMainContentHead()),
-                    ),
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildCategoryScroll()),
+                      child: RepaintBoundary(child: _buildHomeShowcaseBlock()),
                     ),
                     SliverToBoxAdapter(
                       child: RepaintBoundary(child: _buildPromoBannerScroll()),
@@ -7822,13 +7813,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             // 3. WebView категория удалена (полностью нативная версия)
           ],
         ),
-        bottomNavigationBar: SafeArea(
-          top: false,
-          left: false,
-          right: false,
-          child: _buildBottomBar(
-            showTopBorder:
-                _nativeCategory != "cart" || !_showCartFloatingButton,
+        bottomNavigationBar: Container(
+          color: Colors.white,
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: _buildBottomBar(
+              showTopBorder:
+                  _nativeCategory != "cart" || !_showCartFloatingButton,
+            ),
           ),
         ),
       ),
@@ -11356,20 +11350,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         .where((p) => p['type'] == _selectedDiscountType)
         .toList();
     final screenWidth = MediaQuery.of(context).size.width;
-    final discountCardWidth = (screenWidth - 40) / 1.4;
+    final discountCardWidth = (screenWidth - 44) / 2;
     final discountImageHeight = discountCardWidth * 4 / 3;
-    final discountCardsHeight = (discountImageHeight + 152)
-        .clamp(470.0, 560.0)
-        .toDouble();
+    final discountCardsHeight = discountImageHeight + 152;
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20),
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
       color: const Color(0xFFF8F8F8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            padding: EdgeInsets.fromLTRB(15, 4, 15, 6),
             child: Text(
               "Товар со скидкой",
               style: TextStyle(
@@ -11396,7 +11388,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           SizedBox(
             height: discountCardsHeight,
             child: ListView.builder(
@@ -11495,16 +11487,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (_promoBanners.isEmpty) return const SizedBox.shrink();
     double screenWidth = MediaQuery.of(context).size.width;
     double itemWidth = screenWidth * 0.60;
+    const promoAspectRatio = 632 / 710;
 
     return Container(
-      height: itemWidth * 0.76,
-      margin: const EdgeInsets.only(
-        bottom: 20,
-      ), // Унифицированный отступ 20 вниз
-      color: Colors.white,
+      height: itemWidth * promoAspectRatio,
+      margin: const EdgeInsets.only(top: 12, bottom: 14),
+      color: Colors.transparent,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         itemCount: _promoBanners.length,
         itemBuilder: (context, index) {
           final item = _promoBanners[index];
@@ -11737,7 +11728,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
             ),
             if (_isAuthorized) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               FutureBuilder<double?>(
                 future: _fetchBonusPlusBalance(),
                 builder: (context, bonusSnapshot) {
@@ -11747,15 +11738,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       : 'Бонусы: ${_formatBonusBalance(bonus)}';
                   return InkWell(
                     onTap: _handleProfileNavTap,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 10,
+                        vertical: 6,
                       ),
                       decoration: BoxDecoration(
                         color: const Color(0xCCFFFFFF),
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: const Color(0xFFE5E7EB)),
                         boxShadow: const [
                           BoxShadow(
@@ -11769,7 +11760,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         bonusText,
                         style: const TextStyle(
                           fontFamily: 'Roboto',
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF6B7280),
                         ),
@@ -11778,32 +11769,32 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   );
                 },
               ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: () => _showContactsMenu(context),
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xCCFFFFFF),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x14000000),
-                        blurRadius: 12,
-                        offset: Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.chat_bubble_outline_rounded,
-                    color: Color(0xFF6B7280),
-                    size: 20,
-                  ),
+            ],
+            const SizedBox(width: 6),
+            InkWell(
+              onTap: () => _showContactsMenu(context),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xCCFFFFFF),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  color: Color(0xFF6B7280),
+                  size: 18,
                 ),
               ),
-            ],
+            ),
           ],
         );
       },
@@ -11815,7 +11806,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final topInset = MediaQuery.of(context).padding.top;
     final heroHeight = screenWidth * (950 / 1400);
     final profileTop = topInset + 8;
-    final searchTop = profileTop + 48;
+    final searchTop = profileTop + 44;
 
     return SizedBox(
       width: double.infinity,
@@ -11863,10 +11854,33 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  Widget _buildHomeShowcaseBlock() {
+    return Container(
+      margin: EdgeInsets.zero,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(22)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _buildTopHeroHeader(),
+          _buildMainContentHead(),
+          _buildCategoryScroll(),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMainContentHead() {
     return Column(
       children: [
-        if (!_isAuthorized) _buildHeaderLoyaltyCard(),
+        if (!_isAuthorized) ...[
+          const SizedBox(height: 14),
+          _buildHeaderLoyaltyCard(),
+          const SizedBox(height: 14),
+        ] else
+          const SizedBox(height: 14),
         _buildMainBannerSlider(),
       ],
     );
@@ -11875,9 +11889,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildMainBannerSlider() {
     final screenWidth = MediaQuery.of(context).size.width;
     final bannerWidth = screenWidth - 20;
-    final bannerHeight = (bannerWidth * 0.64).clamp(180.0, 270.0);
+    final bannerHeight = bannerWidth * (487 / 1000);
     return Container(
-      margin: const EdgeInsets.fromLTRB(10, 16, 10, 16),
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -11994,13 +12008,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildHeaderSearchOverlay() {
     return InkWell(
       onTap: () => _showSearchMenu(context),
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        height: 46,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: const Color(0xCCFFFFFF),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFE5E7EB)),
           boxShadow: const [
             BoxShadow(
@@ -12012,8 +12026,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         ),
         child: Row(
           children: [
-            const Icon(Icons.search, color: Color(0xFF6B7280), size: 22),
-            const SizedBox(width: 10),
+            const Icon(Icons.search, color: Color(0xFF6B7280), size: 20),
+            const SizedBox(width: 8),
             const Expanded(
               child: Text(
                 'Поиск изделий',
@@ -12022,7 +12036,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 style: TextStyle(
                   fontFamily: 'Roboto',
                   color: Color(0xFF6B7280),
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.w400,
                 ),
               ),
@@ -12032,10 +12046,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               icon: const Icon(
                 Icons.qr_code_scanner_rounded,
                 color: Color(0xFF6B7280),
-                size: 20,
+                size: 18,
               ),
               visualDensity: VisualDensity.compact,
-              splashRadius: 20,
+              splashRadius: 18,
             ),
           ],
         ),
@@ -12045,7 +12059,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildHeaderLoyaltyCard() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFD),
@@ -12136,6 +12150,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildCategoryScroll() {
     const orderedIds = ["16", "19", "4", "143", "14", "84", "8", "101"];
+    const visibleCardSlots = 4.5;
+    const visibleGapCount = 4.0;
     final byId = <String, dynamic>{};
     for (final cat in _apiCategories) {
       if (cat is! Map) continue;
@@ -12147,35 +12163,41 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         .map((id) => byId[id])
         .where((cat) => cat != null)
         .toList();
-    double screenWidth = MediaQuery.of(context).size.width;
-    double gap = 10.0;
-    double sidePadding = 10.0;
-    double cardWidth = (screenWidth - (sidePadding * 2) - gap) / 2;
+    const screenSidePadding = 10.0;
+    const gap = 8.0;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final cardWidth =
+        (screenWidth - (screenSidePadding * 2) - (gap * visibleGapCount)) /
+        visibleCardSlots;
+    final cardSectionHeight = cardWidth + 36;
 
     return Container(
-      height: 180,
-      margin: const EdgeInsets.only(bottom: 25),
-      color: Colors.white,
+      height: cardSectionHeight,
+      margin: EdgeInsets.zero,
+      color: Colors.transparent,
       child: _isMenuLoading && filtered.isEmpty
           ? ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(horizontal: sidePadding),
+              padding: const EdgeInsets.symmetric(
+                horizontal: screenSidePadding,
+              ),
               itemCount: 4,
               itemBuilder: (context, index) => Padding(
-                padding: EdgeInsets.only(right: gap),
+                padding: const EdgeInsets.only(right: gap),
                 child: Container(
                   width: cardWidth,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade100),
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
               ),
             )
           : ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(horizontal: sidePadding),
+              padding: const EdgeInsets.symmetric(
+                horizontal: screenSidePadding,
+              ),
               itemCount: filtered.length,
               itemBuilder: (context, index) {
                 return Padding(
@@ -12194,39 +12216,44 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _categoryCard(dynamic cat, double width) {
     return GestureDetector(
       onTap: () => _navigateToApiCategory(cat),
-      child: Container(
+      child: SizedBox(
         width: width,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
         child: Column(
           children: [
-            Expanded(
+            Container(
+              height: width,
+              width: width,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(14),
+              ),
               child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Image.asset(
-                  "assets/categories/${cat['url'].toString()}.png",
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) => const Icon(
-                    Icons.shopping_bag_outlined,
-                    size: 50,
-                    color: Colors.grey,
+                padding: const EdgeInsets.all(8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    "assets/categories/${cat['url'].toString()}.png",
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => const Icon(
+                      Icons.shopping_bag_outlined,
+                      size: 30,
+                      color: Colors.grey,
+                    ),
                   ),
                 ),
               ),
             ),
+            const SizedBox(height: 6),
             Padding(
-              padding: const EdgeInsets.only(bottom: 12, left: 8, right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
                 cat['name'].toString(),
                 style: const TextStyle(
                   fontFamily: 'Roboto',
-                  fontSize: 13,
+                  fontSize: 10,
                   fontWeight: FontWeight.w400,
                   color: Colors.black87,
-                  letterSpacing: 0.3,
+                  letterSpacing: 0.1,
                 ),
                 textAlign: TextAlign.center,
                 maxLines: 2,
@@ -15137,11 +15164,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ],
                 ),
               ),
-              bottomNavigationBar: SafeArea(
-                top: false,
-                left: false,
-                right: false,
-                child: _buildBottomBar(),
+              bottomNavigationBar: Container(
+                color: Colors.white,
+                child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
+                  child: _buildBottomBar(),
+                ),
               ),
             );
           }
@@ -28144,7 +28174,7 @@ class _NativeProductCardState extends State<NativeProductCard>
     final double screenWidth = MediaQuery.of(context).size.width;
     final double dpr = MediaQuery.of(context).devicePixelRatio;
     final double cardWidth = widget.isHorizontal
-        ? (screenWidth - 40) / 1.4
+        ? (screenWidth - 44) / 2
         : (screenWidth - 8 - 8) / 2;
     final double imageHeight = cardWidth * 4 / 3;
     final int cacheWidth = (cardWidth * dpr).round().clamp(1, 2000).toInt();
