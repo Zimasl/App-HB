@@ -1,0 +1,13 @@
+---
+description: Rules for Dio, cookies, API sessions, Manticore requests, and request handling
+globs:
+  - lib/**/*.dart
+---
+
+- Network code must go through the shared Dio layer.
+- Session-aware requests must preserve cookies and existing auth/session behavior.
+- `lib/services/manticore_search_service.dart` should reuse existing HTTP/session behavior instead of introducing an isolated client unless explicitly required.
+- Do not create duplicate API clients or duplicate interceptors.
+- Surface loading, error, and retry states explicitly.
+- shared_preferences may store lightweight flags only, not critical session truth.
+- When changing request/response models, update parsing and failure handling together.

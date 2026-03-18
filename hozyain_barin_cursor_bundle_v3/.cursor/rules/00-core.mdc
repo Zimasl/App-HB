@@ -1,0 +1,12 @@
+---
+description: Core Flutter project rules for Hozyain Barin
+alwaysApply: true
+---
+
+- Follow AGENTS.md first.
+- Preserve the current package stack and architecture.
+- Do not add dependencies unless necessary.
+- Do not replace Dio, CookieJar, YooKassa, OneSignal, app_links, geolocator, or Yandex MapKit without explicit approval.
+- Prefer minimal diffs and local fixes over broad refactors.
+- For multi-file or platform-sensitive tasks, start with a short plan.
+- Before finishing, run formatting, analysis, and tests.

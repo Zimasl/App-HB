@@ -2853,7 +2853,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       "maxPrice": _currentPriceRange.end,
       "mode": "raw",
     };
-    return await compute(_filterProductsByPrice, payload);
+    return compute(_filterProductsByPrice, payload);
   }
 
   List<dynamic> _applyLocalPriceFilter(List<dynamic> products) {

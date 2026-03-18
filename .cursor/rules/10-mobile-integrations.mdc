@@ -1,0 +1,15 @@
+---
+description: Rules for YooKassa, deep links, push, permissions, maps, and platform setup
+globs:
+  - lib/**/*.dart
+  - android/**
+  - ios/**
+---
+
+- Payment changes must preserve success, cancel, retry, timeout, and error flows.
+- `lib/services/yookassa_payment_service.dart` should remain the owner of payment SDK orchestration.
+- Never hardcode secrets, SDK keys, or merchant credentials.
+- Route handling must be deterministic and idempotent for repeated deep-link opens.
+- Platform integration changes must mention manifest/plist updates when required.
+- Keep SDK initialization centralized; do not scatter setup across unrelated files.
+- When touching notifications, verify app-open-from-notification behavior.

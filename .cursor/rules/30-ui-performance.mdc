@@ -1,0 +1,12 @@
+---
+description: Rules for product lists, banners, remote images, and UI performance
+globs:
+  - lib/**/*.dart
+---
+
+- Keep list/grid item widgets lightweight and reusable.
+- Use cached images for remote catalog content when appropriate.
+- Avoid synchronous heavy transforms in build().
+- Prefer extracting reusable widgets over large build methods.
+- Keep loading, empty, and error states explicit.
+- Minimize rebuild scope in lists, sliders, and product cards.
