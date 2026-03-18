@@ -1,0 +1,13 @@
+---
+description: Rules for Manticore models, mapping, null safety, and response parsing
+globs:
+  - lib/models/**/*.dart
+  - lib/services/manticore_search_service.dart
+---
+
+- `manticore_category.dart`, `manticore_product.dart`, and `manticore_search_result.dart` must remain model/parsing files only.
+- Model changes must keep parsing resilient to nulls, missing fields, unexpected types, and partial payloads.
+- Update mapping/parsing code and `manticore_search_service.dart` together.
+- Avoid embedding transport or widget logic inside model files.
+- Prefer explicit field mapping over fragile dynamic assumptions.
+- When changing model shape, check downstream UI and service usage for breakage.

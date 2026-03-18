@@ -6,6 +6,7 @@ description: Use when the task touches cart totals, checkout, order creation, Yo
 When using this skill:
 - map the full payment state flow first
 - identify entry point, SDK call, callbacks, and return path
+- keep `yookassa_payment_service.dart` as the owner of payment orchestration
 - preserve cart total integrity
 - verify success/cancel/error/retry behavior
 - check whether UI and backend states can diverge

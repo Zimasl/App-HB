@@ -1,0 +1,13 @@
+---
+description: Rules tied to the current lib/config, lib/models, lib/services structure and known file layout
+globs:
+  - lib/**/*.dart
+---
+
+- Keep `main.dart` thin and focused on bootstrap/composition.
+- New configuration code should go to `lib/config/`.
+- New models, DTOs, parsing, and mapping code should go to `lib/models/`.
+- New API/session/payment/push/deep-link/geolocation services should go to `lib/services/`.
+- Avoid creating new service-like files directly under `lib/`.
+- Treat `lib/category_counter_service.dart` as a legacy exception; do not move it during unrelated tasks.
+- Keep file responsibilities narrow; avoid mixing widgets, models, and services in one file.

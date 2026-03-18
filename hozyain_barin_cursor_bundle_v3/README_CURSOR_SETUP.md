@@ -23,15 +23,15 @@ It is designed for a Flutter mobile commerce app with:
 - Manticore-backed search models and service flow
 
 ## What is included
-- `AGENTS.md` -- the main contract for Cursor Agent behavior in this repo
-- `.cursor/rules/*.mdc` -- project rules for architecture, structure, integrations, networking, model parsing, and UI performance
-- `.cursor/agents/*.md` -- specialized subagents for architecture, integrations, service-layer review, and final verification
-- `.cursor/skills/*/SKILL.md` -- reusable skills for payment, deep links, media permissions, networking, model parsing, and list performance
-- `.cursor/scripts/verify_flutter.sh` -- full verification script
-- `.cursor/hooks.example.json` -- optional example project hook configuration
-- `analysis_options.yaml` -- lint configuration aligned with Flutter work in this repo
-- `docs/CURSOR_WORKFLOW.md` -- recommended daily workflow in Cursor
-- `docs/MCP_SETUP.md` -- recommended MCP setup for this project
+- `AGENTS.md` — the main contract for Cursor Agent behavior in this repo
+- `.cursor/rules/*.mdc` — project rules for architecture, structure, integrations, networking, model parsing, and UI performance
+- `.cursor/agents/*.md` — specialized subagents for architecture, integrations, service-layer review, and final verification
+- `.cursor/skills/*/SKILL.md` — reusable skills for payment, deep links, media permissions, networking, model parsing, and list performance
+- `.cursor/scripts/verify_flutter.sh` — full verification script
+- `.cursor/hooks.example.json` — optional example project hook configuration
+- `analysis_options.yaml` — lint configuration aligned with Flutter work in this repo
+- `docs/CURSOR_WORKFLOW.md` — recommended daily workflow in Cursor
+- `docs/MCP_SETUP.md` — recommended MCP setup for this project
 
 ## Install
 1. Copy all files into the root of your Flutter repository.
