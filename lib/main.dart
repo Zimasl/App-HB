@@ -38,7 +38,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'config/app_config.dart';
+import 'models/manticore_category.dart';
+import 'models/manticore_product.dart';
 import 'services/yookassa_payment_service.dart';
+import 'services/manticore_search_service.dart';
 import 'category_counter_service.dart';
 
 // Стиль текста для меню
@@ -281,6 +284,8 @@ const String _prefsCartStateKey = 'hb.cart.state';
 const String _prefsViewedProductsKey = 'hb.viewed.products';
 const String _prefsSearchHistoryKey = 'hb.search.history';
 const String _prefsHeaderCityKey = 'hb.header.city';
+const String _prefsHeroBannerIndexKey = 'hb.hero.banner.index';
+const String _prefsHeroBannerTsKey = 'hb.hero.banner.ts';
 
 String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
@@ -911,7 +916,7 @@ class HozyainBarinApp extends StatefulWidget {
 }
 
 class _HozyainBarinAppState extends State<HozyainBarinApp>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ScrollController _nativeScrollController;
   late final ScrollController _discountScrollController;
@@ -998,6 +1003,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   bool _returnToCatalogOnBack = false;
   String? _returnToCatalogParentCategoryId;
   bool _openSearchMenuOnBackToSearch = false;
+  bool _searchOriginOpenedFromBurger = false;
+  bool _searchOriginIsNativeCategory = false;
+  ({String key, String title, String? customCategoryId})?
+  _searchOriginNativeEntry;
+  final List<({String key, String title, String? customCategoryId})>
+  _searchOriginBackStack = [];
   int? _catalogBackSwipePointer;
   Offset? _catalogBackSwipeStart;
   bool _catalogBackSwipeScrollLocked = false;
@@ -1088,10 +1099,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       "men"; // men | belt | shoulder | tablet | business | women | travel | backpacks | belts | wallets | accessories | discount_men | discount_women | search | wishlist | compare
   final Set<String> _animatedProductIds = <String>{};
   static const int _nativePageSize = 30;
+  static const int _nativeSearchInitialPageSize = 30;
   static const int _nativeSearchPageSize = 60;
+  static const int _searchMinQueryLength = 3;
+  static const String _nativeSearchProxyPath = '/native/search_products.php';
+  static const String _nativeSearchFieldsParamValue =
+      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids';
   String _activeSearchQuery = "";
+  String? _activeSearchCorrectedQuery;
+  bool _isSearchResultsLoading = false;
+  int _searchResultsRequestEpoch = 0;
   bool _isBurgerMenuOpen = false;
   List<String> _searchHistory = [];
+  final ManticoreSearchService _manticoreSearchService =
+      ManticoreSearchService();
+  bool? _nativeSearchProxySupported;
+  bool? _nativeSearchFieldsParamSupported;
   final Map<String, String> _nativeCustomCategoryIdByKey = {
     "discount_men": "156",
     "discount_women": "157",
@@ -1239,7 +1262,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   @override
   void initState() {
     super.initState();
-    _rotateHeroBanner(randomize: true);
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_initHeroBannerOnLaunch());
     _startHeroBannerRotationTimer();
     unawaited(_restoreAuthSessionAndRefreshUi());
     unawaited(_restoreHeaderCityFromPrefs());
@@ -1681,6 +1705,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _heroBannerRotateTimer?.cancel();
     _catalogBackSwipeController.dispose();
     _catalogBackSwipeOffsetNotifier.dispose();
@@ -1738,8 +1763,66 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_maybeRotateHeroBannerByTime());
+    }
+  }
+
   String get _currentHeroBannerAsset =>
       _heroBannerAssets[_heroBannerIndex % _heroBannerAssets.length];
+
+  Future<void> _persistHeroBannerState({required int index}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_prefsHeroBannerIndexKey, index);
+      await prefs.setInt(
+        _prefsHeroBannerTsKey,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _initHeroBannerOnLaunch() async {
+    if (_heroBannerAssets.isEmpty) return;
+    int nextIndex = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedIndexRaw = prefs.getInt(_prefsHeroBannerIndexKey) ?? 0;
+      final savedIndex = savedIndexRaw % math.max(1, _heroBannerAssets.length);
+      if (_heroBannerAssets.length == 1) {
+        nextIndex = 0;
+      } else {
+        final random = math.Random();
+        nextIndex = random.nextInt(_heroBannerAssets.length);
+        while (nextIndex == savedIndex) {
+          nextIndex = random.nextInt(_heroBannerAssets.length);
+        }
+      }
+    } catch (_) {
+      nextIndex = 0;
+    }
+    if (!mounted) {
+      _heroBannerIndex = nextIndex;
+      return;
+    }
+    setState(() {
+      _heroBannerIndex = nextIndex;
+    });
+    unawaited(_persistHeroBannerState(index: nextIndex));
+  }
+
+  Future<void> _maybeRotateHeroBannerByTime() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastTs = prefs.getInt(_prefsHeroBannerTsKey) ?? 0;
+      final nowTs = DateTime.now().millisecondsSinceEpoch;
+      if (nowTs - lastTs >= const Duration(minutes: 1).inMilliseconds) {
+        _rotateHeroBanner();
+      }
+    } catch (_) {}
+  }
 
   void _rotateHeroBanner({bool randomize = false}) {
     if (_heroBannerAssets.isEmpty) return;
@@ -1755,6 +1838,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     } else {
       next = (current + 1) % _heroBannerAssets.length;
     }
+    if (next == current) return;
     if (!mounted) {
       _heroBannerIndex = next;
       return;
@@ -1762,6 +1846,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     setState(() {
       _heroBannerIndex = next;
     });
+    unawaited(_persistHeroBannerState(index: next));
   }
 
   void _startHeroBannerRotationTimer() {
@@ -2218,11 +2303,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     const key = "search";
     final trimmedQuery = query.trim();
     if (trimmedQuery.isEmpty) return;
-    if (_nativeIsLoadingMore[key] == true) return;
+    final normalizedQuery = _normalizeSearchText(trimmedQuery);
+    if (normalizedQuery.length < _searchMinQueryLength) return;
+    if (!reset && _nativeIsLoadingMore[key] == true) return;
     if (!reset && _nativeHasMore[key] == false) return;
+    final int requestEpoch = reset
+        ? ++_searchResultsRequestEpoch
+        : _searchResultsRequestEpoch;
     if (reset) {
-      if (_nativeInitialLoadingKeys.contains(key)) return;
-      _nativeInitialLoadingKeys.add(key);
+      _isSearchResultsLoading = true;
+      _nativeInitialLoadingKeys.remove(key);
     }
 
     try {
@@ -2265,39 +2355,97 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final id = item['id']?.toString() ?? "";
         if (id.isNotEmpty) existingIds.add(id);
       }
-      final queryParts = <String>[
-        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-        'limit=$_nativeSearchPageSize',
-        'offset=$offset',
-        'hash=${Uri.encodeQueryComponent('search/query=$trimmedQuery')}',
-        'sort=create_datetime',
-        'order=desc',
-        'status=1',
-        'in_stock=1',
-      ];
-      final url =
-          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-      final response = await _httpGet(Uri.parse(url));
+      final pageSize = offset == 0
+          ? _nativeSearchInitialPageSize
+          : _nativeSearchPageSize;
+      late final List<dynamic> initialProducts;
+      late final int fetchedCount;
+      var usedManticoreSearch = false;
 
-      if (response.statusCode != 200) {
+      if (key == "search") {
+        final correctedQuery = _activeSearchCorrectedQuery?.trim() ?? "";
+        final effectiveSearchQuery = offset > 0 && correctedQuery.isNotEmpty
+            ? correctedQuery
+            : trimmedQuery;
+        try {
+          final manticorePage = await _fetchSearchProductsWithManticore(
+            query: effectiveSearchQuery,
+            limit: pageSize,
+            offset: offset,
+          );
+          initialProducts = manticorePage.items;
+          fetchedCount = manticorePage.fetchedCount;
+          usedManticoreSearch = true;
+          if (reset) {
+            final nextCorrectedQuery =
+                manticorePage.correctedQuery?.trim() ?? "";
+            _activeSearchCorrectedQuery = nextCorrectedQuery.isNotEmpty
+                ? nextCorrectedQuery
+                : null;
+          }
+        } catch (e) {
+          debugPrint("Manticore search results error: $e");
+          if (reset) {
+            _activeSearchCorrectedQuery = null;
+          }
+          final response = await _nativeSearchApiGet(
+            hash: 'search/query=$trimmedQuery',
+            limit: pageSize,
+            offset: offset,
+          );
+          if (response.statusCode != 200) {
+            return;
+          }
+          final parsed = await compute(
+            _parseNativeCategoryPayload,
+            response.body,
+          );
+          final rawItems = parsed['items'];
+          initialProducts = (rawItems is List) ? rawItems : [];
+          final fetchedCountRaw = parsed['fetchedCount'];
+          fetchedCount = fetchedCountRaw is int
+              ? fetchedCountRaw
+              : (fetchedCountRaw is num
+                    ? fetchedCountRaw.toInt()
+                    : initialProducts.length);
+        }
+      } else {
+        final response = await _nativeSearchApiGet(
+          hash: 'search/query=$trimmedQuery',
+          limit: pageSize,
+          offset: offset,
+        );
+
+        if (response.statusCode != 200) {
+          return;
+        }
+        final parsed = await compute(
+          _parseNativeCategoryPayload,
+          response.body,
+        );
+        final rawItems = parsed['items'];
+        initialProducts = (rawItems is List) ? rawItems : [];
+        final fetchedCountRaw = parsed['fetchedCount'];
+        fetchedCount = fetchedCountRaw is int
+            ? fetchedCountRaw
+            : (fetchedCountRaw is num
+                  ? fetchedCountRaw.toInt()
+                  : initialProducts.length);
+      }
+
+      if (requestEpoch != _searchResultsRequestEpoch) {
         return;
       }
-      final parsed = await compute(_parseNativeCategoryPayload, response.body);
-      final rawItems = parsed['items'];
-      final List<dynamic> initialProducts = (rawItems is List) ? rawItems : [];
-      final fetchedCountRaw = parsed['fetchedCount'];
-      final int fetchedCount = fetchedCountRaw is int
-          ? fetchedCountRaw
-          : (fetchedCountRaw is num
-                ? fetchedCountRaw.toInt()
-                : initialProducts.length);
 
-      if (_hasDiscountConfig) {
+      if (_hasDiscountConfig && !usedManticoreSearch) {
         _applyDiscountConfigToProducts(initialProducts);
       }
+      final rankedProducts = usedManticoreSearch
+          ? initialProducts
+          : _rankSearchProductsByQuery(initialProducts, trimmedQuery);
 
       final List<dynamic> uniqueNew = [];
-      for (final item in initialProducts) {
+      for (final item in rankedProducts) {
         if (item is! Map) continue;
         final id = item['id']?.toString() ?? "";
         if (id.isEmpty || !existingIds.contains(id)) {
@@ -2338,12 +2486,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _startGalleryProcessing();
 
       _nativeOffsets[key] = offset + fetchedCount;
-      _nativeHasMore[key] = fetchedCount >= _nativeSearchPageSize;
+      _nativeHasMore[key] = fetchedCount >= pageSize;
     } catch (e) {
       debugPrint("Native search API error: $e");
     } finally {
       if (reset) {
-        _nativeInitialLoadingKeys.remove(key);
+        if (requestEpoch == _searchResultsRequestEpoch) {
+          _isSearchResultsLoading = false;
+        }
       }
       _nativeIsLoadingMore[key] = false;
       _nativeShowLoadingIndicator[key] = false;
@@ -2351,6 +2501,151 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _nativeLoadingIndicatorTimers[key] = null;
       if (mounted) setState(() => _isFilterLoading = false);
     }
+  }
+
+  List<String> _buildNativeSearchQueryParts({
+    required String hash,
+    required int limit,
+    required int offset,
+    required bool includeFields,
+  }) {
+    final parts = <String>[
+      'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+      'limit=$limit',
+      'offset=$offset',
+      'hash=${Uri.encodeQueryComponent(hash)}',
+      'status=1',
+      'in_stock=1',
+    ];
+    if (includeFields) {
+      parts.add(
+        'fields=${Uri.encodeQueryComponent(_nativeSearchFieldsParamValue)}',
+      );
+    }
+    return parts;
+  }
+
+  Future<_SimpleHttpResponse> _nativeSearchApiGet({
+    required String hash,
+    required int limit,
+    required int offset,
+  }) async {
+    String? extractQueryFromHash(String rawHash) {
+      const prefix = 'search/query=';
+      if (!rawHash.startsWith(prefix)) return null;
+      final value = rawHash.substring(prefix.length).trim();
+      return value.isEmpty ? null : value;
+    }
+
+    bool isLikelyJsonBody(String body) {
+      final trimmed = body.trimLeft();
+      return trimmed.startsWith('{') || trimmed.startsWith('[');
+    }
+
+    Future<_SimpleHttpResponse> doRequest(bool includeFields) {
+      final queryParts = _buildNativeSearchQueryParts(
+        hash: hash,
+        limit: limit,
+        offset: offset,
+        includeFields: includeFields,
+      );
+      final url =
+          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
+      return _httpGet(Uri.parse(url));
+    }
+
+    final searchQuery = extractQueryFromHash(hash);
+    if (searchQuery != null && _nativeSearchProxySupported != false) {
+      final base = AppConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '');
+      final proxyUri = Uri.parse('$base$_nativeSearchProxyPath').replace(
+        queryParameters: <String, String>{
+          'q': searchQuery,
+          'limit': '$limit',
+          'offset': '$offset',
+        },
+      );
+      final proxyResponse = await _httpGet(proxyUri);
+      if (proxyResponse.statusCode == 200 &&
+          isLikelyJsonBody(proxyResponse.body)) {
+        _nativeSearchProxySupported = true;
+        return proxyResponse;
+      }
+      if (proxyResponse.statusCode == 404 || proxyResponse.statusCode == 405) {
+        _nativeSearchProxySupported = false;
+      }
+    }
+
+    final shouldTryFields = _nativeSearchFieldsParamSupported != false;
+    if (shouldTryFields) {
+      final responseWithFields = await doRequest(true);
+      if (responseWithFields.statusCode == 200) {
+        _nativeSearchFieldsParamSupported = true;
+        return responseWithFields;
+      }
+      final fallbackResponse = await doRequest(false);
+      if (fallbackResponse.statusCode == 200) {
+        _nativeSearchFieldsParamSupported = false;
+      }
+      return fallbackResponse;
+    }
+    return doRequest(false);
+  }
+
+  List<dynamic> _rankSearchProductsByQuery(
+    List<dynamic> products,
+    String query,
+  ) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.length < 2 || products.length < 2) return products;
+    final tokens = normalizedQuery
+        .split(' ')
+        .where((token) => token.trim().length >= 2)
+        .toList(growable: false);
+
+    int scoreName(String normalizedName) {
+      if (normalizedName.isEmpty) return 0;
+      int score = 0;
+      if (normalizedName == normalizedQuery) score += 1200;
+      if (normalizedName.startsWith(normalizedQuery)) score += 700;
+      final fullIdx = normalizedName.indexOf(normalizedQuery);
+      if (fullIdx >= 0) {
+        score += 380 - math.min(fullIdx * 12, 260);
+      }
+      var allTokensFound = tokens.isNotEmpty;
+      for (final token in tokens) {
+        final idx = normalizedName.indexOf(token);
+        if (idx < 0) {
+          allTokensFound = false;
+          continue;
+        }
+        if (idx == 0) {
+          score += 120;
+        } else if (normalizedName[idx - 1] == ' ') {
+          score += 80;
+        } else {
+          score += 40;
+        }
+      }
+      if (allTokensFound) score += 160;
+      return score;
+    }
+
+    final ranked = <({dynamic item, int score, int index})>[];
+    var hasScoredEntries = false;
+    for (var i = 0; i < products.length; i++) {
+      final item = products[i];
+      final name = item is Map ? item['name']?.toString() ?? '' : '';
+      final score = scoreName(_normalizeSearchText(name));
+      if (score > 0) hasScoredEntries = true;
+      ranked.add((item: item, score: score, index: i));
+    }
+    if (!hasScoredEntries) return products;
+    ranked.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      if (byScore != 0) return byScore;
+      return a.index.compareTo(b.index);
+    });
+    return ranked.map((entry) => entry.item).toList(growable: false);
   }
 
   String _buildSearchCategoryHintSubtitle(
@@ -2368,115 +2663,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (names.length >= 2) return "${names[0]} и ${names[1]}";
     if (names.length == 1) return names.first;
     return "Категория";
-  }
-
-  List<Map<String, dynamic>> _buildNativeSearchCategoryHints(
-    String query, {
-    int limit = 2,
-  }) {
-    final normalizedQuery = _normalizeSearchText(query);
-    if (normalizedQuery.length < 2) return [];
-    final source = _allCategories.isNotEmpty ? _allCategories : _apiCategories;
-    if (source.isEmpty) return [];
-    final seenIds = <String>{};
-    final result = <Map<String, dynamic>>[];
-
-    void collect(List<dynamic> categories, String parentName) {
-      for (final raw in categories) {
-        if (result.length >= limit) return;
-        if (raw is! Map) continue;
-        if (raw['status']?.toString() == "0") continue;
-        final id = raw['id']?.toString() ?? "";
-        final name = raw['name']?.toString().trim() ?? "";
-        if (id.isEmpty || name.isEmpty) continue;
-
-        final normalizedName = _normalizeSearchText(name);
-        if (normalizedName.contains(normalizedQuery) && seenIds.add(id)) {
-          final category = Map<String, dynamic>.from(raw);
-          result.add({
-            "id": id,
-            "name": name,
-            "subtitle": _buildSearchCategoryHintSubtitle(
-              category,
-              parentName: parentName,
-            ),
-            "slug": _getCategorySlug(category),
-            "category": category,
-          });
-          if (result.length >= limit) return;
-        }
-
-        final children = _extractCategoryChildren(raw);
-        if (children.isNotEmpty) {
-          collect(children, name);
-          if (result.length >= limit) return;
-        }
-      }
-    }
-
-    collect(source, "");
-    return result;
-  }
-
-  Future<Map<String, dynamic>> _fetchNativeSearchHints(
-    String query, {
-    int productLimit = 5,
-    int categoryLimit = 2,
-  }) async {
-    final trimmedQuery = query.trim();
-    if (trimmedQuery.length < 2) {
-      return {"products": <String>[], "categories": <Map<String, dynamic>>[]};
-    }
-    final categoryHints = _buildNativeSearchCategoryHints(
-      trimmedQuery,
-      limit: categoryLimit,
-    );
-    try {
-      final queryParts = <String>[
-        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-        'limit=${productLimit.clamp(3, 20)}',
-        'offset=0',
-        'hash=${Uri.encodeQueryComponent('search/query=$trimmedQuery')}',
-        'sort=create_datetime',
-        'order=desc',
-        'status=1',
-        'in_stock=1',
-      ];
-      final url =
-          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-      final response = await _httpGet(Uri.parse(url));
-      if (response.statusCode != 200) {
-        return {"products": <String>[], "categories": categoryHints};
-      }
-      final parsed = await compute(_parseNativeCategoryPayload, response.body);
-      final rawItems = parsed['items'];
-      final List<dynamic> items = (rawItems is List) ? rawItems : [];
-
-      final normalizedQuery = _normalizeSearchText(trimmedQuery);
-      final seen = <String>{};
-      final hints = <String>[];
-      void addHint(String value) {
-        final text = value.trim();
-        if (text.isEmpty) return;
-        final normalized = _normalizeSearchText(text);
-        if (normalized.isEmpty || !seen.add(normalized)) return;
-        if (normalized == normalizedQuery) return;
-        if (normalized != normalizedQuery &&
-            !normalized.contains(normalizedQuery)) {
-          return;
-        }
-        hints.add(text);
-      }
-
-      for (final item in items) {
-        if (item is! Map) continue;
-        addHint(item['name']?.toString() ?? "");
-        if (hints.length >= productLimit) break;
-      }
-      return {"products": hints, "categories": categoryHints};
-    } catch (_) {
-      return {"products": <String>[], "categories": categoryHints};
-    }
   }
 
   Future<void> _fetchMenBags({
@@ -2964,6 +3150,66 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (kDebugMode) debugPrint("$st");
       return null;
     }
+  }
+
+  String _normalizeManticoreImageUrl(String rawUrl) {
+    final value = rawUrl.trim();
+    if (value.isEmpty) return "";
+    return value.replaceAll(RegExp(r'\.\d+x\d+\.'), '.0x400.');
+  }
+
+  String _normalizeManticoreProductLink(String rawUrl) {
+    final value = rawUrl.trim();
+    if (value.isEmpty) return "";
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.path.trim().isNotEmpty) {
+      final path = uri.path.trim();
+      return path.endsWith('/') ? path : '$path/';
+    }
+    if (value.startsWith('/')) {
+      return value.endsWith('/') ? value : '$value/';
+    }
+    return '/product/$value/';
+  }
+
+  Map<String, dynamic> _buildProductMapFromManticore(ManticoreProduct item) {
+    final imageUrl = _normalizeManticoreImageUrl(item.imageUrl);
+    final link = _normalizeManticoreProductLink(item.url);
+    return <String, dynamic>{
+      "id": item.id,
+      "name": item.name,
+      if (item.hasPrice) "price": "${_formatPrice(item.price)} ₽",
+      if (item.hasPrice) "raw_price": item.price,
+      if (item.summary.trim().isNotEmpty) "summary": item.summary.trim(),
+      if (imageUrl.isNotEmpty) "image_url": imageUrl,
+      if (imageUrl.isNotEmpty) "image": imageUrl,
+      if (imageUrl.isNotEmpty) "images": <String>[imageUrl],
+      if (link.isNotEmpty) "link": link,
+      "count": item.count,
+      "status": item.count > 0 ? "1" : "0",
+    };
+  }
+
+  Future<({List<dynamic> items, int fetchedCount, String? correctedQuery})>
+  _fetchSearchProductsWithManticore({
+    required String query,
+    required int limit,
+    required int offset,
+  }) async {
+    final result = await _manticoreSearchService.searchProducts(
+      query: query,
+      productLimit: limit,
+      productOffset: offset,
+    );
+    final resolvedItems = result.products
+        .map<dynamic>(_buildProductMapFromManticore)
+        .toList(growable: false);
+
+    return (
+      items: resolvedItems,
+      fetchedCount: result.products.length,
+      correctedQuery: result.correctedQuery,
+    );
   }
 
   Future<List<Map<String, dynamic>>> _fetchProductReviewsById(
@@ -5910,8 +6156,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<void> _openNativeSearchResults(String query) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
+    final normalizedQuery = _normalizeSearchText(trimmed);
+    if (normalizedQuery.length < _searchMinQueryLength) return;
+    final normalizedActiveQuery = _normalizeSearchText(_activeSearchQuery);
+    final bool isNewSearchQuery =
+        normalizedQuery.isNotEmpty && normalizedQuery != normalizedActiveQuery;
+    final bool canReuseCurrentSearchResults =
+        normalizedQuery.isNotEmpty &&
+        normalizedQuery == normalizedActiveQuery &&
+        _getNativeListByKey("search").isNotEmpty &&
+        !_isSearchResultsLoading;
     final prevNative = _nativeCategory;
     _activeSearchQuery = trimmed;
+    _activeSearchCorrectedQuery = null;
     _openSearchMenuOnBackToSearch = false;
     _rememberCategoryForBackNavigation(nextKey: "search");
     setState(() {
@@ -5920,9 +6177,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _nativeCategory = "search";
       _resetVisibleRangeForCategory(_nativeCategory);
     });
-    if (prevNative != "search") {
+    if (prevNative != "search" || isNewSearchQuery) {
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
+    }
+    if (canReuseCurrentSearchResults) {
+      _scheduleVisibleGalleryLoad(_nativeCategory);
+      return;
     }
     await _fetchNativeSearch(query: trimmed, reset: true);
     _scheduleVisibleGalleryLoad(_nativeCategory);
@@ -6002,7 +6263,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  void _openProductPage(dynamic product, {bool showStockSheetOnLoad = false}) {
+  void _openProductPage(
+    dynamic product, {
+    bool showStockSheetOnLoad = false,
+    VoidCallback? onBack,
+  }) {
     if (product is! Map) return;
     _registerViewedProduct(product);
     final String productId = product['id']?.toString() ?? "";
@@ -6041,7 +6306,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       bottomBar: _buildBottomBar(showTopBorder: false),
     );
 
-    Navigator.push(
+    final routeFuture = Navigator.push(
       context,
       Platform.isIOS
           ? CupertinoPageRoute<void>(builder: (_) => detailPage)
@@ -6067,6 +6332,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   },
             ),
     );
+    if (onBack != null) {
+      routeFuture.then((_) {
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          onBack();
+        });
+      });
+    }
   }
 
   List<String> _resolveProductImages(Map product) {
@@ -6706,6 +6980,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _returnToCatalogOnBack = false;
       _returnToCatalogParentCategoryId = null;
       _openSearchMenuOnBackToSearch = false;
+      _searchOriginOpenedFromBurger = false;
+      _searchOriginIsNativeCategory = false;
+      _searchOriginNativeEntry = null;
+      _searchOriginBackStack.clear();
     });
     _resetCatalogBackSwipeTracking();
     _updateCartFloatingButtonVisibility();
@@ -6737,6 +7015,114 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _nativeCategoryBackStack.add(entry);
     if (_nativeCategoryBackStack.length > _maxNativeCategoryHistoryDepth) {
       _nativeCategoryBackStack.removeAt(0);
+    }
+  }
+
+  void _captureSearchOrigin({required bool openedFromBurger}) {
+    _searchOriginOpenedFromBurger = openedFromBurger;
+    if (_isNativeCategoryPage && _nativeCategory != "search") {
+      _searchOriginIsNativeCategory = true;
+      _searchOriginNativeEntry = (
+        key: _nativeCategory,
+        title: _pageTitle,
+        customCategoryId: _nativeCustomCategoryIdByKey[_nativeCategory],
+      );
+      _searchOriginBackStack
+        ..clear()
+        ..addAll(
+          List<({String key, String title, String? customCategoryId})>.from(
+            _nativeCategoryBackStack,
+          ),
+        );
+      return;
+    }
+    _searchOriginIsNativeCategory = false;
+    _searchOriginNativeEntry = null;
+    _searchOriginBackStack.clear();
+  }
+
+  void _returnFromSearchOrigin() {
+    final reopenBurger = _searchOriginOpenedFromBurger;
+    final origin = _searchOriginNativeEntry;
+    final restoredBackStack =
+        List<({String key, String title, String? customCategoryId})>.from(
+          _searchOriginBackStack,
+        );
+
+    void reopenCatalogMenu() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!_isBurgerMenuOpen) {
+          _openCustomMenu();
+        }
+      });
+    }
+
+    if (!_searchOriginIsNativeCategory || origin == null) {
+      _goHome();
+      if (reopenBurger) {
+        reopenCatalogMenu();
+      }
+      return;
+    }
+
+    final prevNative = _nativeCategory;
+    final customCategoryId = origin.customCategoryId;
+    if (customCategoryId != null && customCategoryId.isNotEmpty) {
+      _nativeCustomCategoryIdByKey[origin.key] = customCategoryId;
+    }
+
+    if (origin.key == "wishlist") {
+      _syncWishlistList();
+    }
+    if (origin.key == "compare") {
+      _syncCompareList();
+      _ensureCompareDetails();
+    }
+    if (origin.key == "cart") {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _nativeCategory == "cart") {
+          _updateCartFloatingButtonVisibility();
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _nativeCategory == "cart") {
+            _updateCartFloatingButtonVisibility();
+          }
+        });
+      });
+    }
+
+    setState(() {
+      _pageTitle = origin.title;
+      _isNativeCategoryPage = true;
+      _nativeCategory = origin.key;
+      _catalogBackSwipeScrollLocked = false;
+      _nativeCategoryBackStack
+        ..clear()
+        ..addAll(restoredBackStack);
+      _returnToCatalogOnBack = false;
+      _returnToCatalogParentCategoryId = null;
+      _openSearchMenuOnBackToSearch = false;
+      _searchOriginOpenedFromBurger = false;
+      _searchOriginIsNativeCategory = false;
+      _searchOriginNativeEntry = null;
+      _searchOriginBackStack.clear();
+      _resetVisibleRangeForCategory(_nativeCategory);
+    });
+
+    if (prevNative != origin.key) {
+      _animatedProductIds.clear();
+      _resetNativeCategoryScroll();
+    }
+    if (origin.key == "cart") {
+      _resetNativeCategoryScroll();
+    }
+    _updateCartFloatingButtonVisibility();
+    _fetchActiveNativeCategoryIfNeeded();
+    _scheduleVisibleGalleryLoad(_nativeCategory);
+    _resetCatalogBackSwipeTracking();
+    if (reopenBurger) {
+      reopenCatalogMenu();
     }
   }
 
@@ -6811,7 +7197,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (_isNativeCategoryPage && _nativeCategory == "search") {
-          _showSearchMenu(context);
+          _showSearchMenu(context, returnToOriginOnDismiss: true);
         }
       });
     }
@@ -7476,6 +7862,112 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return [];
   }
 
+  List<ManticoreCategory> _buildLocalCategoryHintsForQuery(
+    String query, {
+    int limit = 2,
+  }) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.length < _searchMinQueryLength) {
+      return const <ManticoreCategory>[];
+    }
+    final source = _allCategories.isNotEmpty ? _allCategories : _apiCategories;
+    if (source.isEmpty) return const <ManticoreCategory>[];
+    final seenIds = <String>{};
+    final result = <ManticoreCategory>[];
+
+    void collect(List<dynamic> categories) {
+      for (final raw in categories) {
+        if (result.length >= limit) return;
+        if (raw is! Map) continue;
+        if (raw['status']?.toString() == "0") continue;
+        final id = raw['id']?.toString().trim() ?? "";
+        final name = raw['name']?.toString().trim() ?? "";
+        if (id.isEmpty || name.isEmpty) continue;
+        final normalizedName = _normalizeSearchText(name);
+        if (normalizedName.contains(normalizedQuery) && seenIds.add(id)) {
+          result.add(ManticoreCategory(id: id, name: name));
+          if (result.length >= limit) return;
+        }
+        final children = _extractCategoryChildren(raw);
+        if (children.isNotEmpty) {
+          collect(children);
+          if (result.length >= limit) return;
+        }
+      }
+    }
+
+    collect(source);
+    return result;
+  }
+
+  Future<List<ManticoreProduct>> _fetchNativeProductHintsForQuery(
+    String query, {
+    int limit = 5,
+  }) async {
+    final trimmedQuery = query.trim();
+    if (_normalizeSearchText(trimmedQuery).length < _searchMinQueryLength) {
+      return const <ManticoreProduct>[];
+    }
+    try {
+      final effectiveLimit = limit.clamp(1, 20).toInt();
+      final response = await _nativeSearchApiGet(
+        hash: 'search/query=$trimmedQuery',
+        limit: effectiveLimit,
+        offset: 0,
+      );
+      if (response.statusCode != 200) return const <ManticoreProduct>[];
+      final parsed = await compute(_parseNativeCategoryPayload, response.body);
+      final rawItems = parsed['items'];
+      final List<dynamic> items = (rawItems is List) ? rawItems : [];
+      final result = <ManticoreProduct>[];
+      final seen = <String>{};
+      for (final item in items) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString().trim() ?? "";
+        final name = item['name']?.toString().trim() ?? "";
+        if (id.isEmpty || name.isEmpty || !seen.add(id)) continue;
+        final rawPrice = item['raw_price'];
+        final double price = rawPrice is num
+            ? rawPrice.toDouble()
+            : _parsePriceValue(rawPrice);
+        result.add(
+          ManticoreProduct(
+            id: id,
+            name: name,
+            price: price,
+            summary: item['summary']?.toString() ?? "",
+            imageUrl: item['image_url']?.toString() ?? "",
+            url: item['link']?.toString() ?? "",
+            count: int.tryParse(item['count']?.toString() ?? "") ?? 0,
+          ),
+        );
+        if (result.length >= effectiveLimit) break;
+      }
+      return result;
+    } catch (_) {
+      return const <ManticoreProduct>[];
+    }
+  }
+
+  Future<
+    ({List<ManticoreProduct> products, List<ManticoreCategory> categories})
+  >
+  _fetchFallbackSearchHints({
+    required String query,
+    int productLimit = 5,
+    int categoryLimit = 2,
+  }) async {
+    final categories = _buildLocalCategoryHintsForQuery(
+      query,
+      limit: categoryLimit,
+    );
+    final products = await _fetchNativeProductHintsForQuery(
+      query,
+      limit: productLimit,
+    );
+    return (products: products, categories: categories);
+  }
+
   String? _findCategoryIdBySlug(List<dynamic> categories, String slug) {
     for (final cat in categories) {
       if (cat is! Map) continue;
@@ -7685,7 +8177,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
         if (_isNativeCategoryPage) {
           if (_nativeCategory == "search") {
-            _showSearchMenu(context);
+            _showSearchMenu(context, returnToOriginOnDismiss: true);
             return;
           }
           _goBackFromCategory();
@@ -12007,7 +12499,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildHeaderSearchOverlay() {
     return InkWell(
-      onTap: () => _showSearchMenu(context),
+      onTap: () => _showSearchMenu(context, showHistoryOnOpen: true),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 40,
@@ -12042,7 +12534,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
             ),
             IconButton(
-              onPressed: () => _showSearchMenu(context),
+              onPressed: () =>
+                  _showSearchMenu(context, showHistoryOnOpen: true),
               icon: const Icon(
                 Icons.qr_code_scanner_rounded,
                 color: Color(0xFF6B7280),
@@ -12285,7 +12778,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ),
           onPressed: () {
             if (isSearchHeader) {
-              _showSearchMenu(context);
+              _showSearchMenu(context, returnToOriginOnDismiss: true);
               return;
             }
             _goBackFromCategory();
@@ -12295,7 +12788,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           child: isSearchHeader
               ? InkWell(
                   borderRadius: BorderRadius.circular(searchRadius),
-                  onTap: () => _showSearchMenu(context),
+                  onTap: () =>
+                      _showSearchMenu(context, returnToOriginOnDismiss: true),
                   child: Container(
                     height: searchHeight,
                     padding: EdgeInsets.symmetric(horizontal: 12 * scale),
@@ -13894,12 +14388,31 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  void _showSearchMenu(BuildContext context, {bool openedFromBurger = false}) {
+  void _showSearchMenu(
+    BuildContext context, {
+    bool openedFromBurger = false,
+    bool returnToOriginOnDismiss = false,
+    bool showHistoryOnOpen = false,
+  }) {
+    if (!returnToOriginOnDismiss) {
+      _captureSearchOrigin(openedFromBurger: openedFromBurger);
+    }
     final rootContext = context;
-    final initialQuery = openedFromBurger ? "" : _activeSearchQuery;
+    final initialQuery = (openedFromBurger || showHistoryOnOpen)
+        ? ""
+        : _activeSearchQuery;
+    const dismissNone = 0;
+    const dismissReturnToOrigin = 1;
+    const dismissReopenBurger = 2;
+    int dismissTarget = openedFromBurger
+        ? dismissReopenBurger
+        : returnToOriginOnDismiss
+        ? dismissReturnToOrigin
+        : dismissNone;
     final TextEditingController searchController = TextEditingController(
       text: initialQuery,
     );
+    final FocusNode searchFocusNode = FocusNode();
     searchController.selection = TextSelection.collapsed(
       offset: searchController.text.length,
     );
@@ -13924,32 +14437,59 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     int hintsRequestId = 0;
     bool hintsLoading = false;
     bool hintsPrimed = false;
+    String lastHintsQuery = "";
     String? hintsMessage;
-    List<String> productHints = [];
-    List<Map<String, dynamic>> categoryHints = [];
+    String? correctedHintsQuery;
+    List<ManticoreProduct> productHints = [];
+    List<ManticoreCategory> categoryHints = [];
     List<String> history = List<String>.from(_searchHistory);
+    const searchSuggestionTitleStyle = TextStyle(
+      inherit: false,
+      fontFamily: 'Roboto',
+      fontSize: 15,
+      fontWeight: FontWeight.w500,
+      color: Color(0xFF111827),
+      letterSpacing: 0,
+    );
+
+    void ensureSearchKeyboardVisible() {
+      if (!searchFocusNode.hasFocus) {
+        searchFocusNode.requestFocus();
+      }
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    }
 
     void closeSearch() {
+      dismissTarget = dismissNone;
+      Navigator.of(rootContext, rootNavigator: true).pop();
+    }
+
+    void closeSearchToOrigin() {
+      dismissTarget = dismissNone;
+      if (_searchOriginOpenedFromBurger) {
+        _goHome();
+        _replaceCurrentDialogWithCustomMenu(rootContext);
+        return;
+      }
+      _returnFromSearchOrigin();
       Navigator.of(rootContext, rootNavigator: true).pop();
     }
 
     void closeSearchToBurger() {
-      closeSearch();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (!_isBurgerMenuOpen) {
-          _openCustomMenu();
-        }
-      });
+      dismissTarget = dismissReopenBurger;
+      Navigator.of(rootContext, rootNavigator: true).pop();
     }
 
     void submitSearch([String? forcedValue]) {
       final value = (forcedValue ?? searchController.text).trim();
       if (value.isEmpty) return;
-      _activeSearchQuery = value;
+      final normalizedValue = _normalizeSearchText(value);
+      if (normalizedValue.isEmpty) return;
+      if (normalizedValue.length < _searchMinQueryLength) return;
+      final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
+      hintsRequestId++;
       _openSearchMenuOnBackToSearch = false;
       _rememberSearchQuery(value);
-      final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
       closeSearch();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_isBurgerMenuOpen && rootNavigator.canPop()) {
@@ -13960,10 +14500,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     }
 
-    void openCategorySuggestion(Map<String, dynamic> item) {
-      final rawCategory = item['category'];
-      if (rawCategory is! Map) return;
-      final category = Map<String, dynamic>.from(rawCategory);
+    void openCategorySuggestion(ManticoreCategory item) {
       final typedQuery = searchController.text.trim();
       final fallbackQuery = _activeSearchQuery.trim();
       final effectiveQuery = typedQuery.isNotEmpty ? typedQuery : fallbackQuery;
@@ -13991,54 +14528,142 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           _returnToCatalogOnBack = false;
           _returnToCatalogParentCategoryId = null;
         }
-        _navigateToApiCategory(category);
+        final source = _allCategories.isNotEmpty
+            ? _allCategories
+            : _apiCategories;
+        final category = _findCategoryById(source, item.id);
+        if (category != null) {
+          _navigateToApiCategory(category);
+          return;
+        }
+        _openNativeCategoryById(
+          key: "custom_${item.id}",
+          categoryId: item.id,
+          title: item.name.isNotEmpty ? item.name : "Категория",
+        );
+      });
+    }
+
+    void openProductSuggestion(ManticoreProduct item) {
+      final typedQuery = searchController.text.trim();
+      final fallbackQuery = _activeSearchQuery.trim();
+      final effectiveQuery = typedQuery.isNotEmpty ? typedQuery : fallbackQuery;
+      final searchReturnContext = this.context;
+      _openSearchMenuOnBackToSearch = false;
+      if (effectiveQuery.isNotEmpty) {
+        _activeSearchQuery = effectiveQuery;
+        _rememberSearchQuery(effectiveQuery);
+      }
+      final rootNavigator = Navigator.of(rootContext, rootNavigator: true);
+      closeSearch();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_isBurgerMenuOpen && rootNavigator.canPop()) {
+          rootNavigator.pop();
+        }
+        if (!mounted) return;
+        _openProductPage(
+          _buildProductMapFromManticore(item),
+          onBack: () {
+            if (!mounted) return;
+            _showSearchMenu(searchReturnContext, returnToOriginOnDismiss: true);
+          },
+        );
       });
     }
 
     void scheduleHints(StateSetter setDialogState, String rawText) {
       final value = rawText.trim();
+      final normalizedValue = _normalizeSearchText(value);
       hintsDebounce?.cancel();
-      if (value.length < 2) {
+      if (normalizedValue.length < _searchMinQueryLength) {
+        hintsRequestId++;
+        lastHintsQuery = "";
         setDialogState(() {
           productHints = [];
           categoryHints = [];
           hintsLoading = false;
           hintsMessage = null;
+          correctedHintsQuery = null;
         });
         return;
       }
+      final previousHintsQuery = lastHintsQuery;
+      if (normalizedValue == previousHintsQuery) return;
+      lastHintsQuery = normalizedValue;
       final requestId = ++hintsRequestId;
       setDialogState(() {
         hintsLoading = true;
         hintsMessage = null;
+        correctedHintsQuery = null;
       });
-      hintsDebounce = Timer(const Duration(milliseconds: 220), () async {
-        final fetched = await _fetchNativeSearchHints(
-          value,
-          productLimit: 5,
-          categoryLimit: 2,
-        );
-        if (!mounted || requestId != hintsRequestId) return;
-        final productsRaw = fetched['products'];
-        final categoriesRaw = fetched['categories'];
-        final nextProducts = (productsRaw is List)
-            ? productsRaw.map((e) => e.toString()).toList()
-            : <String>[];
-        final nextCategories = (categoriesRaw is List)
-            ? categoriesRaw
-                  .whereType<Map>()
-                  .map((e) => Map<String, dynamic>.from(e))
-                  .toList()
-            : <Map<String, dynamic>>[];
-        setDialogState(() {
-          productHints = nextProducts;
-          categoryHints = nextCategories;
-          hintsLoading = false;
-          hintsMessage = (nextProducts.isEmpty && nextCategories.isEmpty)
-              ? "Ничего не найдено"
-              : null;
-        });
-      });
+      final shouldQueryImmediately =
+          previousHintsQuery.length < _searchMinQueryLength &&
+          normalizedValue.length == _searchMinQueryLength;
+
+      Future<void> runHintsLookup() async {
+        try {
+          final fetched = await _manticoreSearchService.search(
+            query: value,
+            productLimit: 5,
+            categoryLimit: 2,
+          );
+          var nextProducts = fetched.products;
+          var nextCategories = fetched.categories;
+          var nextCorrectedQuery = fetched.correctedQuery;
+          if (!mounted || requestId != hintsRequestId) return;
+          setDialogState(() {
+            productHints = nextProducts;
+            categoryHints = nextCategories;
+            hintsLoading = false;
+            correctedHintsQuery =
+                (nextProducts.isEmpty && nextCategories.isEmpty)
+                ? null
+                : nextCorrectedQuery;
+            hintsMessage = (nextProducts.isEmpty && nextCategories.isEmpty)
+                ? "Ничего не найдено"
+                : null;
+          });
+        } catch (_) {
+          try {
+            final fallback = await _fetchFallbackSearchHints(
+              query: value,
+              productLimit: 5,
+              categoryLimit: 2,
+            );
+            if (!mounted || requestId != hintsRequestId) return;
+            setDialogState(() {
+              productHints = fallback.products;
+              categoryHints = fallback.categories;
+              hintsLoading = false;
+              correctedHintsQuery = null;
+              hintsMessage =
+                  (fallback.products.isEmpty && fallback.categories.isEmpty)
+                  ? "Ничего не найдено"
+                  : null;
+            });
+            return;
+          } catch (_) {
+            if (!mounted || requestId != hintsRequestId) return;
+            setDialogState(() {
+              productHints = [];
+              categoryHints = [];
+              hintsLoading = false;
+              correctedHintsQuery = null;
+              hintsMessage = "Ошибка поиска";
+            });
+          }
+        }
+      }
+
+      if (shouldQueryImmediately) {
+        unawaited(runHintsLookup());
+        return;
+      }
+
+      hintsDebounce = Timer(
+        const Duration(milliseconds: 380),
+        () => unawaited(runHintsLookup()),
+      );
     }
 
     final dialogFuture = showGeneralDialog(
@@ -14051,391 +14676,470 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           child,
       pageBuilder: (dialogContext, _, __) => StatefulBuilder(
         builder: (context, setDialogState) {
-          if (!hintsPrimed && searchController.text.trim().length >= 2) {
+          if (!hintsPrimed &&
+              _normalizeSearchText(searchController.text).length >=
+                  _searchMinQueryLength) {
             hintsPrimed = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               scheduleHints(setDialogState, searchController.text);
             });
           }
-          return Scaffold(
-            backgroundColor: Colors.white,
-            resizeToAvoidBottomInset: false,
-            body: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            height: barHeight,
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 14 * scale,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF3F4F6),
-                              borderRadius: BorderRadius.circular(radius),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.search,
-                                  color: const Color(0xFF9CA3AF),
-                                  size: iconSize,
-                                ),
-                                SizedBox(width: 10 * scale),
-                                Expanded(
-                                  child: TextField(
-                                    controller: searchController,
-                                    autofocus: true,
-                                    textInputAction: TextInputAction.search,
-                                    textAlignVertical: TextAlignVertical.center,
-                                    style: searchTextStyle,
-                                    cursorColor: const Color(0xFF111827),
-                                    decoration: InputDecoration(
-                                      hintText: "Поиск",
-                                      hintStyle: hintTextStyle,
-                                      border: InputBorder.none,
-                                      isDense: true,
-                                      isCollapsed: true,
-                                    ),
-                                    onChanged: (value) =>
-                                        scheduleHints(setDialogState, value),
-                                    onSubmitted: (_) => submitSearch(),
-                                    onTapOutside: (_) =>
-                                        FocusScope.of(dialogContext).unfocus(),
-                                  ),
-                                ),
-                                if (searchController.text.trim().isNotEmpty)
-                                  InkWell(
-                                    borderRadius: BorderRadius.circular(20),
-                                    onTap: () {
-                                      hintsDebounce?.cancel();
-                                      searchController.clear();
-                                      setDialogState(() {
-                                        productHints = [];
-                                        categoryHints = [];
-                                        hintsLoading = false;
-                                        hintsMessage = null;
-                                      });
-                                    },
-                                    child: Padding(
-                                      padding: EdgeInsets.all(2 * scale),
-                                      child: Icon(
-                                        Icons.cancel,
-                                        color: const Color(0xFFB8BDC7),
-                                        size: (19 * scale).clamp(17.0, 20.0),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        SizedBox(width: 8 * scale),
-                        InkWell(
-                          onTap: openedFromBurger
-                              ? closeSearchToBurger
-                              : closeSearch,
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 2 * scale,
-                              vertical: 6 * scale,
-                            ),
-                            child: Text(
-                              "Отмена",
-                              style: TextStyle(
-                                fontSize: (17 * scale).clamp(15.0, 18.0),
-                                color: const Color(0xFF6B7280),
-                                fontWeight: FontWeight.w500,
+          return PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, result) {
+              if (didPop) return;
+              if (openedFromBurger) {
+                closeSearchToBurger();
+                return;
+              }
+              if (returnToOriginOnDismiss) {
+                closeSearchToOrigin();
+                return;
+              }
+              closeSearch();
+            },
+            child: Scaffold(
+              backgroundColor: Colors.white,
+              resizeToAvoidBottomInset: false,
+              body: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              height: barHeight,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14 * scale,
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (hintsLoading)
-                      const LinearProgressIndicator(
-                        minHeight: 1.6,
-                        color: Color(0xFF9CA3AF),
-                        backgroundColor: Color(0xFFE5E7EB),
-                      ),
-                    if (hintsMessage != null)
-                      Expanded(
-                        child: Center(
-                          child: Text(
-                            hintsMessage!,
-                            style: const TextStyle(
-                              color: Color(0xFF9CA3AF),
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      )
-                    else if (productHints.isNotEmpty ||
-                        categoryHints.isNotEmpty)
-                      Expanded(
-                        child: ListView(
-                          children: [
-                            ...productHints.map((suggestion) {
-                              return Container(
-                                decoration: const BoxDecoration(
-                                  border: Border(
-                                    bottom: BorderSide(
-                                      color: Color(0xFFF1F1F1),
-                                      width: 1,
-                                    ),
-                                  ),
-                                ),
-                                child: InkWell(
-                                  onTap: () => submitSearch(suggestion),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 2,
-                                      vertical: 13,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.search,
-                                          color: const Color(0xFFB8BDC7),
-                                          size: (21 * scale).clamp(19.0, 23.0),
-                                        ),
-                                        SizedBox(width: 12 * scale),
-                                        Expanded(
-                                          child: Text(
-                                            suggestion,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: (15.5 * scale).clamp(
-                                                14.0,
-                                                16.5,
-                                              ),
-                                              color: const Color(0xFF1F2937),
-                                              fontWeight: FontWeight.w400,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
-                            if (categoryHints.isNotEmpty)
-                              const SizedBox(height: 10),
-                            ...categoryHints.map((item) {
-                              final name = item['name']?.toString() ?? "";
-                              final subtitle =
-                                  item['subtitle']?.toString() ?? "";
-                              final slug = item['slug']?.toString() ?? "";
-                              final assetPath = slug.isNotEmpty
-                                  ? "assets/categories/$slug.png"
-                                  : "";
-                              return InkWell(
-                                onTap: () => openCategorySuggestion(item),
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 6),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: assetPath.isNotEmpty
-                                            ? Image.asset(
-                                                assetPath,
-                                                width: 44,
-                                                height: 44,
-                                                fit: BoxFit.cover,
-                                                errorBuilder: (_, __, ___) =>
-                                                    Container(
-                                                      width: 44,
-                                                      height: 44,
-                                                      color: const Color(
-                                                        0xFFF3F4F6,
-                                                      ),
-                                                      alignment:
-                                                          Alignment.center,
-                                                      child: const Icon(
-                                                        Icons
-                                                            .shopping_bag_outlined,
-                                                        color: Color(
-                                                          0xFF9CA3AF,
-                                                        ),
-                                                        size: 22,
-                                                      ),
-                                                    ),
-                                              )
-                                            : Container(
-                                                width: 44,
-                                                height: 44,
-                                                color: const Color(0xFFF3F4F6),
-                                                alignment: Alignment.center,
-                                                child: const Icon(
-                                                  Icons.shopping_bag_outlined,
-                                                  color: Color(0xFF9CA3AF),
-                                                  size: 22,
-                                                ),
-                                              ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                fontSize: 15,
-                                                fontWeight: FontWeight.w500,
-                                                color: Color(0xFF111827),
-                                              ),
-                                            ),
-                                            if (subtitle.trim().isNotEmpty)
-                                              Text(
-                                                subtitle,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w400,
-                                                  color: Color(0xFF6B7280),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                      const Icon(
-                                        Icons.chevron_right,
-                                        color: Color(0xFF9CA3AF),
-                                        size: 22,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }),
-                          ],
-                        ),
-                      )
-                    else if (searchController.text.trim().isEmpty &&
-                        history.isNotEmpty)
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.only(top: 6, bottom: 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF3F4F6),
+                                borderRadius: BorderRadius.circular(radius),
+                              ),
+                              child: Row(
                                 children: [
-                                  const Expanded(
-                                    child: Text(
-                                      "Вы искали",
-                                      style: TextStyle(
-                                        fontFamily: 'Roboto',
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w600,
-                                        color: Color(0xFF101828),
+                                  Icon(
+                                    Icons.search,
+                                    color: const Color(0xFF9CA3AF),
+                                    size: iconSize,
+                                  ),
+                                  SizedBox(width: 10 * scale),
+                                  Expanded(
+                                    child: TextField(
+                                      controller: searchController,
+                                      focusNode: searchFocusNode,
+                                      autofocus: true,
+                                      onTapAlwaysCalled: true,
+                                      textInputAction: TextInputAction.search,
+                                      textAlignVertical:
+                                          TextAlignVertical.center,
+                                      style: searchTextStyle,
+                                      cursorColor: const Color(0xFF111827),
+                                      decoration: InputDecoration(
+                                        hintText: "Поиск",
+                                        hintStyle: hintTextStyle,
+                                        border: InputBorder.none,
+                                        isDense: true,
+                                        isCollapsed: true,
                                       ),
+                                      onChanged: (value) =>
+                                          scheduleHints(setDialogState, value),
+                                      onTap: ensureSearchKeyboardVisible,
+                                      onSubmitted: (_) => submitSearch(),
+                                      onTapOutside: (_) => FocusScope.of(
+                                        dialogContext,
+                                      ).unfocus(),
                                     ),
                                   ),
-                                  InkWell(
-                                    onTap: () {
-                                      setDialogState(() {
-                                        history = [];
-                                        _searchHistory = [];
-                                      });
-                                      unawaited(_persistSearchHistoryToPrefs());
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: 2,
-                                        vertical: 4,
-                                      ),
-                                      child: Text(
-                                        "Очистить",
-                                        style: TextStyle(
-                                          fontFamily: 'Roboto',
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w400,
-                                          color: Color(0xFF8B8F97),
+                                  if (searchController.text.trim().isNotEmpty)
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(20),
+                                      onTap: () {
+                                        hintsDebounce?.cancel();
+                                        hintsRequestId++;
+                                        lastHintsQuery = "";
+                                        searchController.clear();
+                                        setDialogState(() {
+                                          productHints = [];
+                                          categoryHints = [];
+                                          hintsLoading = false;
+                                          hintsMessage = null;
+                                          correctedHintsQuery = null;
+                                        });
+                                      },
+                                      child: Padding(
+                                        padding: EdgeInsets.all(2 * scale),
+                                        child: Icon(
+                                          Icons.cancel,
+                                          color: const Color(0xFFB8BDC7),
+                                          size: (19 * scale).clamp(17.0, 20.0),
                                         ),
                                       ),
                                     ),
-                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 10,
-                                children: history.map((item) {
-                                  return InkWell(
-                                    borderRadius: BorderRadius.circular(18),
-                                    onTap: () => submitSearch(item),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 10,
+                            ),
+                          ),
+                          SizedBox(width: 8 * scale),
+                          InkWell(
+                            onTap: openedFromBurger
+                                ? closeSearchToBurger
+                                : returnToOriginOnDismiss
+                                ? closeSearchToOrigin
+                                : closeSearch,
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 2 * scale,
+                                vertical: 6 * scale,
+                              ),
+                              child: Text(
+                                "Отмена",
+                                style: TextStyle(
+                                  fontSize: (17 * scale).clamp(15.0, 18.0),
+                                  color: const Color(0xFF6B7280),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (hintsLoading)
+                        const LinearProgressIndicator(
+                          minHeight: 1.6,
+                          color: Color(0xFF9CA3AF),
+                          backgroundColor: Color(0xFFE5E7EB),
+                        ),
+                      if (hintsMessage != null)
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              hintsMessage!,
+                              style: const TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (productHints.isNotEmpty ||
+                          categoryHints.isNotEmpty)
+                        Expanded(
+                          child: ListView(
+                            children: [
+                              if (correctedHintsQuery != null)
+                                Container(
+                                  margin: const EdgeInsets.fromLTRB(
+                                    0,
+                                    4,
+                                    0,
+                                    10,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF3F4F6),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    "Найдено по запросу \"$correctedHintsQuery\"",
+                                    style: const TextStyle(
+                                      fontFamily: 'Roboto',
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Color(0xFF4B5563),
+                                    ),
+                                  ),
+                                ),
+                              ...productHints.map((item) {
+                                return Container(
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: Color(0xFFF1F1F1),
+                                        width: 1,
                                       ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFF2F3F5),
-                                        borderRadius: BorderRadius.circular(18),
+                                    ),
+                                  ),
+                                  child: InkWell(
+                                    onTap: () => openProductSuggestion(item),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                        vertical: 12,
                                       ),
                                       child: Row(
-                                        mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text(
-                                            item,
-                                            style: const TextStyle(
-                                              fontFamily: 'Roboto',
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w400,
-                                              color: Color(0xFF1F2937),
+                                          Icon(
+                                            Icons.search,
+                                            color: const Color(0xFFB8BDC7),
+                                            size: (21 * scale).clamp(
+                                              19.0,
+                                              23.0,
                                             ),
                                           ),
-                                          const SizedBox(width: 10),
-                                          InkWell(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            onTap: () {
-                                              setDialogState(() {
-                                                history.remove(item);
-                                                _searchHistory =
-                                                    List<String>.from(history);
-                                              });
-                                              unawaited(
-                                                _persistSearchHistoryToPrefs(),
-                                              );
-                                            },
-                                            child: const Icon(
-                                              Icons.close,
-                                              size: 18,
-                                              color: Color(0xFF9CA3AF),
+                                          SizedBox(width: 12 * scale),
+                                          Expanded(
+                                            child: Text(
+                                              item.name,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: searchSuggestionTitleStyle,
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-                                  );
-                                }).toList(),
-                              ),
+                                  ),
+                                );
+                              }),
+                              if (productHints.isNotEmpty &&
+                                  categoryHints.isNotEmpty)
+                                const SizedBox(height: 8),
+                              ...categoryHints.map((item) {
+                                final source = _allCategories.isNotEmpty
+                                    ? _allCategories
+                                    : _apiCategories;
+                                final category = _findCategoryById(
+                                  source,
+                                  item.id,
+                                );
+                                final name = item.name;
+                                final subtitle = category != null
+                                    ? _buildSearchCategoryHintSubtitle(category)
+                                    : "Категория";
+                                final slug = category != null
+                                    ? _getCategorySlug(category)
+                                    : "";
+                                final assetPath = slug.isNotEmpty
+                                    ? "assets/categories/$slug.png"
+                                    : "";
+                                return InkWell(
+                                  onTap: () => openCategorySuggestion(item),
+                                  child: Container(
+                                    decoration: const BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Color(0xFFF1F1F1),
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: assetPath.isNotEmpty
+                                              ? Image.asset(
+                                                  assetPath,
+                                                  width: 44,
+                                                  height: 44,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder: (_, __, ___) =>
+                                                      Container(
+                                                        width: 44,
+                                                        height: 44,
+                                                        color: const Color(
+                                                          0xFFF3F4F6,
+                                                        ),
+                                                        alignment:
+                                                            Alignment.center,
+                                                        child: const Icon(
+                                                          Icons
+                                                              .shopping_bag_outlined,
+                                                          color: Color(
+                                                            0xFF9CA3AF,
+                                                          ),
+                                                          size: 22,
+                                                        ),
+                                                      ),
+                                                )
+                                              : Container(
+                                                  width: 44,
+                                                  height: 44,
+                                                  color: const Color(
+                                                    0xFFF3F4F6,
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: const Icon(
+                                                    Icons.shopping_bag_outlined,
+                                                    color: Color(0xFF9CA3AF),
+                                                    size: 22,
+                                                  ),
+                                                ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style:
+                                                    searchSuggestionTitleStyle,
+                                              ),
+                                              if (subtitle.trim().isNotEmpty)
+                                                Text(
+                                                  subtitle,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontFamily: 'Roboto',
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w400,
+                                                    color: Color(0xFF6B7280),
+                                                    letterSpacing: 0,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Icon(
+                                          Icons.chevron_right,
+                                          color: Color(0xFF9CA3AF),
+                                          size: 22,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }),
                             ],
                           ),
+                        )
+                      else if (searchController.text.trim().isEmpty &&
+                          history.isNotEmpty)
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.only(top: 6, bottom: 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Expanded(
+                                      child: Text(
+                                        "Вы искали",
+                                        style: TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF101828),
+                                          letterSpacing: 0,
+                                        ),
+                                      ),
+                                    ),
+                                    InkWell(
+                                      onTap: () {
+                                        setDialogState(() {
+                                          history = [];
+                                          _searchHistory = [];
+                                        });
+                                        unawaited(
+                                          _persistSearchHistoryToPrefs(),
+                                        );
+                                      },
+                                      child: const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 2,
+                                          vertical: 4,
+                                        ),
+                                        child: Text(
+                                          "Очистить",
+                                          style: TextStyle(
+                                            fontFamily: 'Roboto',
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w400,
+                                            color: Color(0xFF8B8F97),
+                                            letterSpacing: 0,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: history.map((item) {
+                                    return InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () => submitSearch(item),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFF2F3F5),
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              item,
+                                              style: const TextStyle(
+                                                fontFamily: 'Roboto',
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w400,
+                                                color: Color(0xFF1F2937),
+                                                letterSpacing: 0,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                              onTap: () {
+                                                setDialogState(() {
+                                                  history.remove(item);
+                                                  _searchHistory =
+                                                      List<String>.from(
+                                                        history,
+                                                      );
+                                                });
+                                                unawaited(
+                                                  _persistSearchHistoryToPrefs(),
+                                                );
+                                              },
+                                              child: const Icon(
+                                                Icons.close,
+                                                size: 16,
+                                                color: Color(0xFF9CA3AF),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -14445,7 +15149,24 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
     dialogFuture.whenComplete(() {
       hintsDebounce?.cancel();
+      hintsRequestId++;
+      searchFocusNode.dispose();
       searchController.dispose();
+      if (dismissTarget == dismissReturnToOrigin) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _returnFromSearchOrigin();
+        });
+        return;
+      }
+      if (dismissTarget == dismissReopenBurger) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (!_isBurgerMenuOpen) {
+            _openCustomMenu();
+          }
+        });
+      }
     });
   }
 
@@ -14982,9 +15703,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  void _openCustomMenu({String? initialParentCategoryId}) {
-    if (_isBurgerMenuOpen) return;
-    _isBurgerMenuOpen = true;
+  RawDialogRoute<void> _buildCustomMenuRoute({
+    String? initialParentCategoryId,
+  }) {
     dynamic selectedMenuCategory;
     int? menuBackSwipePointer;
     Offset? menuBackSwipeStart;
@@ -15005,15 +15726,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         }
       }
     }
-    final dialogFuture = showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Menu',
-      barrierColor: Colors.transparent,
-      transitionDuration: Duration.zero,
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return child;
-      },
+    return RawDialogRoute<void>(
       pageBuilder: (dialogContext, _, __) => StatefulBuilder(
         builder: (context, setDialogState) {
           void handleMenuBack() {
@@ -15239,10 +15952,45 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           );
         },
       ),
+      barrierDismissible: true,
+      barrierLabel: 'Menu',
+      barrierColor: Colors.transparent,
+      transitionDuration: Duration.zero,
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return child;
+      },
     );
-    dialogFuture.whenComplete(() {
-      _isBurgerMenuOpen = false;
-    });
+  }
+
+  void _openCustomMenu({String? initialParentCategoryId}) {
+    if (_isBurgerMenuOpen) return;
+    _isBurgerMenuOpen = true;
+    Navigator.of(context, rootNavigator: true)
+        .push(
+          _buildCustomMenuRoute(
+            initialParentCategoryId: initialParentCategoryId,
+          ),
+        )
+        .whenComplete(() {
+          _isBurgerMenuOpen = false;
+        });
+  }
+
+  void _replaceCurrentDialogWithCustomMenu(
+    BuildContext routeContext, {
+    String? initialParentCategoryId,
+  }) {
+    if (_isBurgerMenuOpen) return;
+    _isBurgerMenuOpen = true;
+    Navigator.of(routeContext, rootNavigator: true)
+        .pushReplacement<void, void>(
+          _buildCustomMenuRoute(
+            initialParentCategoryId: initialParentCategoryId,
+          ),
+        )
+        .whenComplete(() {
+          _isBurgerMenuOpen = false;
+        });
   }
 
   Widget _contactBox(String title, String sub, VoidCallback onTap) {
