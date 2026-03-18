@@ -9,6 +9,7 @@ config/
   yookassa_config.sample.php  — образец конфига YooKassa (скопировать в yookassa_config.php)
 native/
   create_order.php            — создание заказа (без commitOrder)
+  search_products.php         — прокси поиска с файловым кешем (shop.product.search)
   yookassa/
     pay_by_token.php          — создание платежа по токену (YooKassa API v3)
     payment_status.php        — статус платежа + отметка заказа «оплачен»
@@ -28,6 +29,34 @@ native/
 3. **payment_status.php** — запрашивает статус платежа в YooKassa; при `succeeded` отмечает заказ оплаченным через workflow (действие `pay`).
 
 Файл `yookassa_config.php` не публикуйте в репозитории (в `server/.gitignore` он уже добавлен).
+
+## Поиск (stage 3)
+
+`native/search_products.php` — прокси для поиска товаров, который:
+
+- принимает `q`, `limit`, `offset` (GET/POST JSON);
+- запрашивает `api.php/shop.product.search` с `status=1` и `in_stock=1`;
+- кеширует первую страницу результатов на короткий TTL (20-60 секунд);
+- возвращает заголовок `X-Search-Cache: HIT|MISS|BYPASS`.
+
+### Настройка
+
+1. Скопируйте `config/shop_api_config.sample.php` в `config/shop_api_config.php`.
+2. Укажите `api_token` с правами `shop.product.search` (и нужными правами для других скриптов).
+3. Выложите `search_products.php` в `https://hozyain-barin.ru/native/search_products.php`.
+4. Проверьте вручную:
+   - `GET /native/search_products.php?q=повар&limit=30&offset=0`
+   - во втором запросе должен появиться `X-Search-Cache: HIT`.
+
+### Когда нужен Manticore
+
+Manticore стоит внедрять, если после кеша и оптимизации API поиск все еще не держит SLA:
+
+- p95 ответа поиска > 700 ms при рабочей нагрузке;
+- часто нужны сложные ранжирования (морфология, опечатки, синонимы, веса полей);
+- объем каталога растет и SQL-поиск начинает деградировать по мере роста.
+
+Если p95 укладывается в 300-500 ms, а релевантность устраивает, обычно достаточно текущего API + кеша.
 
 ---
 

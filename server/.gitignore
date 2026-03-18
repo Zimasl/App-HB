@@ -1,3 +1,8 @@
 # Секретный конфиг YooKassa — не коммитить
 config/yookassa_config.php
 **/yookassa_config.php
+config/shop_api_config.php
+
+# Runtime cache for server search proxy
+cache/
+native/cache/
