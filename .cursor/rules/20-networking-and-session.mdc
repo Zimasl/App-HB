@@ -1,0 +1,12 @@
+---
+description: Rules for Dio, cookies, API sessions, request handling, and persistence
+globs:
+  - lib/**/*.dart
+---
+
+- Network code must go through the shared Dio layer.
+- Session-aware requests must preserve cookies and existing auth/session behavior.
+- Do not create duplicate API clients or duplicate interceptors.
+- Surface loading, error, and retry states explicitly.
+- shared_preferences may store lightweight flags only, not critical session truth.
+- When changing request/response models, update parsing and failure handling together.
