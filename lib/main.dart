@@ -1966,7 +1966,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (titleFontSize != null && titleFontSize > 0)
         'title_font_size': titleFontSize,
       if (titleFontWeight != null)
-        'title_font_weight': titleFontWeight.index * 100 + 100,
+        'title_font_weight': titleFontWeight.value,
       if (titleLineHeight != null && titleLineHeight > 0)
         'title_line_height': titleLineHeight,
       if (titleLetterSpacing != null)
@@ -1979,7 +1979,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (buttonFontSize != null && buttonFontSize > 0)
         'button_font_size': buttonFontSize,
       if (buttonFontWeight != null)
-        'button_font_weight': buttonFontWeight.index * 100 + 100,
+        'button_font_weight': buttonFontWeight.value,
       if (buttonWidth != null && buttonWidth > 0) 'button_width': buttonWidth,
       if (buttonHeight != null && buttonHeight > 0)
         'button_height': buttonHeight,
