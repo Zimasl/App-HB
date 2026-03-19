@@ -286,6 +286,7 @@ const String _prefsSearchHistoryKey = 'hb.search.history';
 const String _prefsHeaderCityKey = 'hb.header.city';
 const String _prefsHeroBannerIndexKey = 'hb.hero.banner.index';
 const String _prefsHeroBannerTsKey = 'hb.hero.banner.ts';
+const double _heroBannerContentHeightRatio = 850 / 1400;
 
 String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
@@ -1038,10 +1039,56 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   List<dynamic> _allCategories = [];
 
   List<dynamic> _apiBanners = [];
-  static const List<String> _heroBannerAssets = <String>[
-    'assets/images/spring.jpg',
-    'assets/images/spring_02.jpg',
+  static const List<Map<String, dynamic>>
+  _defaultHeroBanners = <Map<String, dynamic>>[
+    {
+      'image':
+          'https://hozyain-barin.ru/wa-data/public/site/native/banners-hero/spring.jpg',
+      'title': 'СКИДКИ ДО 75%\nНА ЗИМНЕЕ',
+      'title_font_size': 24,
+      'title_font_weight': 900,
+      'title_line_height': 1.08,
+      'title_letter_spacing': 0,
+      'title_shadow_opacity': 40,
+      'button_text': 'За выгодой',
+      'button_top_spacing': 10,
+      'button_font_size': 13,
+      'button_font_weight': 700,
+      'button_width': 132,
+      'button_height': 38,
+      'text_color': '#FFFFFF',
+      'button_color': '#1F2937',
+      'button_text_color': '#FFFFFF',
+      'link': '/search/?query=%D0%B7%D0%B8%D0%BC%D0%BD%D0%B5%D0%B5',
+      'left': 16,
+      'top': 110,
+    },
+    {
+      'image':
+          'https://hozyain-barin.ru/wa-data/public/site/native/banners-hero/spring_02.jpg',
+      'title': 'НОВАЯ ВЕСНА\nУЖЕ В ПРИЛОЖЕНИИ',
+      'title_font_size': 22,
+      'title_font_weight': 900,
+      'title_line_height': 1.08,
+      'title_letter_spacing': 0,
+      'title_shadow_opacity': 40,
+      'button_text': 'Смотреть',
+      'button_top_spacing': 10,
+      'button_font_size': 13,
+      'button_font_weight': 700,
+      'button_width': 118,
+      'button_height': 38,
+      'text_color': '#FFFFFF',
+      'button_color': '#1F2937',
+      'button_text_color': '#FFFFFF',
+      'link': '/search/?query=%D0%B2%D0%B5%D1%81%D0%BD%D0%B0',
+      'left': 16,
+      'top': 110,
+    },
   ];
+  List<Map<String, dynamic>> _heroBanners = _defaultHeroBanners
+      .map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item))
+      .toList(growable: false);
   int _heroBannerIndex = 0;
   Timer? _heroBannerRotateTimer;
   List<dynamic> _promoBanners = [];
@@ -1263,6 +1310,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_fetchHeroBanners());
     unawaited(_initHeroBannerOnLaunch());
     _startHeroBannerRotationTimer();
     unawaited(_restoreAuthSessionAndRefreshUi());
@@ -1770,8 +1818,179 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  String get _currentHeroBannerAsset =>
-      _heroBannerAssets[_heroBannerIndex % _heroBannerAssets.length];
+  Map<String, dynamic> get _currentHeroBanner =>
+      _heroBanners[_heroBannerIndex % _heroBanners.length];
+
+  String get _currentHeroBannerImageUrl =>
+      (_currentHeroBanner['image'] ?? "").toString();
+
+  Color _parseHexColor(String? value, Color fallback) {
+    final raw = value?.trim() ?? "";
+    if (raw.isEmpty) return fallback;
+
+    var normalized = raw.replaceAll('#', '');
+    if (normalized.startsWith('0x') || normalized.startsWith('0X')) {
+      normalized = normalized.substring(2);
+    }
+    if (normalized.length == 6) {
+      normalized = 'FF$normalized';
+    }
+    if (normalized.length != 8) return fallback;
+
+    final parsed = int.tryParse(normalized, radix: 16);
+    if (parsed == null) return fallback;
+    return Color(parsed);
+  }
+
+  double? _parseOptionalDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    final raw = value?.toString().trim() ?? "";
+    if (raw.isEmpty) return null;
+    return double.tryParse(raw);
+  }
+
+  FontWeight _fontWeightFromInt(int value) {
+    final normalized = ((value / 100).round() * 100).clamp(100, 900);
+    switch (normalized) {
+      case 100:
+        return FontWeight.w100;
+      case 200:
+        return FontWeight.w200;
+      case 300:
+        return FontWeight.w300;
+      case 400:
+        return FontWeight.w400;
+      case 500:
+        return FontWeight.w500;
+      case 600:
+        return FontWeight.w600;
+      case 700:
+        return FontWeight.w700;
+      case 800:
+        return FontWeight.w800;
+      case 900:
+      default:
+        return FontWeight.w900;
+    }
+  }
+
+  FontWeight? _parseOptionalFontWeight(dynamic value) {
+    if (value is num) {
+      return _fontWeightFromInt(value.round());
+    }
+
+    final raw = value?.toString().trim().toLowerCase() ?? "";
+    if (raw.isEmpty) return null;
+
+    final compact = raw.replaceAll(' ', '').replaceAll('-', '');
+    if (compact.startsWith('w')) {
+      final numeric = int.tryParse(compact.substring(1));
+      if (numeric != null) return _fontWeightFromInt(numeric);
+    }
+
+    final numeric = int.tryParse(compact);
+    if (numeric != null) return _fontWeightFromInt(numeric);
+
+    switch (compact) {
+      case 'thin':
+        return FontWeight.w100;
+      case 'extralight':
+      case 'ultralight':
+        return FontWeight.w200;
+      case 'light':
+        return FontWeight.w300;
+      case 'normal':
+      case 'regular':
+      case 'book':
+        return FontWeight.w400;
+      case 'medium':
+        return FontWeight.w500;
+      case 'semibold':
+      case 'demibold':
+        return FontWeight.w600;
+      case 'bold':
+        return FontWeight.w700;
+      case 'extrabold':
+      case 'ultrabold':
+        return FontWeight.w800;
+      case 'black':
+      case 'heavy':
+        return FontWeight.w900;
+      default:
+        return null;
+    }
+  }
+
+  Map<String, dynamic>? _normalizeHeroBannerConfig(dynamic item) {
+    if (item is! Map) return null;
+
+    final image = item['image']?.toString().trim() ?? "";
+    if (image.isEmpty) return null;
+
+    final title = item['title']?.toString().trim() ?? "";
+    final buttonText = item['button_text']?.toString().trim() ?? "";
+    final textColor = item['text_color']?.toString().trim() ?? "";
+    final buttonColor = item['button_color']?.toString().trim() ?? "";
+    final buttonTextColor = item['button_text_color']?.toString().trim() ?? "";
+    final titleFontSize = _parseOptionalDouble(item['title_font_size']);
+    final titleFontWeight = _parseOptionalFontWeight(
+      item['title_font_weight'] ?? item['title_weight'],
+    );
+    final titleLineHeight = _parseOptionalDouble(
+      item['title_line_height'] ?? item['title_height'],
+    );
+    final titleLetterSpacing = _parseOptionalDouble(
+      item['title_letter_spacing'] ?? item['title_spacing'],
+    );
+    final titleShadowOpacity = _parseOptionalDouble(
+      item['title_shadow_opacity'] ?? item['title_shadow_percent'],
+    );
+    final buttonTopSpacing = _parseOptionalDouble(
+      item['button_top_spacing'] ?? item['button_spacing_top'],
+    );
+    final buttonFontSize = _parseOptionalDouble(item['button_font_size']);
+    final buttonFontWeight = _parseOptionalFontWeight(
+      item['button_font_weight'] ?? item['button_weight'],
+    );
+    final buttonWidth = _parseOptionalDouble(item['button_width']);
+    final buttonHeight = _parseOptionalDouble(item['button_height']);
+    final contentLeft = _parseOptionalDouble(
+      item['left'] ?? item['content_left'],
+    );
+    final contentTop = _parseOptionalDouble(item['top'] ?? item['content_top']);
+    final link = (item['link'] ?? item['button_link'])?.toString().trim() ?? "";
+
+    return <String, dynamic>{
+      'image': image,
+      if (title.isNotEmpty) 'title': title,
+      if (titleFontSize != null && titleFontSize > 0)
+        'title_font_size': titleFontSize,
+      if (titleFontWeight != null)
+        'title_font_weight': titleFontWeight.index * 100 + 100,
+      if (titleLineHeight != null && titleLineHeight > 0)
+        'title_line_height': titleLineHeight,
+      if (titleLetterSpacing != null)
+        'title_letter_spacing': titleLetterSpacing,
+      if (titleShadowOpacity != null && titleShadowOpacity >= 0)
+        'title_shadow_opacity': titleShadowOpacity,
+      if (buttonText.isNotEmpty) 'button_text': buttonText,
+      if (buttonTopSpacing != null && buttonTopSpacing >= 0)
+        'button_top_spacing': buttonTopSpacing,
+      if (buttonFontSize != null && buttonFontSize > 0)
+        'button_font_size': buttonFontSize,
+      if (buttonFontWeight != null)
+        'button_font_weight': buttonFontWeight.index * 100 + 100,
+      if (buttonWidth != null && buttonWidth > 0) 'button_width': buttonWidth,
+      if (buttonHeight != null && buttonHeight > 0)
+        'button_height': buttonHeight,
+      if (textColor.isNotEmpty) 'text_color': textColor,
+      if (buttonColor.isNotEmpty) 'button_color': buttonColor,
+      if (buttonTextColor.isNotEmpty) 'button_text_color': buttonTextColor,
+      if (link.isNotEmpty) 'link': link,
+      if (contentLeft != null && contentLeft >= 0) 'left': contentLeft,
+      if (contentTop != null && contentTop >= 0) 'top': contentTop,
+    };
+  }
 
   Future<void> _persistHeroBannerState({required int index}) async {
     try {
@@ -1785,19 +2004,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<void> _initHeroBannerOnLaunch() async {
-    if (_heroBannerAssets.isEmpty) return;
+    if (_heroBanners.isEmpty) return;
     int nextIndex = 0;
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedIndexRaw = prefs.getInt(_prefsHeroBannerIndexKey) ?? 0;
-      final savedIndex = savedIndexRaw % math.max(1, _heroBannerAssets.length);
-      if (_heroBannerAssets.length == 1) {
+      final savedIndex = savedIndexRaw % math.max(1, _heroBanners.length);
+      if (_heroBanners.length == 1) {
         nextIndex = 0;
       } else {
         final random = math.Random();
-        nextIndex = random.nextInt(_heroBannerAssets.length);
+        nextIndex = random.nextInt(_heroBanners.length);
         while (nextIndex == savedIndex) {
-          nextIndex = random.nextInt(_heroBannerAssets.length);
+          nextIndex = random.nextInt(_heroBanners.length);
         }
       }
     } catch (_) {
@@ -1825,18 +2044,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _rotateHeroBanner({bool randomize = false}) {
-    if (_heroBannerAssets.isEmpty) return;
-    final current = _heroBannerIndex % _heroBannerAssets.length;
+    if (_heroBanners.isEmpty) return;
+    final current = _heroBannerIndex % _heroBanners.length;
     int next = current;
-    if (_heroBannerAssets.length == 1) {
+    if (_heroBanners.length == 1) {
       next = 0;
     } else if (randomize) {
       final random = math.Random();
       while (next == current) {
-        next = random.nextInt(_heroBannerAssets.length);
+        next = random.nextInt(_heroBanners.length);
       }
     } else {
-      next = (current + 1) % _heroBannerAssets.length;
+      next = (current + 1) % _heroBanners.length;
     }
     if (next == current) return;
     if (!mounted) {
@@ -1860,6 +2079,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<void> _refreshHomeContent() async {
     _rotateHeroBanner(randomize: true);
     await Future.wait<void>([
+      _fetchHeroBanners(),
       _fetchBanners(),
       _fetchPromoBanners(),
       _fetchDiscountedProducts(),
@@ -5924,6 +6144,47 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  Future<void> _fetchHeroBanners() async {
+    try {
+      final response = await _httpGet(
+        Uri.parse('https://hozyain-barin.ru/native/banners-hero.json'),
+      );
+      if (response.statusCode != 200) return;
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      if (decoded is! List) return;
+
+      final banners = decoded
+          .map(_normalizeHeroBannerConfig)
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+      if (banners.isEmpty) return;
+
+      final nextIndex = _heroBannerIndex % banners.length;
+      if (!mounted) {
+        _heroBanners = banners;
+        _heroBannerIndex = nextIndex;
+        return;
+      }
+
+      setState(() {
+        _heroBanners = banners;
+        _heroBannerIndex = nextIndex;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        const int maxPrecache = 2;
+        for (var i = 0; i < banners.length && i < maxPrecache; i++) {
+          final imageUrl = (banners[i]['image'] ?? "").toString();
+          if (imageUrl.isEmpty) continue;
+          precacheImage(CachedNetworkImageProvider(imageUrl), context);
+        }
+      });
+    } catch (e) {
+      debugPrint("Hero banners error: $e");
+    }
+  }
+
   Future<void> _fetchPromoBanners() async {
     try {
       final response = await _httpGet(
@@ -6189,14 +6450,56 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _scheduleVisibleGalleryLoad(_nativeCategory);
   }
 
+  String? _extractCategoryIdFromLink(String? path) {
+    final raw = path?.trim() ?? "";
+    if (raw.isEmpty) return null;
+
+    final directMatch = RegExp(
+      r'^(?:id|category_id)\s*=\s*([0-9]+)$',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (directMatch != null) {
+      return directMatch.group(1);
+    }
+
+    final uri = Uri.tryParse(raw);
+    if (uri == null) return null;
+
+    final categoryId =
+        uri.queryParameters['id']?.trim() ??
+        uri.queryParameters['category_id']?.trim() ??
+        "";
+    return categoryId.isNotEmpty ? categoryId : null;
+  }
+
   void _navigateToSimple(String title, String path) {
     if (_isNativeCategoryPage &&
         (_isUserScrolling || _scrollingNotifier.value)) {
       return;
     }
-    if (path.startsWith('/search/') && !path.contains('wishlist=true')) {
+    final trimmedPath = path.trim();
+    if (trimmedPath.isEmpty) return;
+
+    final categoryId = _extractCategoryIdFromLink(trimmedPath);
+    if (categoryId != null) {
+      final nativeKey =
+          _resolveNativeCategory(categoryId, null) ?? "custom_$categoryId";
+      final resolvedTitle = _getCategoryTitleById(
+        categoryId,
+        title.isNotEmpty ? title : "Категория",
+      );
+      _openNativeCategoryById(
+        key: nativeKey,
+        categoryId: categoryId,
+        title: resolvedTitle,
+      );
+      return;
+    }
+
+    if (trimmedPath.startsWith('/search/') &&
+        !trimmedPath.contains('wishlist=true')) {
       final queryValue = Uri.tryParse(
-        "https://hozyain-barin.ru$path",
+        "https://hozyain-barin.ru$trimmedPath",
       )?.queryParameters['query'];
       final query = queryValue?.trim() ?? "";
       if (query.isNotEmpty) {
@@ -6208,7 +6511,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       }
     }
     final prevNative = _nativeCategory;
-    final nativeKey = _resolveNativeCategory(null, path);
+    final nativeKey = _resolveNativeCategory(null, trimmedPath);
     bool isNative = nativeKey != null;
 
     if (!isNative) {
@@ -12293,12 +12596,204 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  Widget _buildHeroBannerPromoContent(double screenWidth) {
+    final banner = _currentHeroBanner;
+    final title = (banner['title'] ?? '').toString().trim();
+    final buttonText = (banner['button_text'] ?? '').toString().trim();
+    final buttonLink = (banner['link'] ?? '').toString().trim();
+
+    if (title.isEmpty && buttonText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final titleColor = _parseHexColor(
+      banner['text_color']?.toString(),
+      Colors.white,
+    );
+    final buttonColor = _parseHexColor(
+      banner['button_color']?.toString(),
+      const Color(0xE61F2937),
+    );
+    final buttonTextColor = _parseHexColor(
+      banner['button_text_color']?.toString(),
+      Colors.white,
+    );
+    final dynamicTitleFontSize = _parseOptionalDouble(
+      banner['title_font_size'],
+    );
+    final titleFontSize = dynamicTitleFontSize != null
+        ? dynamicTitleFontSize.clamp(12.0, 42.0).toDouble()
+        : (screenWidth * 0.060).clamp(18.0, 24.0).toDouble();
+    final titleFontWeight =
+        _parseOptionalFontWeight(banner['title_font_weight']) ??
+        FontWeight.w900;
+    final titleLineHeight =
+        (_parseOptionalDouble(
+                  banner['title_line_height'] ?? banner['title_height'],
+                ) ??
+                1.08)
+            .clamp(0.8, 2.4)
+            .toDouble();
+    final titleLetterSpacing =
+        _parseOptionalDouble(
+          banner['title_letter_spacing'] ?? banner['title_spacing'],
+        ) ??
+        0.0;
+    final titleShadowOpacity =
+        (_parseOptionalDouble(
+                  banner['title_shadow_opacity'] ??
+                      banner['title_shadow_percent'],
+                ) ??
+                40.0)
+            .clamp(0.0, 100.0)
+            .toDouble();
+    final titleShadows = titleShadowOpacity <= 0
+        ? null
+        : <Shadow>[
+            Shadow(
+              color: Color.fromRGBO(0, 0, 0, titleShadowOpacity / 100),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ];
+    final buttonTopSpacing =
+        (_parseOptionalDouble(
+                  banner['button_top_spacing'] ?? banner['button_spacing_top'],
+                ) ??
+                10.0)
+            .clamp(0.0, 48.0)
+            .toDouble();
+    final dynamicButtonFontSize = _parseOptionalDouble(
+      banner['button_font_size'],
+    );
+    final buttonFontSize = dynamicButtonFontSize != null
+        ? dynamicButtonFontSize.clamp(10.0, 24.0).toDouble()
+        : (screenWidth * 0.034).clamp(12.0, 14.0).toDouble();
+    final buttonFontWeight =
+        _parseOptionalFontWeight(banner['button_font_weight']) ??
+        FontWeight.w700;
+    final rawButtonWidth = _parseOptionalDouble(banner['button_width']);
+    final rawButtonHeight = _parseOptionalDouble(banner['button_height']);
+    final buttonWidth = rawButtonWidth != null && rawButtonWidth > 0
+        ? rawButtonWidth.toDouble()
+        : null;
+    final buttonHeight = rawButtonHeight != null && rawButtonHeight > 0
+        ? rawButtonHeight.toDouble()
+        : null;
+    final hasCustomButtonWidth = buttonWidth != null;
+    final hasCustomButtonHeight = buttonHeight != null;
+    final buttonRadius = BorderRadius.circular(10);
+
+    Widget buildButton() {
+      if (buttonText.isEmpty) return const SizedBox.shrink();
+
+      final buttonChild = Container(
+        width: buttonWidth,
+        height: buttonHeight,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: buttonColor,
+          borderRadius: buttonRadius,
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x22000000),
+              blurRadius: 8,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: hasCustomButtonWidth ? 0 : 14,
+            vertical: hasCustomButtonHeight ? 0 : 9,
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  buttonText,
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    color: buttonTextColor,
+                    fontSize: buttonFontSize,
+                    fontWeight: buttonFontWeight,
+                    height: 1.0,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: buttonTextColor,
+                  size: 16,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      if (buttonLink.isEmpty) return buttonChild;
+
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () =>
+              _navigateToSimple(title.isNotEmpty ? title : "Акция", buttonLink),
+          borderRadius: buttonRadius,
+          child: buttonChild,
+        ),
+      );
+    }
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: screenWidth * 0.62),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                color: titleColor,
+                fontSize: titleFontSize,
+                fontWeight: titleFontWeight,
+                height: titleLineHeight,
+                letterSpacing: titleLetterSpacing,
+                shadows: titleShadows,
+              ),
+            ),
+          if (title.isNotEmpty && buttonText.isNotEmpty)
+            SizedBox(height: buttonTopSpacing),
+          if (buttonText.isNotEmpty) buildButton(),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTopHeroHeader() {
     final screenWidth = MediaQuery.of(context).size.width;
     final topInset = MediaQuery.of(context).padding.top;
-    final heroHeight = screenWidth * (950 / 1400);
+    final banner = _currentHeroBanner;
+    // Keep the visible hero area stable; extra height only fills the status bar.
+    final heroHeight = (screenWidth * _heroBannerContentHeightRatio) + topInset;
     final profileTop = topInset + 8;
     final searchTop = profileTop + 44;
+    final promoLeft =
+        ((_parseOptionalDouble(banner['left'] ?? banner['content_left']) ??
+                    16.0)
+                .clamp(0.0, math.max(0.0, screenWidth - 24.0)))
+            .toDouble();
+    final promoTop =
+        ((_parseOptionalDouble(banner['top'] ?? banner['content_top']) ?? 110.0)
+                .clamp(0.0, math.max(0.0, heroHeight - topInset - 24.0)))
+            .toDouble();
 
     return SizedBox(
       width: double.infinity,
@@ -12308,10 +12803,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.asset(
-              _currentHeroBannerAsset,
+            CachedNetworkImage(
+              imageUrl: _currentHeroBannerImageUrl,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
+              alignment: Alignment.bottomCenter,
+              placeholder: (_, __) => Container(color: const Color(0xFFF2F3F5)),
+              errorWidget: (_, __, ___) =>
                   Container(color: const Color(0xFF2B2B2F)),
             ),
             const DecoratedBox(
@@ -12339,6 +12836,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               left: 12,
               right: 12,
               child: _buildHeaderSearchOverlay(),
+            ),
+            Positioned(
+              top: topInset + promoTop,
+              left: promoLeft,
+              right: 16,
+              child: _buildHeroBannerPromoContent(screenWidth),
             ),
           ],
         ),
