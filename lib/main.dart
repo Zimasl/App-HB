@@ -24,6 +24,7 @@ import 'package:geolocator/geolocator.dart'
         LocationSettings,
         Position;
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:dio/dio.dart';
@@ -286,7 +287,19 @@ const String _prefsSearchHistoryKey = 'hb.search.history';
 const String _prefsHeaderCityKey = 'hb.header.city';
 const String _prefsHeroBannerIndexKey = 'hb.hero.banner.index';
 const String _prefsHeroBannerTsKey = 'hb.hero.banner.ts';
+const String _prefsHomeHeroCacheKey = 'hb.home.hero.cache';
+const String _prefsHomeSliderCacheKey = 'hb.home.slider.cache';
+const String _prefsHomePromoCacheKey = 'hb.home.promo.cache';
 const double _heroBannerContentHeightRatio = 850 / 1400;
+const Duration _nativeSplashMaxHoldDuration = Duration(milliseconds: 2200);
+
+bool _nativeSplashRemoved = false;
+
+void _removeNativeSplashOnce() {
+  if (_nativeSplashRemoved) return;
+  _nativeSplashRemoved = true;
+  FlutterNativeSplash.remove();
+}
 
 String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
@@ -333,6 +346,16 @@ Future<void> _restoreAuthSessionFromPrefs() async {
   _authUserName = prefs.getString(_prefsAuthUserNameKey)?.trim();
   _authPhone = prefs.getString(_prefsAuthPhoneKey)?.trim();
   _authPhotoUrl = prefs.getString(_prefsAuthPhotoUrlKey)?.trim();
+}
+
+List<dynamic>? _decodeCachedJsonList(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return null;
+  try {
+    final decoded = json.decode(raw);
+    return decoded is List ? decoded : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 Future<Map<String, dynamic>?> _restoreCheckoutStateFromPrefs(
@@ -866,7 +889,8 @@ void _configureAndroidImagePicker() {
 }
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
   if (Platform.isAndroid) {
     // Recommended for smoother Flutter/UI interaction with platform views.
     AndroidYandexMap.useAndroidViewSurface = false;
@@ -921,6 +945,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ScrollController _nativeScrollController;
   late final ScrollController _discountScrollController;
+  late final ScrollController _homePromoScrollController;
+  late final ScrollController _homeCategoryScrollController;
+  late final ScrollController _homeDiscountTabsScrollController;
   final List<_GalleryRequest> _pendingGalleryRequests = [];
   final Set<String> _queuedGalleryRequestKeys = {};
   final Set<String> _galleryRequestsInFlight = {};
@@ -998,6 +1025,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   bool _allowStackingDiscount = false;
   bool _hasDiscountConfig = false;
   bool _isMenuLoading = true;
+  bool _isHomeAboveFoldReady = false;
+  bool _isInitialHomeContentReady = false;
+  bool _isSplashFallbackElapsed = false;
+  Timer? _nativeSplashFallbackTimer;
   bool _isNativeCategoryPage = false;
   final List<({String key, String title, String? customCategoryId})>
   _nativeCategoryBackStack = [];
@@ -1021,6 +1052,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Animation<double>? _catalogBackSwipeAnimation;
   String _pageTitle = "";
   bool _nativePrefetchStarted = false;
+  int _homeHorizontalResetVersion = 0;
+  bool _homeHorizontalResetScheduled = false;
 
   // Начальные данные для мгновенного отображения категорий
   List<dynamic> _apiCategories = [
@@ -1092,6 +1125,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   int _heroBannerIndex = 0;
   Timer? _heroBannerRotateTimer;
   List<dynamic> _promoBanners = [];
+  final Map<String, Map<String, dynamic>> _nativeJsonDocumentCache = {};
+  final Map<String, Future<Map<String, dynamic>?>> _nativeJsonDocumentInFlight =
+      {};
+  final Set<String> _nativeJsonCriticalImagesReady = <String>{};
+  final Map<String, Future<void>> _nativeJsonCriticalWarmInFlight = {};
   List<dynamic> _discountedProducts = [];
   final Map<String, List<dynamic>> _nativeLists = {
     "men": [],
@@ -1310,10 +1348,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_fetchHeroBanners());
-    unawaited(_initHeroBannerOnLaunch());
+    _startNativeSplashFallbackTimer();
+    unawaited(_bootstrapHomeAboveFold());
     _startHeroBannerRotationTimer();
-    unawaited(_restoreAuthSessionAndRefreshUi());
     unawaited(_restoreHeaderCityFromPrefs());
     unawaited(_restoreCartFromPrefs());
     unawaited(_restoreViewedProductsFromPrefs());
@@ -1346,12 +1383,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _isMenuLoading = false; // Категории уже есть частично
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _loadAllData();
+      unawaited(
+        _loadAllData().whenComplete(() {
+          if (!mounted) return;
+          setState(() {
+            _isInitialHomeContentReady = true;
+          });
+          _maybeRemoveNativeSplash();
+          unawaited(_fetchNewCategoryProductIds());
+          unawaited(_fetchMenBags());
+        }),
+      );
       unawaited(_bootstrapHeaderGeoCity());
       _scheduleNativePrefetch();
-      CategoryCounterService.loadCounts().then((_) {
-        if (mounted) setState(() {});
-      });
       Timer(const Duration(seconds: 2), () {
         if (!mounted) return;
         _fetchFilterMetadata();
@@ -1359,6 +1403,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
     _initDeepLinks();
     _discountScrollController = ScrollController();
+    _homePromoScrollController = ScrollController();
+    _homeCategoryScrollController = ScrollController();
+    _homeDiscountTabsScrollController = ScrollController();
     _compareTableScrollController = ScrollController();
     _compareStickyScrollController = ScrollController();
     _compareTableScrollController.addListener(() {
@@ -1450,13 +1497,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     _cartCountNotifier.addListener(_scheduleCartFloatingButtonUpdate);
     _cartSelectionNotifier.addListener(_scheduleCartFloatingButtonUpdate);
-  }
-
-  Future<void> _restoreAuthSessionAndRefreshUi() async {
-    await _restoreAuthSessionFromPrefs();
-    _reloadProfileData();
-    if (!mounted) return;
-    setState(() {});
   }
 
   void _reloadProfileData() {
@@ -1755,12 +1795,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _heroBannerRotateTimer?.cancel();
+    _nativeSplashFallbackTimer?.cancel();
     _catalogBackSwipeController.dispose();
     _catalogBackSwipeOffsetNotifier.dispose();
     _nativeScrollController.dispose();
     _subcategoryMainScrollController.dispose();
     _subcategoryPreviewScrollController.dispose();
     _discountScrollController.dispose();
+    _homePromoScrollController.dispose();
+    _homeCategoryScrollController.dispose();
+    _homeDiscountTabsScrollController.dispose();
     _compareTableScrollController.dispose();
     _compareStickyScrollController.dispose();
     _scrollIdleTimer?.cancel();
@@ -1965,8 +2009,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (title.isNotEmpty) 'title': title,
       if (titleFontSize != null && titleFontSize > 0)
         'title_font_size': titleFontSize,
-      if (titleFontWeight != null)
-        'title_font_weight': titleFontWeight.value,
+      if (titleFontWeight != null) 'title_font_weight': titleFontWeight.value,
       if (titleLineHeight != null && titleLineHeight > 0)
         'title_line_height': titleLineHeight,
       if (titleLetterSpacing != null)
@@ -2088,15 +2131,146 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (mounted) setState(() {});
   }
 
-  void _loadAllData() {
-    _fetchCategories();
-    _fetchNewCategoryProductIds();
-    _fetchBanners();
-    _fetchPromoBanners();
-    _fetchDiscountConfig();
-    _fetchAboutData();
-    _fetchDiscountedProducts();
-    _fetchMenBags();
+  void _startNativeSplashFallbackTimer() {
+    _nativeSplashFallbackTimer?.cancel();
+    _nativeSplashFallbackTimer = Timer(_nativeSplashMaxHoldDuration, () {
+      if (!mounted) return;
+      _isSplashFallbackElapsed = true;
+      _maybeRemoveNativeSplash();
+    });
+  }
+
+  void _maybeRemoveNativeSplash() {
+    if (_isSplashFallbackElapsed) {
+      _nativeSplashFallbackTimer?.cancel();
+      _removeNativeSplashOnce();
+      return;
+    }
+    if (!_isHomeAboveFoldReady || !_isInitialHomeContentReady) return;
+    _nativeSplashFallbackTimer?.cancel();
+    _removeNativeSplashOnce();
+  }
+
+  Future<void> _bootstrapHomeAboveFold() async {
+    try {
+      await _restoreHomeVisualCache();
+      await _restoreAuthSessionFromPrefs();
+      _reloadProfileData();
+      await _initHeroBannerOnLaunch();
+    } catch (e) {
+      debugPrint('Home above-fold bootstrap error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isHomeAboveFoldReady = true;
+        });
+        _maybeRemoveNativeSplash();
+      }
+    }
+  }
+
+  Future<void> _loadAllData() async {
+    await Future.wait<void>([
+      _fetchHeroBanners(),
+      _fetchCategories(),
+      _fetchBanners(),
+      _fetchPromoBanners(),
+      _fetchDiscountConfig(),
+      _fetchAboutData(),
+      _fetchDiscountedProducts(),
+      CategoryCounterService.loadCounts(),
+    ]);
+  }
+
+  Future<void> _persistHomeVisualList(String key, List<dynamic> items) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, json.encode(items));
+    } catch (e) {
+      debugPrint('Home visual cache save error for $key: $e');
+    }
+  }
+
+  Future<void> _restoreHomeVisualCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedHero = _decodeCachedJsonList(
+        prefs.getString(_prefsHomeHeroCacheKey),
+      );
+      final cachedSlider = _decodeCachedJsonList(
+        prefs.getString(_prefsHomeSliderCacheKey),
+      );
+      final cachedPromo = _decodeCachedJsonList(
+        prefs.getString(_prefsHomePromoCacheKey),
+      );
+      final normalizedHero = (cachedHero ?? const [])
+          .map(_normalizeHeroBannerConfig)
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+
+      if (!mounted) {
+        if (normalizedHero.isNotEmpty) {
+          _heroBanners = normalizedHero;
+        }
+        if (cachedSlider != null && cachedSlider.isNotEmpty) {
+          _apiBanners = cachedSlider;
+        }
+        if (cachedPromo != null && cachedPromo.isNotEmpty) {
+          _promoBanners = cachedPromo;
+        }
+        return;
+      }
+
+      bool shouldPrecache = false;
+      setState(() {
+        if (normalizedHero.isNotEmpty) {
+          _heroBanners = normalizedHero;
+          _heroBannerIndex = _heroBannerIndex % _heroBanners.length;
+          shouldPrecache = true;
+        }
+        if (cachedSlider != null &&
+            cachedSlider.isNotEmpty &&
+            _apiBanners.isEmpty) {
+          _apiBanners = cachedSlider;
+          shouldPrecache = true;
+        }
+        if (cachedPromo != null &&
+            cachedPromo.isNotEmpty &&
+            _promoBanners.isEmpty) {
+          _promoBanners = cachedPromo;
+          shouldPrecache = true;
+        }
+      });
+
+      if (!shouldPrecache) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        const maxHeroPrecache = 2;
+        for (var i = 0; i < _heroBanners.length && i < maxHeroPrecache; i++) {
+          final url = _heroBanners[i]['image']?.toString() ?? '';
+          if (url.isEmpty) continue;
+          precacheImage(CachedNetworkImageProvider(url), context);
+        }
+
+        const maxSliderPrecache = 2;
+        for (var i = 0; i < _apiBanners.length && i < maxSliderPrecache; i++) {
+          final url = _apiBanners[i]['image']?.toString() ?? '';
+          if (url.isEmpty) continue;
+          precacheImage(CachedNetworkImageProvider(url), context);
+        }
+
+        const maxPromoPrecache = 2;
+        for (var i = 0; i < _promoBanners.length && i < maxPromoPrecache; i++) {
+          final item = _promoBanners[i];
+          if (item is! Map) continue;
+          final url = item['image']?.toString() ?? '';
+          if (url.isEmpty) continue;
+          precacheImage(CachedNetworkImageProvider(url), context);
+        }
+      });
+    } catch (e) {
+      debugPrint('Home visual cache restore error: $e');
+    }
   }
 
   void _scheduleNativePrefetch() {
@@ -5074,16 +5248,45 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _resetDiscountScroll() {
+    _resetHorizontalScrollController(_discountScrollController);
+  }
+
+  void _resetHorizontalScrollController(ScrollController controller) {
     void jumpToStart() {
-      if (!mounted || !_discountScrollController.hasClients) return;
-      _discountScrollController.jumpTo(0);
+      if (!mounted || !controller.hasClients) return;
+      final target = controller.position.minScrollExtent;
+      if ((controller.position.pixels - target).abs() < 0.5) return;
+      controller.jumpTo(target);
     }
 
-    if (_discountScrollController.hasClients) {
-      jumpToStart();
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) => jumpToStart());
-    }
+    jumpToStart();
+    WidgetsBinding.instance.addPostFrameCallback((_) => jumpToStart());
+    Future<void>.delayed(const Duration(milliseconds: 60), jumpToStart);
+  }
+
+  void _resetHomeHorizontalScrolls() {
+    _resetHorizontalScrollController(_homePromoScrollController);
+    _resetHorizontalScrollController(_homeCategoryScrollController);
+    _resetHorizontalScrollController(_homeDiscountTabsScrollController);
+    _resetHorizontalScrollController(_discountScrollController);
+  }
+
+  void _triggerHomeHorizontalReset() {
+    if (!mounted) return;
+    setState(() {
+      _homeHorizontalResetVersion++;
+    });
+    _resetHomeHorizontalScrolls();
+  }
+
+  void _scheduleHomeHorizontalReset() {
+    if (!mounted || _homeHorizontalResetScheduled) return;
+    _homeHorizontalResetScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _homeHorizontalResetScheduled = false;
+      if (!mounted || _isNativeCategoryPage) return;
+      _triggerHomeHorizontalReset();
+    });
   }
 
   void _scheduleVisibleGalleryLoad(String categoryKey, {int attempts = 4}) {
@@ -6170,6 +6373,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _heroBanners = banners;
         _heroBannerIndex = nextIndex;
       });
+      unawaited(
+        _persistHomeVisualList(
+          _prefsHomeHeroCacheKey,
+          List<dynamic>.from(banners),
+        ),
+      );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -6185,6 +6394,105 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  Future<Map<String, dynamic>?> _getNativeJsonDocumentCached(String url) async {
+    final cached = _nativeJsonDocumentCache[url];
+    if (cached != null) return cached;
+
+    final inFlight = _nativeJsonDocumentInFlight[url];
+    if (inFlight != null) return inFlight;
+
+    late final Future<Map<String, dynamic>?> future;
+    future = () async {
+      try {
+        final response = await _httpGet(Uri.parse(url));
+        if (response.statusCode != 200) return null;
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
+        dynamic source = decoded;
+        if (decoded is List && decoded.isNotEmpty) {
+          source = decoded.first;
+        }
+        final document = _nativeJsonMap(source);
+        if (document != null) {
+          _nativeJsonDocumentCache[url] = document;
+        }
+        return document;
+      } catch (e) {
+        debugPrint('Native JSON cache load error for $url: $e');
+        return null;
+      } finally {
+        _nativeJsonDocumentInFlight.remove(url);
+      }
+    }();
+
+    _nativeJsonDocumentInFlight[url] = future;
+    return future;
+  }
+
+  Future<void> _warmNativeJsonImage(String url) async {
+    if (!mounted || url.isEmpty) return;
+    try {
+      await precacheImage(
+        CachedNetworkImageProvider(url),
+        context,
+        onError: (_, __) {},
+      ).timeout(const Duration(seconds: 3), onTimeout: () {});
+    } catch (_) {
+      // Ignore individual image warm failures.
+    }
+  }
+
+  Future<void> _ensureNativeJsonCriticalImagesReady(
+    String url,
+    Map<String, dynamic> document,
+  ) {
+    if (_nativeJsonCriticalImagesReady.contains(url)) {
+      return Future<void>.value();
+    }
+
+    final inFlight = _nativeJsonCriticalWarmInFlight[url];
+    if (inFlight != null) return inFlight;
+
+    final criticalUrls = _extractCriticalNativeJsonImageUrls(
+      document,
+      baseUrl: url,
+      limit: 4,
+    );
+
+    late final Future<void> future;
+    future = () async {
+      try {
+        if (criticalUrls.isNotEmpty) {
+          await Future.wait(
+            criticalUrls.map(_warmNativeJsonImage),
+            eagerError: false,
+          );
+        }
+        _nativeJsonCriticalImagesReady.add(url);
+      } finally {
+        _nativeJsonCriticalWarmInFlight.remove(url);
+      }
+    }();
+
+    _nativeJsonCriticalWarmInFlight[url] = future;
+    return future;
+  }
+
+  Future<Map<String, dynamic>?> _prepareNativeJsonDocument(
+    String url, {
+    bool waitForCriticalImages = false,
+  }) async {
+    final document = await _getNativeJsonDocumentCached(url);
+    if (document == null) return null;
+
+    if (waitForCriticalImages) {
+      await _ensureNativeJsonCriticalImagesReady(url, document);
+    } else {
+      unawaited(_ensureNativeJsonCriticalImagesReady(url, document));
+    }
+
+    return document;
+  }
+
   Future<void> _fetchPromoBanners() async {
     try {
       final response = await _httpGet(
@@ -6195,18 +6503,29 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         setState(() {
           _promoBanners = data;
         });
+        unawaited(_persistHomeVisualList(_prefsHomePromoCacheKey, data));
         if (mounted) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             const int maxPrecache = 2;
             int precached = 0;
+            int preparedJsonDocs = 0;
             for (final item in data) {
               if (item is! Map) continue;
               final url = item['image']?.toString() ?? "";
-              if (url.isEmpty) continue;
-              precacheImage(CachedNetworkImageProvider(url), context);
-              precached++;
-              if (precached >= maxPrecache) break;
+              if (url.isNotEmpty && precached < maxPrecache) {
+                precacheImage(CachedNetworkImageProvider(url), context);
+                precached++;
+              }
+              final jsonPath = item['json']?.toString().trim() ?? "";
+              if (jsonPath.isNotEmpty && preparedJsonDocs < 3) {
+                final jsonUrl = _resolvePromoBannerJsonUrl(jsonPath);
+                if (jsonUrl.isNotEmpty) {
+                  unawaited(_prepareNativeJsonDocument(jsonUrl).then((_) {}));
+                  preparedJsonDocs++;
+                }
+              }
+              if (precached >= maxPrecache && preparedJsonDocs >= 3) break;
             }
           });
         }
@@ -6214,6 +6533,70 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     } catch (e) {
       debugPrint("Promo banners error: $e");
     }
+  }
+
+  String _resolvePromoBannerJsonUrl(String rawPath) {
+    final trimmed = rawPath.trim();
+    if (trimmed.isEmpty) return "";
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('/')) {
+      return 'https://hozyain-barin.ru$trimmed';
+    }
+    return 'https://hozyain-barin.ru/native/$trimmed';
+  }
+
+  Future<void> _openPromoBannerItem(dynamic item) async {
+    if (item is! Map) return;
+
+    final openedFromHome = !_isNativeCategoryPage;
+    final title = item['title']?.toString().trim() ?? "";
+    final jsonPath = item['json']?.toString().trim() ?? "";
+    if (jsonPath.isNotEmpty) {
+      final url = _resolvePromoBannerJsonUrl(jsonPath);
+      if (url.isEmpty) return;
+      final document = await _prepareNativeJsonDocument(
+        url,
+        waitForCriticalImages: true,
+      );
+      if (!mounted) return;
+      final routeFuture = Navigator.push(
+        context,
+        _adaptivePageRoute(
+          builder: (_) => _NativeJsonDocumentPage(
+            title: title.isNotEmpty ? title : 'Акция',
+            url: url,
+            bottomBar: _buildBottomBar(),
+            initialDocument: document,
+            initialCriticalImagesReady: _nativeJsonCriticalImagesReady.contains(
+              url,
+            ),
+            onOpenLink: (nextTitle, link) {
+              _navigateToSimple(nextTitle, link);
+            },
+          ),
+        ),
+      );
+      if (openedFromHome) {
+        routeFuture.then((_) {
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final navigator = Navigator.of(context);
+            if (!_isNativeCategoryPage && !navigator.canPop()) {
+              _scheduleHomeHorizontalReset();
+            }
+          });
+        });
+      }
+      return;
+    }
+
+    final link = item['link']?.toString().trim() ?? "";
+    if (link.isEmpty) return;
+    _navigateToSimple(title.isNotEmpty ? title : "Акция", link);
   }
 
   Future<void> _fetchDiscountConfig() async {
@@ -6572,6 +6955,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     VoidCallback? onBack,
   }) {
     if (product is! Map) return;
+    final openedFromHome = !_isNativeCategoryPage;
     _registerViewedProduct(product);
     final String productId = product['id']?.toString() ?? "";
     if (productId.isNotEmpty) {
@@ -6635,12 +7019,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   },
             ),
     );
-    if (onBack != null) {
+    if (onBack != null || openedFromHome) {
       routeFuture.then((_) {
         if (!mounted) return;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          onBack();
+          final navigator = Navigator.of(context);
+          if (openedFromHome && !_isNativeCategoryPage && !navigator.canPop()) {
+            _scheduleHomeHorizontalReset();
+          }
+          onBack?.call();
         });
       });
     }
@@ -7289,6 +7677,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _searchOriginBackStack.clear();
     });
     _resetCatalogBackSwipeTracking();
+    _scheduleHomeHorizontalReset();
     _updateCartFloatingButtonVisibility();
   }
 
@@ -7664,13 +8053,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       physics: const NeverScrollableScrollPhysics(),
       slivers: [
         SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildHomeShowcaseBlock()),
+          child: RepaintBoundary(
+            child: _buildHomeShowcaseBlock(forPreview: true),
+          ),
         ),
         SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildPromoBannerScroll()),
+          child: RepaintBoundary(
+            child: _buildPromoBannerScroll(forPreview: true),
+          ),
         ),
         SliverToBoxAdapter(
-          child: RepaintBoundary(child: _buildDiscountedProductsSection()),
+          child: RepaintBoundary(
+            child: _buildDiscountedProductsSection(forPreview: true),
+          ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 20)),
         SliverToBoxAdapter(child: _buildAboutSection()),
@@ -8442,6 +8837,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         setState(() {
           _apiBanners = data;
         });
+        unawaited(_persistHomeVisualList(_prefsHomeSliderCacheKey, data));
         if (mounted) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -8773,13 +9169,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _discountedProductCard(dynamic product) {
+  Widget _discountedProductCard(
+    dynamic product, {
+    double? horizontalCardWidth,
+  }) {
     final id = product['id']?.toString() ?? "";
     return NativeProductCard(
       key: ValueKey("home_disc_${product['id']}"),
       product: product,
       isNew: product is Map ? _isNewProduct(product) : false,
       isHorizontal: true,
+      horizontalCardWidth: horizontalCardWidth,
       galleryListenable: id.isNotEmpty ? _getGalleryNotifier(id) : null,
       favoriteListenable: id.isNotEmpty ? _getFavoriteNotifier(id) : null,
       isFavoriteResolver: _isFavorite,
@@ -12140,12 +12540,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  Widget _buildDiscountedProductsSection() {
+  Widget _buildDiscountedProductsSection({bool forPreview = false}) {
     final filteredProducts = _discountedProducts
         .where((p) => p['type'] == _selectedDiscountType)
         .toList();
     final screenWidth = MediaQuery.of(context).size.width;
-    final discountCardWidth = (screenWidth - 44) / 2;
+    const sectionHorizontalPadding = 10.0;
+    const discountCardGap = 10.0;
+    final discountCardWidth =
+        ((screenWidth - sectionHorizontalPadding - (discountCardGap * 2)) / 2)
+            .toDouble();
     final discountImageHeight = discountCardWidth * 4 / 3;
     final discountCardsHeight = discountImageHeight + 152;
 
@@ -12156,7 +12560,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.fromLTRB(15, 4, 15, 6),
+            padding: EdgeInsets.fromLTRB(10, 4, 10, 6),
             child: Text(
               "Товар со скидкой",
               style: TextStyle(
@@ -12171,6 +12575,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: SingleChildScrollView(
+              controller: forPreview ? null : _homeDiscountTabsScrollController,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 10),
               physics: const BouncingScrollPhysics(),
@@ -12187,18 +12592,30 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           SizedBox(
             height: discountCardsHeight,
             child: ListView.builder(
-              controller: _discountScrollController,
+              controller: forPreview ? null : _discountScrollController,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.symmetric(
+                horizontal: sectionHorizontalPadding,
+              ),
               itemCount: filteredProducts.length,
               itemBuilder: (context, index) {
-                return _discountedProductCard(filteredProducts[index]);
+                return Padding(
+                  padding: EdgeInsets.only(
+                    right: index == filteredProducts.length - 1
+                        ? 0
+                        : discountCardGap,
+                  ),
+                  child: _discountedProductCard(
+                    filteredProducts[index],
+                    horizontalCardWidth: discountCardWidth,
+                  ),
+                );
               },
             ),
           ),
           const SizedBox(height: 30), // Увеличил отступ кнопки от карточек
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 15),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Center(
               child: GestureDetector(
                 onTap: () {
@@ -12278,51 +12695,82 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildPromoBannerScroll() {
-    if (_promoBanners.isEmpty) return const SizedBox.shrink();
+  Widget _buildPromoBannerScroll({bool forPreview = false}) {
     double screenWidth = MediaQuery.of(context).size.width;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
     double itemWidth = screenWidth * 0.60;
     const promoAspectRatio = 632 / 710;
+    final promoHeight = itemWidth * promoAspectRatio;
+    final promoCacheWidth = (itemWidth * dpr).round().clamp(1, 1400);
+    final promoCacheHeight = (promoHeight * dpr).round().clamp(1, 1400);
 
     return Container(
-      height: itemWidth * promoAspectRatio,
-      margin: const EdgeInsets.only(top: 12, bottom: 14),
+      height: promoHeight,
+      margin: const EdgeInsets.only(top: 20, bottom: 14),
       color: Colors.transparent,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        itemCount: _promoBanners.length,
-        itemBuilder: (context, index) {
-          final item = _promoBanners[index];
-          return RepaintBoundary(
-            child: GestureDetector(
-              onTap: () {
-                if (item['link'] != null) {
-                  _navigateToSimple(item['title'] ?? "Акция", item['link']);
-                }
-              },
-              child: Container(
-                width: itemWidth,
-                margin: const EdgeInsets.symmetric(horizontal: 7),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: Colors.white,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: CachedNetworkImage(
-                  imageUrl: item['image'] ?? "",
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => const Center(
-                    child: CircularProgressIndicator(color: Colors.black12),
+      child: _promoBanners.isEmpty
+          ? ListView.builder(
+              controller: forPreview ? null : _homePromoScrollController,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              itemCount: 2,
+              itemBuilder: (context, index) {
+                return Container(
+                  width: itemWidth,
+                  margin: EdgeInsets.only(right: index == 1 ? 0 : 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: const Color(0xFFF3F4F6),
+                    border: Border.all(color: const Color(0xFFECEFF3)),
                   ),
-                  errorWidget: (context, url, error) =>
-                      const Icon(Icons.broken_image),
-                ),
-              ),
+                );
+              },
+            )
+          : ListView.builder(
+              controller: forPreview ? null : _homePromoScrollController,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              itemCount: _promoBanners.length,
+              itemBuilder: (context, index) {
+                final item = _promoBanners[index];
+                return RepaintBoundary(
+                  child: GestureDetector(
+                    onTap: () => _openPromoBannerItem(item),
+                    child: Container(
+                      width: itemWidth,
+                      margin: EdgeInsets.only(
+                        right: index == _promoBanners.length - 1 ? 0 : 8,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        color: Colors.white,
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: CachedNetworkImage(
+                        imageUrl: item['image'] ?? "",
+                        fit: BoxFit.cover,
+                        memCacheWidth: promoCacheWidth,
+                        memCacheHeight: promoCacheHeight,
+                        maxWidthDiskCache: promoCacheWidth,
+                        maxHeightDiskCache: promoCacheHeight,
+                        filterQuality: FilterQuality.low,
+                        fadeInDuration: const Duration(milliseconds: 120),
+                        fadeOutDuration: const Duration(milliseconds: 90),
+                        useOldImageOnUrlChange: true,
+                        placeholder: (_, __) => const SizedBox.expand(),
+                        errorWidget: (context, url, error) => Container(
+                          color: const Color(0xFFF3F4F6),
+                          child: const Icon(
+                            Icons.broken_image,
+                            color: Colors.black26,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
     );
   }
 
@@ -12470,6 +12918,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildHeroProfileInfoRow() {
     final future = _profileCheckoutStateFuture ??=
         _restoreCheckoutStateFromPrefs(_authContactId);
+    const bonusChipWidth = 100.0;
     return FutureBuilder<Map<String, dynamic>?>(
       future: future,
       builder: (context, snapshot) {
@@ -12531,33 +12980,39 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   final bonusText = bonus == null
                       ? 'Бонусы: 0'
                       : 'Бонусы: ${_formatBonusBalance(bonus)}';
-                  return InkWell(
-                    onTap: _handleProfileNavTap,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xCCFFFFFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x14000000),
-                            blurRadius: 12,
-                            offset: Offset(0, 3),
+                  return SizedBox(
+                    width: bonusChipWidth,
+                    child: InkWell(
+                      onTap: _handleProfileNavTap,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xCCFFFFFF),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x14000000),
+                              blurRadius: 12,
+                              offset: Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          bonusText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF6B7280),
                           ),
-                        ],
-                      ),
-                      child: Text(
-                        bonusText,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF6B7280),
                         ),
                       ),
                     ),
@@ -12593,6 +13048,149 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ],
         );
       },
+    );
+  }
+
+  Widget _buildTopHeroHeaderLoading() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final topInset = MediaQuery.of(context).padding.top;
+    final heroHeight = (screenWidth * _heroBannerContentHeightRatio) + topInset;
+    final profileTop = topInset + 8;
+    final searchTop = profileTop + 44;
+
+    Widget line(double width, double height) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      );
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      height: heroHeight,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(color: const Color(0xFFE4E7EB)),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x26000000),
+                    Color(0x12000000),
+                    Color(0x00000000),
+                  ],
+                  stops: [0.0, 0.24, 0.58],
+                ),
+              ),
+            ),
+            Positioned(
+              top: profileTop,
+              left: 12,
+              right: 12,
+              child: Row(
+                children: [
+                  Expanded(child: line(118, 14)),
+                  const SizedBox(width: 6),
+                  Container(
+                    width: 100,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.86),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.86),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: searchTop,
+              left: 12,
+              right: 12,
+              child: Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.88),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+              ),
+            ),
+            Positioned(
+              top: topInset + 110,
+              left: 16,
+              right: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  line(screenWidth * 0.42, 16),
+                  const SizedBox(height: 10),
+                  line(screenWidth * 0.30, 16),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: 124,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderLoyaltyCardSkeleton() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 10),
+      height: 70,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE7EAF0)),
+      ),
+    );
+  }
+
+  Widget _buildHomeShowcaseLoadingBlock({bool forPreview = false}) {
+    return Container(
+      margin: EdgeInsets.zero,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(22)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _buildTopHeroHeaderLoading(),
+          const SizedBox(height: 14),
+          _buildHeaderLoyaltyCardSkeleton(),
+          const SizedBox(height: 14),
+          _buildMainBannerSlider(forPreview: forPreview),
+          _buildCategoryScroll(forPreview: forPreview),
+        ],
+      ),
     );
   }
 
@@ -12849,7 +13447,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildHomeShowcaseBlock() {
+  Widget _buildHomeShowcaseBlock({bool forPreview = false}) {
+    if (!_isHomeAboveFoldReady) {
+      return _buildHomeShowcaseLoadingBlock(forPreview: forPreview);
+    }
     return Container(
       margin: EdgeInsets.zero,
       decoration: const BoxDecoration(
@@ -12860,14 +13461,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Column(
         children: [
           _buildTopHeroHeader(),
-          _buildMainContentHead(),
-          _buildCategoryScroll(),
+          _buildMainContentHead(forPreview: forPreview),
+          _buildCategoryScroll(forPreview: forPreview),
         ],
       ),
     );
   }
 
-  Widget _buildMainContentHead() {
+  Widget _buildMainContentHead({bool forPreview = false}) {
     return Column(
       children: [
         if (!_isAuthorized) ...[
@@ -12876,12 +13477,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           const SizedBox(height: 14),
         ] else
           const SizedBox(height: 14),
-        _buildMainBannerSlider(),
+        _buildMainBannerSlider(forPreview: forPreview),
       ],
     );
   }
 
-  Widget _buildMainBannerSlider() {
+  Widget _buildMainBannerSlider({bool forPreview = false}) {
     final screenWidth = MediaQuery.of(context).size.width;
     final bannerWidth = screenWidth - 20;
     final bannerHeight = bannerWidth * (487 / 1000);
@@ -12907,6 +13508,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           child: _buildMainBannerCarouselContent(
             width: bannerWidth,
             height: bannerHeight,
+            forPreview: forPreview,
           ),
         ),
       ),
@@ -12916,23 +13518,54 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildMainBannerCarouselContent({
     required double width,
     required double height,
+    bool forPreview = false,
   }) {
     final titleTop = (height * 0.26).clamp(40.0, 72.0);
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final bannerCacheWidth = (width * dpr).round().clamp(1, 2200);
+    final bannerCacheHeight = (height * dpr).round().clamp(1, 1400);
     if (_apiBanners.isEmpty) {
       return Container(
-        color: Colors.grey.shade100,
-        child: const Center(
-          child: CircularProgressIndicator(
-            color: Colors.black26,
-            strokeWidth: 2,
+        color: const Color(0xFFF3F4F6),
+        child: Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: width * 0.36,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  width: width * 0.24,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
     }
     return CarouselSlider(
+      key: forPreview
+          ? null
+          : ValueKey('home_main_banner_$_homeHorizontalResetVersion'),
       options: CarouselOptions(
         height: height,
         viewportFraction: 1.0,
+        initialPage: 0,
         autoPlay: true,
         autoPlayInterval: const Duration(seconds: 5),
       ),
@@ -12951,17 +13584,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 CachedNetworkImage(
                   imageUrl: item['image'] ?? "",
                   fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    color: Colors.grey.shade100,
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        color: Colors.black26,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                  ),
+                  memCacheWidth: bannerCacheWidth,
+                  memCacheHeight: bannerCacheHeight,
+                  maxWidthDiskCache: bannerCacheWidth,
+                  maxHeightDiskCache: bannerCacheHeight,
+                  filterQuality: FilterQuality.low,
+                  fadeInDuration: const Duration(milliseconds: 120),
+                  fadeOutDuration: const Duration(milliseconds: 90),
+                  useOldImageOnUrlChange: true,
+                  placeholder: (_, __) => const SizedBox.expand(),
                   errorWidget: (context, url, error) => Container(
-                    color: Colors.grey.shade100,
+                    color: const Color(0xFFF3F4F6),
                     child: const Icon(
                       Icons.error_outline,
                       color: Colors.black38,
@@ -13055,7 +13688,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildHeaderLoyaltyCard() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 10),
       padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFD),
@@ -13072,69 +13705,85 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: const Color(0xFFECEFF3),
-              borderRadius: BorderRadius.circular(20),
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(
+              color: Colors.black,
+              shape: BoxShape.circle,
             ),
+            clipBehavior: Clip.antiAlias,
             child: Image.asset('assets/images/icon.png', fit: BoxFit.cover),
           ),
           const SizedBox(width: 12),
           const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Вступай в Клуб Хозяин Барин',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Roboto',
-                    color: Color(0xFF111827),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    height: 1.15,
-                  ),
+            child: SizedBox(
+              height: 44,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Вступай в Клуб\nХозяин\u00A0Барин',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Roboto',
+                        color: Color(0xFF111827),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.1,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Получай 7% бонусами',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Roboto',
+                        color: Color(0xFF6B7280),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
                 ),
-                SizedBox(height: 3),
-                Text(
-                  'Получай 7% бонусами',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Roboto',
-                    color: Color(0xFF6B7280),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    height: 1.2,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
           const SizedBox(width: 10),
-          SizedBox(
-            height: 40,
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 32),
             child: ElevatedButton(
               onPressed: _openProfileAuthPage,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFE5E7EB),
+                backgroundColor: const Color(0xFFF7F8FA),
                 foregroundColor: const Color(0xFF4B5563),
                 elevation: 0,
+                shadowColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                side: const BorderSide(color: Color(0xFFE2E5EA)),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 22),
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: const VisualDensity(
+                  horizontal: -1,
+                  vertical: -1,
+                ),
               ),
               child: const Text(
                 'Вступить',
                 style: TextStyle(
                   fontFamily: 'Roboto',
-                  fontSize: 15,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
+                  height: 1,
                 ),
               ),
             ),
@@ -13144,7 +13793,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildCategoryScroll() {
+  Widget _buildCategoryScroll({bool forPreview = false}) {
     const orderedIds = ["16", "19", "4", "143", "14", "84", "8", "101"];
     const visibleCardSlots = 4.5;
     const visibleGapCount = 4.0;
@@ -13165,7 +13814,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final cardWidth =
         (screenWidth - (screenSidePadding * 2) - (gap * visibleGapCount)) /
         visibleCardSlots;
-    final cardSectionHeight = cardWidth + 36;
+    final cardSectionHeight = cardWidth + 46;
 
     return Container(
       height: cardSectionHeight,
@@ -13173,6 +13822,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       color: Colors.transparent,
       child: _isMenuLoading && filtered.isEmpty
           ? ListView.builder(
+              controller: forPreview ? null : _homeCategoryScrollController,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(
                 horizontal: screenSidePadding,
@@ -13190,6 +13840,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
             )
           : ListView.builder(
+              controller: forPreview ? null : _homeCategoryScrollController,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(
                 horizontal: screenSidePadding,
@@ -13239,17 +13890,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
               child: Text(
                 cat['name'].toString(),
                 style: const TextStyle(
                   fontFamily: 'Roboto',
-                  fontSize: 10,
+                  fontSize: 11,
                   fontWeight: FontWeight.w400,
                   color: Colors.black87,
                   letterSpacing: 0.1,
+                  height: 1.2,
                 ),
                 textAlign: TextAlign.center,
                 maxLines: 2,
@@ -19328,11 +19980,265 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 }
 
+Map<String, dynamic>? _nativeJsonMap(dynamic raw) {
+  if (raw is Map<String, dynamic>) return raw;
+  if (raw is! Map) return null;
+  final mapped = <String, dynamic>{};
+  raw.forEach((key, value) {
+    mapped[key.toString()] = value;
+  });
+  return mapped;
+}
+
+List<Map<String, dynamic>> _nativeJsonMapList(dynamic raw) {
+  if (raw is! List) return const [];
+  final items = <Map<String, dynamic>>[];
+  for (final item in raw) {
+    final map = _nativeJsonMap(item);
+    if (map != null) items.add(map);
+  }
+  return items;
+}
+
+List<String> _nativeJsonStringList(dynamic raw) {
+  if (raw is! List) return const [];
+  final items = <String>[];
+  for (final item in raw) {
+    final value = item?.toString().trim() ?? '';
+    if (value.isNotEmpty) items.add(value);
+  }
+  return items;
+}
+
+String _nativeJsonString(dynamic raw, [String fallback = '']) {
+  final value = raw?.toString().trim() ?? '';
+  return value.isNotEmpty ? value : fallback;
+}
+
+String _resolveNativeJsonUrl(String baseUrl, String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+
+  final base = Uri.tryParse(baseUrl);
+  if (trimmed.startsWith('//')) {
+    return '${base?.scheme ?? 'https'}:$trimmed';
+  }
+
+  final parsed = Uri.tryParse(trimmed);
+  if (parsed != null && parsed.hasScheme) return trimmed;
+  if (base != null) return base.resolve(trimmed).toString();
+  return trimmed;
+}
+
+bool _looksLikeNativeJsonImageUrl(String raw) {
+  final value = raw.trim().toLowerCase();
+  if (value.isEmpty) return false;
+  return RegExp(
+    r'\.(png|jpe?g|webp|gif|bmp|svg|avif)(?:$|[?#])',
+  ).hasMatch(value);
+}
+
+List<String> _collectNativeJsonImageUrls(
+  dynamic raw, {
+  required String baseUrl,
+}) {
+  final urls = <String>{};
+
+  void visit(dynamic node) {
+    if (node == null) return;
+    if (node is String) {
+      final resolved = _resolveNativeJsonUrl(baseUrl, node);
+      if (_looksLikeNativeJsonImageUrl(resolved)) {
+        urls.add(resolved);
+      }
+      return;
+    }
+    if (node is List) {
+      for (final item in node) {
+        visit(item);
+      }
+      return;
+    }
+    if (node is Map) {
+      for (final value in node.values) {
+        visit(value);
+      }
+    }
+  }
+
+  visit(raw);
+  return urls.toList(growable: false);
+}
+
+void _appendCriticalNativeJsonImage(
+  Set<String> urls,
+  dynamic raw, {
+  required String baseUrl,
+  required int limit,
+}) {
+  if (urls.length >= limit || raw == null) return;
+
+  if (raw is String) {
+    final resolved = _resolveNativeJsonUrl(baseUrl, raw);
+    if (_looksLikeNativeJsonImageUrl(resolved)) {
+      urls.add(resolved);
+    }
+    return;
+  }
+
+  final map = _nativeJsonMap(raw);
+  if (map == null) return;
+  final candidates = <dynamic>[
+    map['url'],
+    map['image_url'],
+    map['image'],
+    map['src'],
+  ];
+  for (final candidate in candidates) {
+    if (urls.length >= limit) break;
+    final value = _nativeJsonString(candidate);
+    if (value.isEmpty) continue;
+    final resolved = _resolveNativeJsonUrl(baseUrl, value);
+    if (_looksLikeNativeJsonImageUrl(resolved)) {
+      urls.add(resolved);
+    }
+  }
+}
+
+List<String> _extractCriticalNativeJsonImageUrls(
+  Map<String, dynamic> document, {
+  required String baseUrl,
+  int limit = 4,
+}) {
+  final urls = <String>{};
+  final renderHints = _nativeJsonMap(document['app_render_hints']);
+  final hintedUrls = _nativeJsonStringList(renderHints?['critical_images']);
+  for (final rawUrl in hintedUrls) {
+    _appendCriticalNativeJsonImage(
+      urls,
+      rawUrl,
+      baseUrl: baseUrl,
+      limit: limit,
+    );
+    if (urls.length >= limit) {
+      return urls.toList(growable: false);
+    }
+  }
+
+  final sections = _nativeJsonMapList(document['sections']);
+  for (final section in sections) {
+    final type = _nativeJsonString(section['type']);
+    switch (type) {
+      case 'hero':
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['logo'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image_url'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['background_image'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        break;
+      case 'two_column':
+      case 'image':
+      case 'single_image':
+      case 'text_image':
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image_url'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        break;
+      case 'font_examples':
+        final groups = _nativeJsonMapList(section['groups']);
+        if (groups.isNotEmpty) {
+          final images = _nativeJsonMapList(groups.first['images']);
+          if (images.isNotEmpty) {
+            _appendCriticalNativeJsonImage(
+              urls,
+              images.first,
+              baseUrl: baseUrl,
+              limit: limit,
+            );
+          }
+        }
+        break;
+      case 'carousel_gallery':
+        final images = _nativeJsonMapList(section['images']);
+        if (images.isNotEmpty) {
+          _appendCriticalNativeJsonImage(
+            urls,
+            images.first,
+            baseUrl: baseUrl,
+            limit: limit,
+          );
+        }
+        break;
+      default:
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        _appendCriticalNativeJsonImage(
+          urls,
+          section['image_url'],
+          baseUrl: baseUrl,
+          limit: limit,
+        );
+        break;
+    }
+    if (urls.length >= limit) break;
+  }
+
+  if (urls.isEmpty) {
+    urls.addAll(
+      _collectNativeJsonImageUrls(document, baseUrl: baseUrl).take(limit),
+    );
+  }
+  return urls.toList(growable: false);
+}
+
 class _NativeJsonDocumentPage extends StatefulWidget {
   final String title;
   final String url;
+  final void Function(String title, String link)? onOpenLink;
+  final Widget? bottomBar;
+  final Map<String, dynamic>? initialDocument;
+  final bool initialCriticalImagesReady;
 
-  const _NativeJsonDocumentPage({required this.title, required this.url});
+  const _NativeJsonDocumentPage({
+    required this.title,
+    required this.url,
+    this.onOpenLink,
+    this.bottomBar,
+    this.initialDocument,
+    this.initialCriticalImagesReady = false,
+  });
 
   @override
   State<_NativeJsonDocumentPage> createState() =>
@@ -19344,12 +20250,27 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   String? _errorText;
   late String _pageTitle;
   String _htmlBody = '';
+  Map<String, dynamic>? _structuredDocument;
+  int _galleryCarouselIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _pageTitle = widget.title;
-    unawaited(_loadDocument());
+    if (widget.initialDocument != null) {
+      _applyLoadedDocument(widget.initialDocument!, shouldNotify: false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _structuredDocument == null) return;
+        unawaited(
+          _precacheStructuredDocumentProgressively(
+            _structuredDocument!,
+            criticalAlreadyReady: widget.initialCriticalImagesReady,
+          ),
+        );
+      });
+    } else {
+      unawaited(_loadDocument());
+    }
   }
 
   static String _normalizeHtml(String raw) {
@@ -19389,6 +20310,90 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     return raw.toString();
   }
 
+  static Map<String, dynamic>? _asMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is! Map) return null;
+    final mapped = <String, dynamic>{};
+    raw.forEach((key, value) {
+      mapped[key.toString()] = value;
+    });
+    return mapped;
+  }
+
+  static List<Map<String, dynamic>> _asMapList(dynamic raw) {
+    if (raw is! List) return const [];
+    final items = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      final map = _asMap(item);
+      if (map != null) items.add(map);
+    }
+    return items;
+  }
+
+  static List<String> _asStringList(dynamic raw) {
+    if (raw is! List) return const [];
+    final items = <String>[];
+    for (final item in raw) {
+      final value = item?.toString().trim() ?? '';
+      if (value.isNotEmpty) items.add(value);
+    }
+    return items;
+  }
+
+  static String _stringValue(dynamic raw, [String fallback = '']) {
+    final value = raw?.toString().trim() ?? '';
+    return value.isNotEmpty ? value : fallback;
+  }
+
+  static double? _asDouble(dynamic raw) {
+    if (raw is num) return raw.toDouble();
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty) return null;
+    return double.tryParse(value);
+  }
+
+  static bool _asBool(dynamic raw, {required bool fallback}) {
+    if (raw is bool) return raw;
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    if (value.isEmpty) return fallback;
+    if (value == 'true' || value == '1' || value == 'yes') return true;
+    if (value == 'false' || value == '0' || value == 'no') return false;
+    return fallback;
+  }
+
+  void _applyLoadedDocument(dynamic source, {required bool shouldNotify}) {
+    final documentMap = _asMap(source);
+    if (documentMap != null) {
+      final page = _asMap(documentMap['page']);
+      final titleRaw =
+          page?['title'] ?? documentMap['title'] ?? documentMap['name'];
+      final extractedTitle = titleRaw?.toString().trim() ?? '';
+      if (extractedTitle.isNotEmpty) _pageTitle = extractedTitle;
+    }
+
+    final sections = documentMap == null
+        ? const <Map<String, dynamic>>[]
+        : _asMapList(documentMap['sections']);
+    final useStructuredRenderer = documentMap != null && sections.isNotEmpty;
+    final bodyText = _extractTextFromJson(source);
+
+    void assign() {
+      _isLoading = false;
+      _errorText = null;
+      _structuredDocument = useStructuredRenderer ? documentMap : null;
+      _htmlBody = useStructuredRenderer ? '' : _normalizeHtml(bodyText);
+      _galleryCarouselIndex = 0;
+    }
+
+    if (!shouldNotify) {
+      assign();
+      return;
+    }
+
+    if (!mounted) return;
+    setState(assign);
+  }
+
   Future<void> _loadDocument() async {
     try {
       final response = await _httpGet(Uri.parse(widget.url));
@@ -19408,20 +20413,26 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         source = decoded.first;
       }
 
-      if (source is Map) {
-        final titleRaw = source['title'] ?? source['name'];
-        final extractedTitle = titleRaw?.toString().trim() ?? '';
-        if (extractedTitle.isNotEmpty) _pageTitle = extractedTitle;
+      final documentMap = _asMap(source);
+      final sections = documentMap == null
+          ? const <Map<String, dynamic>>[]
+          : _asMapList(documentMap['sections']);
+      final useStructuredRenderer = documentMap != null && sections.isNotEmpty;
+      _applyLoadedDocument(source, shouldNotify: true);
+      if (useStructuredRenderer) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(
+            _precacheStructuredDocumentProgressively(
+              documentMap,
+              criticalAlreadyReady: false,
+            ),
+          );
+        });
       }
-
-      final bodyText = _extractTextFromJson(source);
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorText = null;
-        _htmlBody = _normalizeHtml(bodyText);
-      });
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('Native JSON document load error for ${widget.url}: $e');
+      debugPrint('$st');
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -19430,92 +20441,1208 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     }
   }
 
+  bool get _hasStructuredDocument =>
+      _structuredDocument != null && _documentSections.isNotEmpty;
+
+  Map<String, dynamic> get _document =>
+      _structuredDocument ?? const <String, dynamic>{};
+
+  Map<String, dynamic> get _documentTheme =>
+      _asMap(_document['theme']) ?? const <String, dynamic>{};
+
+  Map<String, dynamic> get _documentThemeColors =>
+      _asMap(_documentTheme['colors']) ?? const <String, dynamic>{};
+
+  Map<String, dynamic> get _documentContainerTheme =>
+      _asMap(_documentTheme['container']) ?? const <String, dynamic>{};
+
+  Map<String, dynamic> get _documentRenderHints =>
+      _asMap(_document['app_render_hints']) ?? const <String, dynamic>{};
+
+  List<Map<String, dynamic>> get _documentSections =>
+      _asMapList(_document['sections']);
+
+  String get _documentFontFamily =>
+      _stringValue(_documentTheme['font_family'], 'Roboto');
+
+  Color get _documentTextColor => _parseDocumentColor(
+    _documentThemeColors['text'],
+    const Color(0xFF1A1A1A),
+  );
+
+  Color get _documentAccentColor =>
+      _parseDocumentColor(_documentThemeColors['accent'], _documentTextColor);
+
+  Color get _documentBackgroundColor =>
+      _parseDocumentColor(_documentThemeColors['background'], Colors.white);
+
+  Color get _documentShadowColor => _parseDocumentColor(
+    _documentThemeColors['shadow'],
+    const Color(0x26D8B8A2),
+  );
+
+  Color get _documentBorderColor => _parseDocumentColor(
+    _documentThemeColors['border'],
+    const Color(0x14D8B8A2),
+  );
+
+  double get _documentMaxWidth =>
+      (_asDouble(_documentContainerTheme['max_width']) ?? 950)
+          .clamp(320.0, 1200.0)
+          .toDouble();
+
+  double get _documentRadius =>
+      (_asDouble(_documentContainerTheme['border_radius']) ?? 20)
+          .clamp(0.0, 40.0)
+          .toDouble();
+
+  bool get _documentShowAppBar =>
+      _asBool(_documentRenderHints['show_app_bar'], fallback: true);
+
+  bool get _documentSafeArea =>
+      _asBool(_documentRenderHints['safe_area'], fallback: true);
+
+  bool get _documentEnableImageViewer =>
+      _asBool(_documentRenderHints['enable_image_viewer'], fallback: true);
+
+  Color _colorWithOpacity(Color color, double opacity) {
+    final alpha = (opacity.clamp(0.0, 1.0) * 255).round();
+    return color.withAlpha(alpha);
+  }
+
+  Color _parseDocumentColor(dynamic raw, Color fallback) {
+    final value = _stringValue(raw);
+    if (value.isEmpty) return fallback;
+
+    final rgbaMatch = RegExp(
+      r'^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$',
+      caseSensitive: false,
+    ).firstMatch(value);
+    if (rgbaMatch != null) {
+      final red = (double.tryParse(rgbaMatch.group(1) ?? '') ?? 0)
+          .round()
+          .clamp(0, 255);
+      final green = (double.tryParse(rgbaMatch.group(2) ?? '') ?? 0)
+          .round()
+          .clamp(0, 255);
+      final blue = (double.tryParse(rgbaMatch.group(3) ?? '') ?? 0)
+          .round()
+          .clamp(0, 255);
+      final alphaRaw = double.tryParse(rgbaMatch.group(4) ?? '');
+      final opacity = alphaRaw == null
+          ? 1.0
+          : (alphaRaw > 1 ? alphaRaw / 255.0 : alphaRaw).clamp(0.0, 1.0);
+      return Color.fromRGBO(red, green, blue, opacity);
+    }
+
+    var normalized = value.replaceAll('#', '');
+    if (normalized.startsWith('0x') || normalized.startsWith('0X')) {
+      normalized = normalized.substring(2);
+    }
+    if (normalized.length == 6) normalized = 'FF$normalized';
+    if (normalized.length != 8) return fallback;
+    final parsed = int.tryParse(normalized, radix: 16);
+    if (parsed == null) return fallback;
+    return Color(parsed);
+  }
+
+  String _resolveDocumentUrl(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+
+    final base = Uri.tryParse(widget.url);
+    if (trimmed.startsWith('//')) {
+      return '${base?.scheme ?? 'https'}:$trimmed';
+    }
+
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme) return trimmed;
+    if (base != null) return base.resolve(trimmed).toString();
+    return trimmed;
+  }
+
+  bool _looksLikeDocumentImageUrl(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return false;
+    return RegExp(
+      r'\.(png|jpe?g|webp|gif|bmp|svg|avif)(?:$|[?#])',
+    ).hasMatch(value);
+  }
+
+  List<String> _collectStructuredDocumentImageUrls(
+    dynamic raw, {
+    Set<String> exclude = const <String>{},
+    int? limit,
+  }) {
+    final urls = <String>{};
+
+    void visit(dynamic node) {
+      if (node == null) return;
+      if (limit != null && urls.length >= limit) return;
+      if (node is String) {
+        final resolved = _resolveDocumentUrl(node);
+        if (_looksLikeDocumentImageUrl(resolved) &&
+            !exclude.contains(resolved)) {
+          urls.add(resolved);
+        }
+        return;
+      }
+      if (node is List) {
+        for (final item in node) {
+          visit(item);
+          if (limit != null && urls.length >= limit) return;
+        }
+        return;
+      }
+      if (node is Map) {
+        for (final value in node.values) {
+          visit(value);
+          if (limit != null && urls.length >= limit) return;
+        }
+      }
+    }
+
+    visit(raw);
+    return urls.toList(growable: false);
+  }
+
+  Future<void> _warmStructuredImage(String url) async {
+    try {
+      await precacheImage(
+        CachedNetworkImageProvider(url),
+        context,
+        onError: (_, __) {},
+      ).timeout(const Duration(seconds: 6), onTimeout: () {});
+    } catch (_) {
+      // Never fail the whole document because one image could not be warmed.
+    }
+  }
+
+  Future<void> _warmStructuredImages(
+    List<String> urls, {
+    int batchSize = 3,
+    Duration pauseBetweenBatches = const Duration(milliseconds: 24),
+  }) async {
+    if (!mounted || urls.isEmpty) return;
+    for (int i = 0; i < urls.length; i += batchSize) {
+      if (!mounted) return;
+      final batch = urls.skip(i).take(batchSize).toList(growable: false);
+      await Future.wait(batch.map(_warmStructuredImage), eagerError: false);
+      if (i + batchSize < urls.length) {
+        await Future<void>.delayed(pauseBetweenBatches);
+      }
+    }
+  }
+
+  Future<void> _precacheCriticalStructuredDocumentImages(
+    Map<String, dynamic> document,
+  ) async {
+    final urls = _extractCriticalNativeJsonImageUrls(
+      document,
+      baseUrl: widget.url,
+      limit: 4,
+    );
+    if (urls.isEmpty) return;
+
+    await _warmStructuredImages(
+      urls,
+      batchSize: 2,
+      pauseBetweenBatches: const Duration(milliseconds: 12),
+    );
+  }
+
+  Future<Set<String>> _precacheUpcomingStructuredDocumentImages(
+    Map<String, dynamic> document, {
+    required Set<String> exclude,
+  }) async {
+    final urls = _collectStructuredDocumentImageUrls(
+      _asMapList(document['sections']),
+      exclude: exclude,
+      limit: 8,
+    );
+    if (urls.isEmpty) return <String>{};
+
+    await _warmStructuredImages(
+      urls,
+      batchSize: 3,
+      pauseBetweenBatches: const Duration(milliseconds: 12),
+    );
+    return urls.toSet();
+  }
+
+  Future<void> _precacheStructuredDocumentImages(
+    Map<String, dynamic> document, {
+    Set<String> exclude = const <String>{},
+    int batchSize = 3,
+    Duration pauseBetweenBatches = const Duration(milliseconds: 24),
+  }) async {
+    if (!mounted) return;
+    final urls = _collectStructuredDocumentImageUrls(
+      document,
+      exclude: exclude,
+    );
+    if (urls.isEmpty) return;
+
+    await _warmStructuredImages(
+      urls,
+      batchSize: batchSize,
+      pauseBetweenBatches: pauseBetweenBatches,
+    );
+  }
+
+  Future<void> _precacheStructuredDocumentProgressively(
+    Map<String, dynamic> document, {
+    required bool criticalAlreadyReady,
+  }) async {
+    final criticalUrls = _extractCriticalNativeJsonImageUrls(
+      document,
+      baseUrl: widget.url,
+      limit: 4,
+    ).toSet();
+
+    Future<void>? criticalWarmFuture;
+    if (!criticalAlreadyReady && criticalUrls.isNotEmpty) {
+      criticalWarmFuture = _precacheCriticalStructuredDocumentImages(document);
+      await Future.any<void>([
+        criticalWarmFuture,
+        Future<void>.delayed(const Duration(milliseconds: 250)),
+      ]);
+    }
+
+    final upcomingUrls = await _precacheUpcomingStructuredDocumentImages(
+      document,
+      exclude: criticalUrls,
+    );
+
+    await _precacheStructuredDocumentImages(
+      document,
+      exclude: <String>{...criticalUrls, ...upcomingUrls},
+      batchSize: 2,
+      pauseBetweenBatches: const Duration(milliseconds: 32),
+    );
+  }
+
+  String? _normalizeInternalDocumentLink(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+
+    if (RegExp(
+      r'^(?:id|category_id)\s*=\s*([0-9]+)$',
+      caseSensitive: false,
+    ).hasMatch(trimmed)) {
+      return trimmed;
+    }
+
+    if (trimmed.startsWith('/')) {
+      return trimmed == '/' ? null : trimmed;
+    }
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return null;
+    if (!uri.host.toLowerCase().contains('hozyain-barin.ru')) return null;
+
+    final categoryId =
+        uri.queryParameters['id']?.trim() ??
+        uri.queryParameters['category_id']?.trim() ??
+        '';
+    if (categoryId.isNotEmpty) return 'id=$categoryId';
+
+    final path = uri.path.trim();
+    if (path.isEmpty || path == '/') return null;
+    final query = uri.hasQuery ? '?${uri.query}' : '';
+    return '$path$query';
+  }
+
+  Future<void> _openDocumentLink(String raw, {String? title}) async {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return;
+
+    final internalLink = _normalizeInternalDocumentLink(trimmed);
+    if (widget.onOpenLink != null && internalLink != null) {
+      widget.onOpenLink!(_stringValue(title, _pageTitle), internalLink);
+      return;
+    }
+
+    final resolved = _resolveDocumentUrl(trimmed);
+    final uri = Uri.tryParse(resolved);
+    if (uri == null) return;
+
+    final scheme = uri.scheme.toLowerCase();
+    final allowed =
+        scheme == 'http' ||
+        scheme == 'https' ||
+        scheme == 'tel' ||
+        scheme == 'mailto';
+    if (!allowed) return;
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _openDocumentPhone(String rawPhone) async {
+    final digits = rawPhone.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return;
+    await _openDocumentLink('tel:$digits', title: _pageTitle);
+  }
+
+  void _openStructuredGallery(List<String> images, int initialIndex) {
+    if (!_documentEnableImageViewer || images.isEmpty) return;
+    Navigator.push(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => _ReviewGalleryPage(
+          images: images,
+          initialIndex: initialIndex.clamp(0, images.length - 1),
+        ),
+      ),
+    );
+  }
+
+  TextStyle _documentTextStyle({
+    double size = 16,
+    FontWeight weight = FontWeight.w400,
+    Color? color,
+    FontStyle fontStyle = FontStyle.normal,
+    double height = 1.45,
+    double letterSpacing = 0,
+  }) {
+    return TextStyle(
+      fontFamily: _documentFontFamily,
+      fontSize: size,
+      fontWeight: weight,
+      color: color ?? _documentTextColor,
+      fontStyle: fontStyle,
+      height: height,
+      letterSpacing: letterSpacing,
+    );
+  }
+
+  TextAlign _textAlignFromString(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'center':
+        return TextAlign.center;
+      case 'right':
+        return TextAlign.right;
+      default:
+        return TextAlign.left;
+    }
+  }
+
+  CrossAxisAlignment _crossAxisAlignmentFor(TextAlign align) {
+    switch (align) {
+      case TextAlign.center:
+        return CrossAxisAlignment.center;
+      case TextAlign.right:
+      case TextAlign.end:
+        return CrossAxisAlignment.end;
+      default:
+        return CrossAxisAlignment.start;
+    }
+  }
+
+  Widget _buildSectionImage(
+    String rawUrl, {
+    required double height,
+    List<String>? galleryImages,
+    int initialIndex = 0,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    final url = _resolveDocumentUrl(rawUrl);
+    if (url.isEmpty) return const SizedBox.shrink();
+
+    final images = (galleryImages == null || galleryImages.isEmpty)
+        ? <String>[url]
+        : galleryImages
+              .map(_resolveDocumentUrl)
+              .where((item) => item.isNotEmpty)
+              .toList(growable: false);
+
+    final child = LayoutBuilder(
+      builder: (context, constraints) {
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        final visibleWidth =
+            constraints.maxWidth.isFinite && constraints.maxWidth > 0
+            ? constraints.maxWidth
+            : MediaQuery.of(context).size.width;
+        final cacheWidth = (visibleWidth * dpr).round().clamp(1, 2400);
+        final cacheHeight = (height * dpr).round().clamp(1, 2400);
+
+        return Container(
+          height: height,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(_documentRadius),
+            border: Border.all(color: _documentBorderColor),
+            boxShadow: [
+              BoxShadow(
+                color: _documentShadowColor,
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: CachedNetworkImage(
+            imageUrl: url,
+            width: double.infinity,
+            height: double.infinity,
+            fit: fit,
+            memCacheWidth: cacheWidth,
+            memCacheHeight: cacheHeight,
+            maxWidthDiskCache: cacheWidth,
+            maxHeightDiskCache: cacheHeight,
+            filterQuality: FilterQuality.low,
+            fadeInDuration: const Duration(milliseconds: 120),
+            fadeOutDuration: const Duration(milliseconds: 90),
+            useOldImageOnUrlChange: true,
+            placeholder: (_, __) => const SizedBox.expand(),
+            errorWidget: (_, __, ___) => Container(
+              color: const Color(0xFFF7F7F7),
+              child: const Icon(Icons.broken_image, color: Colors.black26),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!_documentEnableImageViewer || images.isEmpty) return child;
+    return GestureDetector(
+      onTap: () => _openStructuredGallery(images, initialIndex),
+      child: child,
+    );
+  }
+
+  Widget _buildBulletList(List<String> items, {int columns = 1}) {
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final effectiveColumns = columns > 1 && constraints.maxWidth > 280
+            ? columns
+            : 1;
+        const spacing = 20.0;
+        final itemWidth = effectiveColumns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - spacing * (effectiveColumns - 1)) /
+                  effectiveColumns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: 14,
+          children: items
+              .map((item) {
+                return SizedBox(
+                  width: itemWidth,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          '•',
+                          style: _documentTextStyle(
+                            size: 18,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          item,
+                          style: _documentTextStyle(size: 16, height: 1.55),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeroSection(Map<String, dynamic> section) {
+    final logo = _asMap(section['logo']);
+    final logoUrl = _stringValue(logo?['image_url'] ?? logo?['url']);
+    final title = _stringValue(section['title']);
+    final textAlign = _textAlignFromString(_stringValue(section['alignment']));
+    final crossAxis = _crossAxisAlignmentFor(textAlign);
+    final media = MediaQuery.of(context);
+    final screenWidth = media.size.width;
+    final dpr = media.devicePixelRatio;
+    final logoSize = screenWidth < 380 ? 74.0 : 92.0;
+    final logoCacheSize = (logoSize * dpr).round().clamp(1, 512);
+
+    return Column(
+      crossAxisAlignment: crossAxis,
+      children: [
+        if (logoUrl.isNotEmpty)
+          Align(
+            alignment: textAlign == TextAlign.center
+                ? Alignment.center
+                : (textAlign == TextAlign.right
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft),
+            child: CachedNetworkImage(
+              imageUrl: _resolveDocumentUrl(logoUrl),
+              width: logoSize,
+              height: logoSize,
+              fit: BoxFit.contain,
+              memCacheWidth: logoCacheSize,
+              memCacheHeight: logoCacheSize,
+              maxWidthDiskCache: logoCacheSize,
+              maxHeightDiskCache: logoCacheSize,
+              filterQuality: FilterQuality.low,
+              fadeInDuration: const Duration(milliseconds: 100),
+              fadeOutDuration: const Duration(milliseconds: 80),
+              useOldImageOnUrlChange: true,
+              placeholder: (_, __) =>
+                  SizedBox(width: logoSize, height: logoSize),
+              errorWidget: (_, __, ___) => SizedBox(
+                width: logoSize,
+                height: logoSize,
+                child: const Icon(Icons.image_not_supported_outlined),
+              ),
+            ),
+          ),
+        if (logoUrl.isNotEmpty) const SizedBox(height: 18),
+        if (title.isNotEmpty)
+          Text(
+            title,
+            textAlign: textAlign,
+            style: _documentTextStyle(
+              size: screenWidth < 380 ? 24 : 30,
+              weight: FontWeight.w800,
+              height: 1.08,
+              color: _documentAccentColor,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildTwoColumnSection(Map<String, dynamic> section) {
+    final sectionId = _stringValue(section['id']);
+    final layout = _stringValue(section['layout']);
+    final title = _stringValue(section['title']);
+    final text = _asMap(section['text']);
+    final lead = _stringValue(text?['lead']);
+    final note = _stringValue(text?['note']);
+    final bullets = _asStringList(section['bullets']);
+    final image = _asMap(section['image']);
+    final imageUrl = _stringValue(image?['url'] ?? image?['image_url']);
+    final imageFirst = layout == 'image_left_text_right';
+    final useTwoColumns = bullets.length >= 6;
+
+    Widget buildTextBlock() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: _documentTextStyle(
+                size: 20,
+                weight: FontWeight.w700,
+                fontStyle: FontStyle.italic,
+                height: 1.2,
+                color: _documentAccentColor,
+              ),
+            ),
+          if (title.isNotEmpty && (lead.isNotEmpty || bullets.isNotEmpty))
+            const SizedBox(height: 16),
+          if (lead.isNotEmpty)
+            Text(
+              lead,
+              style: _documentTextStyle(
+                size: 17,
+                fontStyle: sectionId == 'intro'
+                    ? FontStyle.italic
+                    : FontStyle.normal,
+                height: 1.6,
+              ),
+            ),
+          if (lead.isNotEmpty && bullets.isNotEmpty) const SizedBox(height: 18),
+          if (bullets.isNotEmpty)
+            _buildBulletList(bullets, columns: useTwoColumns ? 2 : 1),
+          if (note.isNotEmpty) const SizedBox(height: 16),
+          if (note.isNotEmpty)
+            Text(
+              note,
+              style: _documentTextStyle(
+                size: 15,
+                fontStyle: FontStyle.italic,
+                height: 1.5,
+                color: _colorWithOpacity(_documentTextColor, 0.78),
+              ),
+            ),
+        ],
+      );
+    }
+
+    final imageWidget = imageUrl.isEmpty
+        ? const SizedBox.shrink()
+        : _buildSectionImage(imageUrl, height: 340, fit: BoxFit.contain);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 760 && imageUrl.isNotEmpty;
+        if (!wide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (imageFirst && imageUrl.isNotEmpty) imageWidget,
+              if (imageFirst && imageUrl.isNotEmpty) const SizedBox(height: 20),
+              buildTextBlock(),
+              if (!imageFirst && imageUrl.isNotEmpty)
+                const SizedBox(height: 24),
+              if (!imageFirst && imageUrl.isNotEmpty) imageWidget,
+            ],
+          );
+        }
+
+        final leftChild = imageFirst ? imageWidget : buildTextBlock();
+        final rightChild = imageFirst ? buildTextBlock() : imageWidget;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 11, child: leftChild),
+            const SizedBox(width: 28),
+            Expanded(flex: 9, child: rightChild),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCarouselDots(int count, int activeIndex) {
+    if (count <= 1) return const SizedBox.shrink();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (index) {
+        final active = index == activeIndex;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          width: active ? 18 : 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: active
+                ? _documentAccentColor
+                : _colorWithOpacity(_documentAccentColor, 0.18),
+            borderRadius: BorderRadius.circular(999),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildFontExamplesSection(Map<String, dynamic> section) {
+    final title = _stringValue(section['title']);
+    final groups = _asMapList(section['groups']);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final imageHeight = screenWidth < 420 ? 132.0 : 156.0;
+    final headingSize = screenWidth < 420 ? 20.0 : 23.0;
+    final cardWidthFactor = screenWidth < 420 ? 0.92 : 0.82;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (title.isNotEmpty && groups.isEmpty)
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: _documentTextStyle(
+              size: 22,
+              weight: FontWeight.w800,
+              height: 1.25,
+              color: _documentAccentColor,
+            ),
+          ),
+        if (title.isNotEmpty && groups.isEmpty) const SizedBox(height: 18),
+        for (var i = 0; i < groups.length; i++) ...[
+          if (_stringValue(groups[i]['label']).isNotEmpty)
+            Text(
+              _stringValue(groups[i]['label']),
+              textAlign: TextAlign.center,
+              style: _documentTextStyle(
+                size: headingSize,
+                weight: FontWeight.w800,
+                height: 1.35,
+                letterSpacing: 0.2,
+                color: _documentAccentColor,
+              ),
+            ),
+          if (_stringValue(groups[i]['label']).isNotEmpty)
+            const SizedBox(height: 18),
+          ...(() {
+            final urls = _asMapList(groups[i]['images'])
+                .map((item) => _resolveDocumentUrl(_stringValue(item['url'])))
+                .where((item) => item.isNotEmpty)
+                .toList(growable: false);
+            return List<Widget>.generate(urls.length, (index) {
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == urls.length - 1 ? 0 : 18,
+                ),
+                child: Align(
+                  alignment: Alignment.center,
+                  child: FractionallySizedBox(
+                    widthFactor: cardWidthFactor,
+                    child: _buildSectionImage(
+                      urls[index],
+                      height: imageHeight,
+                      fit: BoxFit.contain,
+                      galleryImages: urls,
+                      initialIndex: index,
+                    ),
+                  ),
+                ),
+              );
+            });
+          })(),
+          if (i != groups.length - 1) const SizedBox(height: 42),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildListSection(Map<String, dynamic> section) {
+    final title = _stringValue(section['title']);
+    final items = _asStringList(section['items']);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_documentRadius),
+        border: Border.all(color: _documentBorderColor),
+        boxShadow: [
+          BoxShadow(
+            color: _documentShadowColor,
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: _documentTextStyle(
+                size: 20,
+                weight: FontWeight.w700,
+                color: _documentAccentColor,
+              ),
+            ),
+          if (title.isNotEmpty && items.isNotEmpty) const SizedBox(height: 14),
+          if (items.isNotEmpty) _buildBulletList(items),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextBlockSection(Map<String, dynamic> section) {
+    final text = _stringValue(section['text']);
+    final textAlign = _textAlignFromString(_stringValue(section['alignment']));
+    if (text.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_documentRadius),
+        border: Border.all(color: _documentBorderColor),
+      ),
+      child: Text(
+        text,
+        textAlign: textAlign,
+        style: _documentTextStyle(
+          size: 17,
+          height: 1.6,
+          color: _documentAccentColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCarouselGallerySection(Map<String, dynamic> section) {
+    final title = _stringValue(section['title']);
+    final images = _asMapList(section['images']);
+    if (images.isEmpty) return const SizedBox.shrink();
+
+    final behavior = _asMap(section['behavior']);
+    final desktop = _asMap(behavior?['desktop']);
+    final mobile = _asMap(behavior?['mobile']);
+    final autoPlay = _asBool(desktop?['autoplay'], fallback: false);
+    final showDots = _asBool(mobile?['show_dots'], fallback: false);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final galleryHeight = screenWidth < 420 ? 320.0 : 380.0;
+    final urls = images
+        .map((item) => _resolveDocumentUrl(_stringValue(item['url'])))
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title.isNotEmpty)
+          Text(
+            title,
+            style: _documentTextStyle(
+              size: 22,
+              weight: FontWeight.w700,
+              color: _documentAccentColor,
+            ),
+          ),
+        if (title.isNotEmpty) const SizedBox(height: 16),
+        CarouselSlider(
+          options: CarouselOptions(
+            height: galleryHeight,
+            viewportFraction: 1.0,
+            enableInfiniteScroll: urls.length > 1,
+            autoPlay: autoPlay && urls.length > 1,
+            autoPlayInterval: const Duration(seconds: 5),
+            onPageChanged: (index, _) {
+              setState(() => _galleryCarouselIndex = index);
+            },
+          ),
+          items: urls.asMap().entries.map((entry) {
+            return _buildSectionImage(
+              entry.value,
+              height: galleryHeight,
+              galleryImages: urls,
+              initialIndex: entry.key,
+            );
+          }).toList(),
+        ),
+        if (showDots) const SizedBox(height: 12),
+        if (showDots) _buildCarouselDots(urls.length, _galleryCarouselIndex),
+      ],
+    );
+  }
+
+  Widget _buildCtaSection(Map<String, dynamic> section) {
+    final title = _stringValue(section['title']);
+    final button = _asMap(section['button']);
+    final contact = _asMap(section['contact']);
+    final buttonLabel = _stringValue(button?['label']);
+    final buttonUrl = _stringValue(button?['url']);
+    final buttonStyle = _stringValue(button?['style']);
+    final contactText = _stringValue(contact?['text']);
+    final phone = _stringValue(contact?['phone']);
+    final phoneDisplay = _stringValue(contact?['phone_display'], phone);
+    final isDarkButton = buttonStyle == 'primary_dark';
+    final screenWidth = MediaQuery.of(context).size.width;
+    final titleSize = screenWidth < 420 ? 28.0 : 32.0;
+    final buttonMaxWidth = screenWidth < 420 ? 300.0 : 340.0;
+    final buttonMinHeight = screenWidth < 420 ? 82.0 : 92.0;
+    final phoneSize = screenWidth < 420 ? 24.0 : 28.0;
+
+    return Align(
+      alignment: Alignment.center,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(_documentRadius),
+          border: Border.all(
+            color: _colorWithOpacity(_documentAccentColor, 0.06),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            if (title.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: _documentTextStyle(
+                    size: titleSize,
+                    weight: FontWeight.w800,
+                    height: 1.22,
+                    letterSpacing: 0.2,
+                    color: _documentAccentColor,
+                  ),
+                ),
+              ),
+            if (title.isNotEmpty && buttonLabel.isNotEmpty)
+              const SizedBox(height: 26),
+            if (buttonLabel.isNotEmpty)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: buttonMaxWidth),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () =>
+                        _openDocumentLink(buttonUrl, title: buttonLabel),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: isDarkButton
+                          ? _documentAccentColor
+                          : Colors.white,
+                      foregroundColor: isDarkButton
+                          ? Colors.white
+                          : _documentAccentColor,
+                      elevation: 0,
+                      minimumSize: Size(double.infinity, buttonMinHeight),
+                      side: isDarkButton
+                          ? null
+                          : BorderSide(color: _documentAccentColor),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                    child: Text(
+                      buttonLabel,
+                      textAlign: TextAlign.center,
+                      style: _documentTextStyle(
+                        size: 18,
+                        weight: FontWeight.w700,
+                        color: isDarkButton
+                            ? Colors.white
+                            : _documentAccentColor,
+                        height: 1.35,
+                        letterSpacing: 0.25,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if ((contactText.isNotEmpty || phoneDisplay.isNotEmpty) &&
+                buttonLabel.isNotEmpty)
+              const SizedBox(height: 28),
+            if (contactText.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 380),
+                child: Text(
+                  contactText,
+                  textAlign: TextAlign.center,
+                  style: _documentTextStyle(
+                    size: 17,
+                    height: 1.45,
+                    color: _colorWithOpacity(_documentTextColor, 0.78),
+                  ),
+                ),
+              ),
+            if (contactText.isNotEmpty && phoneDisplay.isNotEmpty)
+              const SizedBox(height: 18),
+            if (phoneDisplay.isNotEmpty)
+              InkWell(
+                onTap: () =>
+                    _openDocumentPhone(phone.isNotEmpty ? phone : phoneDisplay),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    phoneDisplay,
+                    textAlign: TextAlign.center,
+                    style: _documentTextStyle(
+                      size: phoneSize,
+                      weight: FontWeight.w800,
+                      height: 1.15,
+                      letterSpacing: 0.2,
+                      color: _documentAccentColor,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStructuredSection(Map<String, dynamic> section) {
+    final type = _stringValue(section['type']);
+    switch (type) {
+      case 'hero':
+        return _buildHeroSection(section);
+      case 'two_column':
+        return _buildTwoColumnSection(section);
+      case 'font_examples':
+        return _buildFontExamplesSection(section);
+      case 'list':
+        return _buildListSection(section);
+      case 'text_block':
+        return _buildTextBlockSection(section);
+      case 'carousel_gallery':
+        return _buildCarouselGallerySection(section);
+      case 'cta':
+        return _buildCtaSection(section);
+      default:
+        final fallbackText = _extractTextFromJson(section).trim();
+        if (fallbackText.isEmpty) return const SizedBox.shrink();
+        return Text(
+          fallbackText,
+          style: _documentTextStyle(size: 16, height: 1.55),
+        );
+    }
+  }
+
+  Widget _buildStructuredBody() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final preloadExtent = (MediaQuery.of(context).size.height * 1.4).clamp(
+          600.0,
+          1600.0,
+        );
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: _documentMaxWidth),
+            child: ListView.separated(
+              cacheExtent: preloadExtent,
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+              itemCount: _documentSections.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 28),
+              itemBuilder: (context, index) {
+                return _buildStructuredSection(_documentSections[index]);
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFallbackHtmlBody() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(5, 12, 5, 20),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Html(
+            data: _htmlBody,
+            style: {
+              'body': Style(
+                margin: Margins.zero,
+                padding: HtmlPaddings.zero,
+                color: Colors.black87,
+                fontSize: FontSize(14),
+                lineHeight: const LineHeight(1.35),
+              ),
+              'p': Style(margin: Margins.only(bottom: 10)),
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey.shade100,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.white,
-        automaticallyImplyLeading: false,
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            IconButton(
-              icon: const Icon(
-                Icons.arrow_back_ios_new,
-                color: Colors.black,
-                size: 20,
-              ),
-              onPressed: () => Navigator.pop(context),
+    final useStructured = _hasStructuredDocument;
+    final scaffoldColor = useStructured
+        ? _documentBackgroundColor
+        : Colors.grey.shade100;
+    final showAppBar = !useStructured || _documentShowAppBar;
+    final useSafeArea = !useStructured || _documentSafeArea;
+
+    final bodyContent = _isLoading
+        ? const Center(
+            child: SizedBox(
+              height: 120,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
             ),
-            Expanded(
-              child: Text(
-                _pageTitle,
-                style: const TextStyle(
-                  fontFamily: 'Roboto',
-                  color: Colors.black,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
+          )
+        : _errorText != null
+        ? ListView(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                child: Text(
+                  _errorText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: Colors.black54),
+                ),
               ),
-            ),
-            const SizedBox(width: 48),
-          ],
-        ),
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(5, 12, 5, 20),
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 120,
-                      child: Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : _errorText != null
-                  ? Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        _errorText!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black54,
-                        ),
-                      ),
-                    )
-                  : Html(
-                      data: _htmlBody,
-                      style: {
-                        'body': Style(
-                          margin: Margins.zero,
-                          padding: HtmlPaddings.zero,
-                          color: Colors.black87,
-                          fontSize: FontSize(14),
-                          lineHeight: const LineHeight(1.35),
-                        ),
-                        'p': Style(margin: Margins.only(bottom: 10)),
-                      },
+            ],
+          )
+        : useStructured
+        ? _buildStructuredBody()
+        : _buildFallbackHtmlBody();
+
+    return Scaffold(
+      backgroundColor: scaffoldColor,
+      appBar: showAppBar
+          ? AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              surfaceTintColor: Colors.white,
+              automaticallyImplyLeading: false,
+              titleSpacing: 0,
+              title: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new,
+                      color: Colors.black,
+                      size: 20,
                     ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _pageTitle,
+                      style: TextStyle(
+                        fontFamily: useStructured
+                            ? _documentFontFamily
+                            : 'Roboto',
+                        color: Colors.black,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
+            )
+          : null,
+      body: useSafeArea ? SafeArea(child: bodyContent) : bodyContent,
+      bottomNavigationBar: widget.bottomBar == null
+          ? null
+          : Container(
+              color: Colors.white,
+              child: SafeArea(
+                top: false,
+                left: false,
+                right: false,
+                child: widget.bottomBar!,
+              ),
             ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -28563,6 +30690,7 @@ class NativeProductCard extends StatefulWidget {
   final ValueListenable<int>? cartListenable;
   final bool Function(String id)? isInCartResolver;
   final bool deferHighRes;
+  final double? horizontalCardWidth;
   const NativeProductCard({
     super.key,
     required this.product,
@@ -28582,6 +30710,7 @@ class NativeProductCard extends StatefulWidget {
     this.onAddToCart,
     this.cartListenable,
     this.isInCartResolver,
+    this.horizontalCardWidth,
   });
 
   @override
@@ -29425,7 +31554,7 @@ class _NativeProductCardState extends State<NativeProductCard>
     final double screenWidth = MediaQuery.of(context).size.width;
     final double dpr = MediaQuery.of(context).devicePixelRatio;
     final double cardWidth = widget.isHorizontal
-        ? (screenWidth - 44) / 2
+        ? (widget.horizontalCardWidth ?? (screenWidth - 44) / 2)
         : (screenWidth - 8 - 8) / 2;
     final double imageHeight = cardWidth * 4 / 3;
     final int cacheWidth = (cardWidth * dpr).round().clamp(1, 2000).toInt();
@@ -29435,7 +31564,7 @@ class _NativeProductCardState extends State<NativeProductCard>
     return Container(
       width: widget.isHorizontal ? cardWidth : null,
       margin: widget.isHorizontal
-          ? const EdgeInsets.symmetric(horizontal: 6, vertical: 5)
+          ? const EdgeInsets.symmetric(vertical: 5)
           : null,
       decoration: BoxDecoration(
         color: Colors.white,
