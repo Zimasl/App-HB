@@ -20252,6 +20252,8 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   String _htmlBody = '';
   Map<String, dynamic>? _structuredDocument;
   int _galleryCarouselIndex = 0;
+  final Map<String, double> _documentImageIntrinsicAspectRatios = {};
+  final Set<String> _documentImageAspectRatioInFlight = <String>{};
 
   @override
   void initState() {
@@ -20260,13 +20262,16 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     if (widget.initialDocument != null) {
       _applyLoadedDocument(widget.initialDocument!, shouldNotify: false);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _structuredDocument == null) return;
-        unawaited(
-          _precacheStructuredDocumentProgressively(
-            _structuredDocument!,
-            criticalAlreadyReady: widget.initialCriticalImagesReady,
-          ),
-        );
+        if (!mounted) return;
+        if (_structuredDocument != null) {
+          unawaited(
+            _precacheStructuredDocumentProgressively(
+              _structuredDocument!,
+              criticalAlreadyReady: widget.initialCriticalImagesReady,
+            ),
+          );
+        }
+        unawaited(_loadDocument(silentFailure: true));
       });
     } else {
       unawaited(_loadDocument());
@@ -20359,6 +20364,190 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     if (value == 'true' || value == '1' || value == 'yes') return true;
     if (value == 'false' || value == '0' || value == 'no') return false;
     return fallback;
+  }
+
+  static const Set<String> _documentImageStyleKeys = <String>{
+    'fit',
+    'image_fit',
+    'object_fit',
+    'height',
+    'image_height',
+    'min_height',
+    'image_min_height',
+    'max_height',
+    'image_max_height',
+    'aspect_ratio',
+    'image_aspect_ratio',
+    'border_radius',
+    'background_color',
+    'show_frame',
+    'framed',
+    'show_border',
+    'show_shadow',
+    'enable_viewer',
+    'enable_image_viewer',
+  };
+
+  static dynamic _firstDefinedStyleValue(
+    Map<String, dynamic> source,
+    Iterable<String> keys,
+  ) {
+    for (final key in keys) {
+      if (!source.containsKey(key)) continue;
+      final value = source[key];
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  static Map<String, dynamic> _pickDirectImageStyleValues(
+    Map<String, dynamic> source,
+  ) {
+    final picked = <String, dynamic>{};
+    for (final entry in source.entries) {
+      if (_documentImageStyleKeys.contains(entry.key) && entry.value != null) {
+        picked[entry.key] = entry.value;
+      }
+    }
+    return picked;
+  }
+
+  Map<String, dynamic> _composeImageStyle(Iterable<dynamic> sources) {
+    final merged = <String, dynamic>{};
+
+    void absorb(dynamic raw) {
+      final map = _asMap(raw);
+      if (map == null || map.isEmpty) return;
+      merged.addAll(_pickDirectImageStyleValues(map));
+
+      final nestedSources = <dynamic>[
+        map['styles'],
+        map['style'],
+        map['image_styles'],
+        map['image_style'],
+      ];
+      for (final nested in nestedSources) {
+        final nestedMap = _asMap(nested);
+        if (nestedMap == null || nestedMap.isEmpty) continue;
+        merged.addAll(nestedMap);
+      }
+    }
+
+    absorb(_documentTheme['image_defaults']);
+    absorb(_documentTheme['image']);
+    absorb(_documentScreenTheme['image_defaults']);
+    absorb(_documentScreenTheme['image']);
+    for (final source in sources) {
+      absorb(source);
+    }
+
+    return merged;
+  }
+
+  static void _mergeStyleMapInto(Map<String, dynamic> target, dynamic raw) {
+    final map = _asMap(raw);
+    if (map == null || map.isEmpty) return;
+    target.addAll(map);
+  }
+
+  Map<String, dynamic> _mergeStyleMaps(Iterable<dynamic> sources) {
+    final merged = <String, dynamic>{};
+    for (final source in sources) {
+      _mergeStyleMapInto(merged, source);
+    }
+    return merged;
+  }
+
+  void _absorbNamedStyle(
+    Map<String, dynamic> target,
+    Map<String, dynamic> source,
+    String name,
+  ) {
+    _mergeStyleMapInto(target, source[name]);
+    _mergeStyleMapInto(target, source['${name}_style']);
+    _mergeStyleMapInto(target, source['${name}_styles']);
+
+    final styles = _asMap(source['styles']);
+    if (styles == null || styles.isEmpty) return;
+    _mergeStyleMapInto(target, styles[name]);
+    _mergeStyleMapInto(target, styles['${name}_style']);
+  }
+
+  Map<String, dynamic> _composeNamedStyle(
+    String name,
+    Iterable<dynamic> sources, {
+    List<String> aliases = const [],
+    bool includeGenericSourceStyle = false,
+  }) {
+    final merged = <String, dynamic>{};
+
+    void absorbTheme(Map<String, dynamic> theme) {
+      if (theme.isEmpty) return;
+      _absorbNamedStyle(merged, theme, name);
+      for (final alias in aliases) {
+        _absorbNamedStyle(merged, theme, alias);
+      }
+    }
+
+    void absorbSource(dynamic raw) {
+      final source = _asMap(raw);
+      if (source == null || source.isEmpty) return;
+      if (includeGenericSourceStyle) {
+        _mergeStyleMapInto(merged, source['style']);
+      }
+      _absorbNamedStyle(merged, source, name);
+      for (final alias in aliases) {
+        _absorbNamedStyle(merged, source, alias);
+      }
+    }
+
+    absorbTheme(_documentTheme);
+    absorbTheme(_documentScreenTheme);
+    for (final source in sources) {
+      absorbSource(source);
+    }
+    return merged;
+  }
+
+  Map<String, dynamic> _composeSurfaceStyle(
+    Iterable<dynamic> sources, {
+    bool includeGenericSourceStyle = true,
+  }) {
+    return _composeNamedStyle(
+      'surface',
+      sources,
+      aliases: const ['container', 'section'],
+      includeGenericSourceStyle: includeGenericSourceStyle,
+    );
+  }
+
+  Map<String, dynamic> _composeLayoutStyle(Iterable<dynamic> sources) {
+    return _composeNamedStyle(
+      'layout',
+      sources,
+      aliases: const ['page', 'spacing'],
+    );
+  }
+
+  Map<String, dynamic> _composeButtonStyle(Iterable<dynamic> sources) {
+    return _composeNamedStyle(
+      'button',
+      sources,
+      aliases: const ['action'],
+      includeGenericSourceStyle: true,
+    );
+  }
+
+  Map<String, dynamic> _composeTextStyleFor(
+    String variant,
+    Iterable<dynamic> sources, {
+    List<String> aliases = const [],
+  }) {
+    final base = variant == 'text'
+        ? const <String, dynamic>{}
+        : _composeNamedStyle('text', sources, aliases: const ['body']);
+    final specific = _composeNamedStyle(variant, sources, aliases: aliases);
+    return _mergeStyleMaps([base, specific]);
   }
 
   void _applyLoadedDocument(dynamic source, {required bool shouldNotify}) {
@@ -20462,10 +20651,14 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     return sections;
   }
 
-  Future<void> _loadDocument() async {
+  Future<void> _loadDocument({bool silentFailure = false}) async {
     try {
       final response = await _httpGet(Uri.parse(widget.url));
       if (response.statusCode != 200) {
+        if (silentFailure &&
+            (_structuredDocument != null || _htmlBody.isNotEmpty)) {
+          return;
+        }
         if (!mounted) return;
         setState(() {
           _isLoading = false;
@@ -20501,6 +20694,10 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     } catch (e, st) {
       debugPrint('Native JSON document load error for ${widget.url}: $e');
       debugPrint('$st');
+      if (silentFailure &&
+          (_structuredDocument != null || _htmlBody.isNotEmpty)) {
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -20601,6 +20798,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   Color _parseDocumentColor(dynamic raw, Color fallback) {
     final value = _stringValue(raw);
     if (value.isEmpty) return fallback;
+    if (value.toLowerCase() == 'transparent') return Colors.transparent;
 
     final rgbaMatch = RegExp(
       r'^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$',
@@ -20632,6 +20830,345 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final parsed = int.tryParse(normalized, radix: 16);
     if (parsed == null) return fallback;
     return Color(parsed);
+  }
+
+  FontWeight _documentFontWeightFromInt(int value) {
+    final normalized = ((value / 100).round() * 100).clamp(100, 900);
+    switch (normalized) {
+      case 100:
+        return FontWeight.w100;
+      case 200:
+        return FontWeight.w200;
+      case 300:
+        return FontWeight.w300;
+      case 400:
+        return FontWeight.w400;
+      case 500:
+        return FontWeight.w500;
+      case 600:
+        return FontWeight.w600;
+      case 700:
+        return FontWeight.w700;
+      case 800:
+        return FontWeight.w800;
+      case 900:
+      default:
+        return FontWeight.w900;
+    }
+  }
+
+  FontWeight _parseDocumentFontWeight(
+    dynamic raw, {
+    FontWeight fallback = FontWeight.w400,
+  }) {
+    if (raw is num) {
+      return _documentFontWeightFromInt(raw.round());
+    }
+    final value = _stringValue(raw).toLowerCase();
+    if (value.isEmpty) return fallback;
+
+    final compact = value.replaceAll(' ', '').replaceAll('-', '');
+    if (compact.startsWith('w')) {
+      final numeric = int.tryParse(compact.substring(1));
+      if (numeric != null) return _documentFontWeightFromInt(numeric);
+    }
+
+    final numeric = int.tryParse(compact);
+    if (numeric != null) return _documentFontWeightFromInt(numeric);
+
+    switch (compact) {
+      case 'thin':
+        return FontWeight.w100;
+      case 'extralight':
+      case 'ultralight':
+        return FontWeight.w200;
+      case 'light':
+        return FontWeight.w300;
+      case 'normal':
+      case 'regular':
+        return FontWeight.w400;
+      case 'medium':
+        return FontWeight.w500;
+      case 'semibold':
+      case 'demibold':
+        return FontWeight.w600;
+      case 'bold':
+        return FontWeight.w700;
+      case 'extrabold':
+      case 'ultrabold':
+        return FontWeight.w800;
+      case 'black':
+      case 'heavy':
+        return FontWeight.w900;
+      default:
+        return fallback;
+    }
+  }
+
+  FontStyle _parseDocumentFontStyle(
+    dynamic raw, {
+    FontStyle fallback = FontStyle.normal,
+  }) {
+    if (raw is bool) return raw ? FontStyle.italic : FontStyle.normal;
+    final value = _stringValue(raw).toLowerCase();
+    switch (value) {
+      case 'italic':
+      case 'oblique':
+      case 'true':
+      case '1':
+        return FontStyle.italic;
+      case 'normal':
+      case 'false':
+      case '0':
+        return FontStyle.normal;
+      default:
+        return fallback;
+    }
+  }
+
+  double _styleDouble(
+    Map<String, dynamic> style,
+    Iterable<String> keys,
+    double fallback,
+  ) {
+    return (_asDouble(_firstDefinedStyleValue(style, keys)) ?? fallback)
+        .toDouble();
+  }
+
+  int _styleInt(
+    Map<String, dynamic> style,
+    Iterable<String> keys,
+    int fallback,
+  ) {
+    final value = _asDouble(_firstDefinedStyleValue(style, keys));
+    return value == null ? fallback : value.round();
+  }
+
+  TextAlign _styleTextAlign(
+    Map<String, dynamic> style, {
+    required TextAlign fallback,
+  }) {
+    final raw = _stringValue(
+      _firstDefinedStyleValue(style, ['text_align', 'align', 'alignment']),
+    );
+    return raw.isEmpty ? fallback : _textAlignFromString(raw);
+  }
+
+  EdgeInsets _resolveEdgeInsets(
+    Map<String, dynamic> style,
+    String key, {
+    required EdgeInsets fallback,
+  }) {
+    double left = fallback.left;
+    double top = fallback.top;
+    double right = fallback.right;
+    double bottom = fallback.bottom;
+    var changed = false;
+
+    void applyAll(double value) {
+      left = value;
+      top = value;
+      right = value;
+      bottom = value;
+      changed = true;
+    }
+
+    void applyMap(Map<String, dynamic> map) {
+      final all = _asDouble(map['all']);
+      if (all != null) {
+        applyAll(all);
+        return;
+      }
+
+      final horizontal = _asDouble(map['horizontal']);
+      final vertical = _asDouble(map['vertical']);
+      final nextLeft = _asDouble(map['left']) ?? horizontal;
+      final nextRight = _asDouble(map['right']) ?? horizontal;
+      final nextTop = _asDouble(map['top']) ?? vertical;
+      final nextBottom = _asDouble(map['bottom']) ?? vertical;
+
+      if (nextLeft != null) {
+        left = nextLeft;
+        changed = true;
+      }
+      if (nextRight != null) {
+        right = nextRight;
+        changed = true;
+      }
+      if (nextTop != null) {
+        top = nextTop;
+        changed = true;
+      }
+      if (nextBottom != null) {
+        bottom = nextBottom;
+        changed = true;
+      }
+    }
+
+    final raw = style[key];
+    if (raw is num) {
+      applyAll(raw.toDouble());
+    } else if (raw is List && raw.length == 4) {
+      final values = raw.map(_asDouble).toList(growable: false);
+      if (values.every((item) => item != null)) {
+        left = values[0]!;
+        top = values[1]!;
+        right = values[2]!;
+        bottom = values[3]!;
+        changed = true;
+      }
+    } else {
+      final rawMap = _asMap(raw);
+      if (rawMap != null && rawMap.isNotEmpty) {
+        applyMap(rawMap);
+      }
+    }
+
+    final all = _asDouble(style['${key}_all']);
+    if (all != null) {
+      applyAll(all);
+    } else {
+      final horizontal = _asDouble(style['${key}_horizontal']);
+      final vertical = _asDouble(style['${key}_vertical']);
+      final nextLeft = _asDouble(style['${key}_left']) ?? horizontal;
+      final nextRight = _asDouble(style['${key}_right']) ?? horizontal;
+      final nextTop = _asDouble(style['${key}_top']) ?? vertical;
+      final nextBottom = _asDouble(style['${key}_bottom']) ?? vertical;
+
+      if (nextLeft != null) {
+        left = nextLeft;
+        changed = true;
+      }
+      if (nextRight != null) {
+        right = nextRight;
+        changed = true;
+      }
+      if (nextTop != null) {
+        top = nextTop;
+        changed = true;
+      }
+      if (nextBottom != null) {
+        bottom = nextBottom;
+        changed = true;
+      }
+    }
+
+    if (!changed) return fallback;
+    return EdgeInsets.fromLTRB(left, top, right, bottom);
+  }
+
+  BoxFit _parseDocumentBoxFit(dynamic raw, {BoxFit fallback = BoxFit.cover}) {
+    final value = _stringValue(raw).toLowerCase();
+    switch (value) {
+      case 'contain':
+        return BoxFit.contain;
+      case 'fill':
+        return BoxFit.fill;
+      case 'fitwidth':
+      case 'fit_width':
+        return BoxFit.fitWidth;
+      case 'fitheight':
+      case 'fit_height':
+        return BoxFit.fitHeight;
+      case 'none':
+        return BoxFit.none;
+      case 'scaledown':
+      case 'scale_down':
+        return BoxFit.scaleDown;
+      case 'cover':
+        return BoxFit.cover;
+      default:
+        return fallback;
+    }
+  }
+
+  double _resolveSectionImageHeight(
+    Map<String, dynamic> style, {
+    required double fallbackHeight,
+    required double availableWidth,
+    double? intrinsicAspectRatio,
+  }) {
+    final styleAspectRatio = _asDouble(
+      _firstDefinedStyleValue(style, ['aspect_ratio', 'image_aspect_ratio']),
+    );
+    final explicitHeight = _asDouble(
+      _firstDefinedStyleValue(style, ['height', 'image_height']),
+    );
+    final minHeight = _asDouble(
+      _firstDefinedStyleValue(style, ['min_height', 'image_min_height']),
+    );
+    final maxHeight = _asDouble(
+      _firstDefinedStyleValue(style, ['max_height', 'image_max_height']),
+    );
+
+    final effectiveAspectRatio =
+        styleAspectRatio ??
+        ((intrinsicAspectRatio != null && intrinsicAspectRatio > 0)
+            ? intrinsicAspectRatio
+            : null);
+
+    var resolvedHeight = explicitHeight ?? fallbackHeight;
+    if (effectiveAspectRatio != null &&
+        effectiveAspectRatio > 0 &&
+        availableWidth > 0) {
+      resolvedHeight = availableWidth / effectiveAspectRatio;
+    }
+    if (minHeight != null) {
+      resolvedHeight = math.max(resolvedHeight, minHeight);
+    }
+    if (maxHeight != null) {
+      resolvedHeight = math.min(resolvedHeight, maxHeight);
+    }
+    return resolvedHeight.clamp(80.0, 2400.0).toDouble();
+  }
+
+  void _ensureDocumentImageAspectRatio(String url) {
+    if (url.isEmpty ||
+        _documentImageIntrinsicAspectRatios.containsKey(url) ||
+        _documentImageAspectRatioInFlight.contains(url)) {
+      return;
+    }
+
+    _documentImageAspectRatioInFlight.add(url);
+
+    final stream = CachedNetworkImageProvider(
+      url,
+    ).resolve(const ImageConfiguration());
+
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (ImageInfo info, bool _) {
+        stream.removeListener(listener);
+        _documentImageAspectRatioInFlight.remove(url);
+
+        final width = info.image.width.toDouble();
+        final height = info.image.height.toDouble();
+        if (width <= 0 || height <= 0) return;
+
+        final ratio = width / height;
+        final previous = _documentImageIntrinsicAspectRatios[url];
+        if (previous == ratio) return;
+        _documentImageIntrinsicAspectRatios[url] = ratio;
+
+        if (!mounted) return;
+
+        if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+          setState(() {});
+          return;
+        }
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {});
+        });
+      },
+      onError: (_, __) {
+        stream.removeListener(listener);
+        _documentImageAspectRatioInFlight.remove(url);
+      },
+    );
+
+    stream.addListener(listener);
   }
 
   String _resolveDocumentUrl(String raw) {
@@ -20895,15 +21432,34 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     FontStyle fontStyle = FontStyle.normal,
     double height = 1.45,
     double letterSpacing = 0,
+    Map<String, dynamic>? style,
   }) {
+    final textStyle = style ?? const <String, dynamic>{};
+    final resolvedColor = _parseDocumentColor(
+      _firstDefinedStyleValue(textStyle, ['color', 'text_color']),
+      color ?? _documentTextColor,
+    );
     return TextStyle(
-      fontFamily: _documentFontFamily,
-      fontSize: size,
-      fontWeight: weight,
-      color: color ?? _documentTextColor,
-      fontStyle: fontStyle,
-      height: height,
-      letterSpacing: letterSpacing,
+      fontFamily: _stringValue(
+        _firstDefinedStyleValue(textStyle, ['font_family']),
+        _documentFontFamily,
+      ),
+      fontSize: _styleDouble(textStyle, ['font_size', 'size'], size),
+      fontWeight: _parseDocumentFontWeight(
+        _firstDefinedStyleValue(textStyle, ['font_weight', 'weight']),
+        fallback: weight,
+      ),
+      color: resolvedColor,
+      fontStyle: _parseDocumentFontStyle(
+        _firstDefinedStyleValue(textStyle, [
+          'font_style',
+          'text_style',
+          'italic',
+        ]),
+        fallback: fontStyle,
+      ),
+      height: _styleDouble(textStyle, ['line_height', 'height'], height),
+      letterSpacing: _styleDouble(textStyle, ['letter_spacing'], letterSpacing),
     );
   }
 
@@ -20913,6 +21469,12 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         return TextAlign.center;
       case 'right':
         return TextAlign.right;
+      case 'start':
+        return TextAlign.start;
+      case 'end':
+        return TextAlign.end;
+      case 'justify':
+        return TextAlign.justify;
       default:
         return TextAlign.left;
     }
@@ -20936,9 +21498,12 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     List<String>? galleryImages,
     int initialIndex = 0,
     BoxFit fit = BoxFit.cover,
+    Map<String, dynamic>? style,
   }) {
     final url = _resolveDocumentUrl(rawUrl);
     if (url.isEmpty) return const SizedBox.shrink();
+    final imageStyle = style ?? const <String, dynamic>{};
+    _ensureDocumentImageAspectRatio(url);
 
     final images = (galleryImages == null || galleryImages.isEmpty)
         ? <String>[url]
@@ -20947,6 +21512,40 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               .where((item) => item.isNotEmpty)
               .toList(growable: false);
 
+    final showFrame = _asBool(
+      _firstDefinedStyleValue(imageStyle, ['show_frame', 'framed']),
+      fallback: true,
+    );
+    final showBorder = _asBool(
+      _firstDefinedStyleValue(imageStyle, ['show_border']),
+      fallback: showFrame,
+    );
+    final showShadow = _asBool(
+      _firstDefinedStyleValue(imageStyle, ['show_shadow']),
+      fallback: showFrame,
+    );
+    final enableViewer = _asBool(
+      _firstDefinedStyleValue(imageStyle, [
+        'enable_viewer',
+        'enable_image_viewer',
+      ]),
+      fallback: _documentEnableImageViewer,
+    );
+    final effectiveFit = _parseDocumentBoxFit(
+      _firstDefinedStyleValue(imageStyle, ['fit', 'image_fit', 'object_fit']),
+      fallback: fit,
+    );
+    final borderRadius =
+        (_asDouble(_firstDefinedStyleValue(imageStyle, ['border_radius'])) ??
+                _documentRadius)
+            .clamp(0.0, 48.0)
+            .toDouble();
+    final backgroundColor = _parseDocumentColor(
+      _firstDefinedStyleValue(imageStyle, ['background_color']),
+      showFrame ? Colors.white : Colors.transparent,
+    );
+    final intrinsicAspectRatio = _documentImageIntrinsicAspectRatios[url];
+
     final child = LayoutBuilder(
       builder: (context, constraints) {
         final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -20954,30 +21553,38 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
             constraints.maxWidth.isFinite && constraints.maxWidth > 0
             ? constraints.maxWidth
             : MediaQuery.of(context).size.width;
+        final resolvedHeight = _resolveSectionImageHeight(
+          imageStyle,
+          fallbackHeight: height,
+          availableWidth: visibleWidth,
+          intrinsicAspectRatio: intrinsicAspectRatio,
+        );
         final cacheWidth = (visibleWidth * dpr).round().clamp(1, 2400);
-        final cacheHeight = (height * dpr).round().clamp(1, 2400);
+        final cacheHeight = (resolvedHeight * dpr).round().clamp(1, 2400);
 
         return Container(
-          height: height,
+          height: resolvedHeight,
           width: double.infinity,
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(_documentRadius),
-            border: Border.all(color: _documentBorderColor),
-            boxShadow: [
-              BoxShadow(
-                color: _documentShadowColor,
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(borderRadius),
+            border: showBorder ? Border.all(color: _documentBorderColor) : null,
+            boxShadow: showShadow
+                ? [
+                    BoxShadow(
+                      color: _documentShadowColor,
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
           ),
           clipBehavior: Clip.antiAlias,
           child: CachedNetworkImage(
             imageUrl: url,
             width: double.infinity,
             height: double.infinity,
-            fit: fit,
+            fit: effectiveFit,
             memCacheWidth: cacheWidth,
             memCacheHeight: cacheHeight,
             maxWidthDiskCache: cacheWidth,
@@ -20996,22 +21603,128 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       },
     );
 
-    if (!_documentEnableImageViewer || images.isEmpty) return child;
+    if (!enableViewer || images.isEmpty) return child;
     return GestureDetector(
       onTap: () => _openStructuredGallery(images, initialIndex),
       child: child,
     );
   }
 
-  Widget _buildBulletList(List<String> items, {int columns = 1}) {
+  Widget _buildStyledSurface({
+    required Widget child,
+    Map<String, dynamic>? style,
+    EdgeInsets padding = EdgeInsets.zero,
+    EdgeInsets margin = EdgeInsets.zero,
+    Color backgroundColor = Colors.white,
+    bool showBorder = true,
+    bool showShadow = true,
+  }) {
+    final surfaceStyle = style ?? const <String, dynamic>{};
+    final resolvedPadding = _resolveEdgeInsets(
+      surfaceStyle,
+      'padding',
+      fallback: padding,
+    );
+    final resolvedMargin = _resolveEdgeInsets(
+      surfaceStyle,
+      'margin',
+      fallback: margin,
+    );
+    final resolvedBackground = _parseDocumentColor(
+      _firstDefinedStyleValue(surfaceStyle, ['background_color']),
+      backgroundColor,
+    );
+    final resolvedRadius = _styleDouble(surfaceStyle, [
+      'border_radius',
+    ], _documentRadius).clamp(0.0, 48.0).toDouble();
+    final resolvedShowBorder = _asBool(
+      _firstDefinedStyleValue(surfaceStyle, ['show_border']),
+      fallback: showBorder,
+    );
+    final resolvedBorderColor = _parseDocumentColor(
+      _firstDefinedStyleValue(surfaceStyle, ['border_color']),
+      _documentBorderColor,
+    );
+    final resolvedBorderWidth = _styleDouble(surfaceStyle, [
+      'border_width',
+    ], 1.0).clamp(0.0, 8.0).toDouble();
+    final resolvedShowShadow = _asBool(
+      _firstDefinedStyleValue(surfaceStyle, ['show_shadow']),
+      fallback: showShadow,
+    );
+    final resolvedShadowColor = _parseDocumentColor(
+      _firstDefinedStyleValue(surfaceStyle, ['shadow_color']),
+      _documentShadowColor,
+    );
+    final resolvedShadowBlur = _styleDouble(surfaceStyle, [
+      'shadow_blur',
+    ], 18.0).clamp(0.0, 80.0).toDouble();
+    final shadowOffsetX = _styleDouble(surfaceStyle, ['shadow_offset_x'], 0.0);
+    final shadowOffsetY = _styleDouble(surfaceStyle, ['shadow_offset_y'], 8.0);
+
+    return Container(
+      margin: resolvedMargin,
+      padding: resolvedPadding,
+      decoration: BoxDecoration(
+        color: resolvedBackground,
+        borderRadius: BorderRadius.circular(resolvedRadius),
+        border: resolvedShowBorder
+            ? Border.all(color: resolvedBorderColor, width: resolvedBorderWidth)
+            : null,
+        boxShadow: resolvedShowShadow
+            ? [
+                BoxShadow(
+                  color: resolvedShadowColor,
+                  blurRadius: resolvedShadowBlur,
+                  offset: Offset(shadowOffsetX, shadowOffsetY),
+                ),
+              ]
+            : null,
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildBulletList(
+    List<String> items, {
+    int columns = 1,
+    Map<String, dynamic>? style,
+    Map<String, dynamic>? itemTextStyle,
+    Map<String, dynamic>? bulletTextStyle,
+  }) {
     if (items.isEmpty) return const SizedBox.shrink();
+    final listStyle = style ?? const <String, dynamic>{};
+    final mergedItemStyle = _mergeStyleMaps([listStyle, itemTextStyle]);
+    final mergedBulletStyle = _mergeStyleMaps([listStyle, bulletTextStyle]);
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final effectiveColumns = columns > 1 && constraints.maxWidth > 280
-            ? columns
+        final requestedColumns = _styleInt(listStyle, [
+          'columns',
+          'column_count',
+        ], columns).clamp(1, 4);
+        final effectiveColumns =
+            requestedColumns > 1 && constraints.maxWidth > 280
+            ? requestedColumns
             : 1;
-        const spacing = 20.0;
+        final spacing = _styleDouble(listStyle, [
+          'column_gap',
+          'column_spacing',
+        ], 20.0);
+        final runSpacing = _styleDouble(listStyle, [
+          'row_gap',
+          'row_spacing',
+          'item_spacing',
+        ], 14.0);
+        final bulletGap = _styleDouble(listStyle, [
+          'bullet_gap',
+          'bullet_spacing',
+        ], 10.0);
+        final bulletSize = _styleDouble(listStyle, ['bullet_size'], 18.0);
+        final bulletColor = _parseDocumentColor(
+          _firstDefinedStyleValue(listStyle, ['bullet_color']),
+          _documentTextColor,
+        );
         final itemWidth = effectiveColumns == 1
             ? constraints.maxWidth
             : (constraints.maxWidth - spacing * (effectiveColumns - 1)) /
@@ -21019,7 +21732,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
 
         return Wrap(
           spacing: spacing,
-          runSpacing: 14,
+          runSpacing: runSpacing,
           children: items
               .map((item) {
                 return SizedBox(
@@ -21032,16 +21745,22 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                         child: Text(
                           '•',
                           style: _documentTextStyle(
-                            size: 18,
+                            size: bulletSize,
                             weight: FontWeight.w600,
+                            color: bulletColor,
+                            style: mergedBulletStyle,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      SizedBox(width: bulletGap),
                       Expanded(
                         child: Text(
                           item,
-                          style: _documentTextStyle(size: 16, height: 1.55),
+                          style: _documentTextStyle(
+                            size: 16,
+                            height: 1.55,
+                            style: mergedItemStyle,
+                          ),
                         ),
                       ),
                     ],
@@ -21069,7 +21788,10 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     return items;
   }
 
-  Widget _buildActionLinks(List<Map<String, dynamic>> links) {
+  Widget _buildActionLinks(
+    List<Map<String, dynamic>> links, {
+    Iterable<dynamic> styleSources = const [],
+  }) {
     if (links.isEmpty) return const SizedBox.shrink();
     return Wrap(
       spacing: 8,
@@ -21082,17 +21804,57 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
             );
             final url = _stringValue(link['url']);
             if (label.isEmpty || url.isEmpty) return const SizedBox.shrink();
+            final sources = <dynamic>[...styleSources, link];
+            final buttonStyle = _composeButtonStyle(sources);
+            final buttonTextStyle = _composeTextStyleFor(
+              'button_text',
+              sources,
+              aliases: const ['label', 'link_text'],
+            );
+            final padding = _resolveEdgeInsets(
+              buttonStyle,
+              'padding',
+              fallback: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            );
+            final radius = _styleDouble(buttonStyle, [
+              'border_radius',
+            ], 14.0).clamp(0.0, 36.0).toDouble();
+            final backgroundColor = _parseDocumentColor(
+              _firstDefinedStyleValue(buttonStyle, ['background_color']),
+              Colors.transparent,
+            );
+            final borderColor = _parseDocumentColor(
+              _firstDefinedStyleValue(buttonStyle, ['border_color']),
+              _documentAccentColor,
+            );
+            final borderWidth = _styleDouble(buttonStyle, [
+              'border_width',
+            ], 1.0).clamp(0.0, 6.0).toDouble();
+            final textColor = _parseDocumentColor(
+              _firstDefinedStyleValue(buttonStyle, [
+                'text_color',
+                'foreground_color',
+              ]),
+              _documentAccentColor,
+            );
+            final showBorder = _asBool(
+              _firstDefinedStyleValue(buttonStyle, ['show_border']),
+              fallback: true,
+            );
             return OutlinedButton(
               onPressed: () => _openDocumentLink(url, title: label),
               style: OutlinedButton.styleFrom(
-                side: BorderSide(color: _documentAccentColor),
-                foregroundColor: _documentAccentColor,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
+                side: showBorder
+                    ? BorderSide(color: borderColor, width: borderWidth)
+                    : BorderSide.none,
+                backgroundColor: backgroundColor,
+                foregroundColor: textColor,
+                padding: padding,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(radius),
                 ),
               ),
               child: Text(
@@ -21100,8 +21862,9 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                 style: _documentTextStyle(
                   size: 14,
                   weight: FontWeight.w600,
-                  color: _documentAccentColor,
+                  color: textColor,
                   height: 1.2,
+                  style: buttonTextStyle,
                 ),
               ),
             );
@@ -21123,7 +21886,58 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       buttonAction?['url'],
       _stringValue(button?['url']),
     );
-    final card = _buildSectionImage(imageUrl, height: 220, fit: BoxFit.cover);
+    final imageStyle = _composeImageStyle([section, image]);
+    final captionStyle = _composeTextStyleFor(
+      'caption',
+      [section, image],
+      aliases: const ['subtitle'],
+    );
+    final captionAlign = _styleTextAlign(
+      captionStyle,
+      fallback: TextAlign.center,
+    );
+    final buttonSurfaceStyle = _composeButtonStyle([section, button]);
+    final buttonTextStyle = _composeTextStyleFor(
+      'button_text',
+      [section, button],
+      aliases: const ['label'],
+    );
+    final buttonPadding = _resolveEdgeInsets(
+      buttonSurfaceStyle,
+      'padding',
+      fallback: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+    );
+    final buttonRadius = _styleDouble(buttonSurfaceStyle, [
+      'border_radius',
+    ], 16.0).clamp(0.0, 36.0).toDouble();
+    final buttonShowBorder = _asBool(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['show_border']),
+      fallback: false,
+    );
+    final buttonBorderColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['border_color']),
+      _documentAccentColor,
+    );
+    final buttonBorderWidth = _styleDouble(buttonSurfaceStyle, [
+      'border_width',
+    ], 1.0).clamp(0.0, 6.0).toDouble();
+    final buttonBackgroundColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['background_color']),
+      _documentAccentColor,
+    );
+    final buttonTextColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, [
+        'text_color',
+        'foreground_color',
+      ]),
+      Colors.white,
+    );
+    final card = _buildSectionImage(
+      imageUrl,
+      height: 220,
+      fit: BoxFit.cover,
+      style: imageStyle,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -21134,10 +21948,11 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         if (imageAlt.isNotEmpty)
           Text(
             imageAlt,
-            textAlign: TextAlign.center,
+            textAlign: captionAlign,
             style: _documentTextStyle(
               size: 14,
               color: _colorWithOpacity(_documentTextColor, 0.72),
+              style: captionStyle,
             ),
           ),
         if (buttonLabel.isNotEmpty && buttonUrl.isNotEmpty)
@@ -21146,12 +21961,18 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
           FilledButton(
             onPressed: () => _openDocumentLink(buttonUrl, title: buttonLabel),
             style: FilledButton.styleFrom(
-              backgroundColor: _documentAccentColor,
-              foregroundColor: Colors.white,
+              backgroundColor: buttonBackgroundColor,
+              foregroundColor: buttonTextColor,
               elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              side: buttonShowBorder
+                  ? BorderSide(
+                      color: buttonBorderColor,
+                      width: buttonBorderWidth,
+                    )
+                  : null,
+              padding: buttonPadding,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(buttonRadius),
               ),
             ),
             child: Text(
@@ -21159,8 +21980,9 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               style: _documentTextStyle(
                 size: 15,
                 weight: FontWeight.w700,
-                color: Colors.white,
+                color: buttonTextColor,
                 height: 1.2,
+                style: buttonTextStyle,
               ),
             ),
           ),
@@ -21171,34 +21993,89 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   Widget _buildStatsGridSection(Map<String, dynamic> section) {
     final items = _asMapList(section['items']);
     if (items.isEmpty) return const SizedBox.shrink();
+    final layoutStyle = _mergeStyleMaps([
+      _composeLayoutStyle([section]),
+      _composeNamedStyle('grid', [section], aliases: const ['stats_grid']),
+    ]);
+    final sectionItemSurfaceStyle = _mergeStyleMaps([
+      _composeSurfaceStyle([section], includeGenericSourceStyle: false),
+      _composeNamedStyle(
+        'item',
+        [section],
+        aliases: const ['card'],
+        includeGenericSourceStyle: false,
+      ),
+    ]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final bodyTextStyle = _composeTextStyleFor(
+      'text',
+      [section],
+      aliases: const ['body'],
+    );
+    final titleSpacing = _styleDouble(layoutStyle, [
+      'title_spacing',
+      'subtitle_spacing',
+    ], 8.0);
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 1.45,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: _styleInt(layoutStyle, [
+          'columns',
+          'grid_columns',
+        ], 2).clamp(1, 4),
+        mainAxisSpacing: _styleDouble(layoutStyle, [
+          'row_gap',
+          'main_axis_spacing',
+          'item_spacing',
+        ], 12.0),
+        crossAxisSpacing: _styleDouble(layoutStyle, [
+          'column_gap',
+          'cross_axis_spacing',
+        ], 12.0),
+        childAspectRatio: _styleDouble(layoutStyle, [
+          'child_aspect_ratio',
+          'aspect_ratio',
+        ], 1.45).clamp(0.5, 4.0),
       ),
       itemBuilder: (context, index) {
         final item = items[index];
         final title = _stringValue(item['title']);
         final subtitle = _stringValue(item['subtitle']);
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(_documentRadius),
-            border: Border.all(color: _documentBorderColor),
-            boxShadow: [
-              BoxShadow(
-                color: _documentShadowColor,
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
+        final itemSurfaceStyle = _mergeStyleMaps([
+          sectionItemSurfaceStyle,
+          _composeSurfaceStyle([item]),
+          _composeNamedStyle(
+            'item',
+            [item],
+            aliases: const ['card'],
+            includeGenericSourceStyle: true,
           ),
+        ]);
+        final itemTitleStyle = _mergeStyleMaps([
+          titleStyle,
+          _composeTextStyleFor(
+            'item_title',
+            [section, item],
+            aliases: const ['card_title'],
+          ),
+        ]);
+        final itemSubtitleStyle = _mergeStyleMaps([
+          bodyTextStyle,
+          _composeTextStyleFor(
+            'subtitle',
+            [section, item],
+            aliases: const ['item_subtitle', 'caption'],
+          ),
+        ]);
+        return _buildStyledSurface(
+          style: itemSurfaceStyle,
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -21211,14 +22088,19 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                     weight: FontWeight.w800,
                     color: _documentAccentColor,
                     height: 1.15,
+                    style: itemTitleStyle,
                   ),
                 ),
               if (title.isNotEmpty && subtitle.isNotEmpty)
-                const SizedBox(height: 8),
+                SizedBox(height: titleSpacing),
               if (subtitle.isNotEmpty)
                 Text(
                   subtitle,
-                  style: _documentTextStyle(size: 14, height: 1.35),
+                  style: _documentTextStyle(
+                    size: 14,
+                    height: 1.35,
+                    style: itemSubtitleStyle,
+                  ),
                 ),
             ],
           ),
@@ -21235,13 +22117,37 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     if (sectionType == 'hero_banner' || sectionType == 'image_banner') {
       return _buildImageBannerSection(section);
     }
-    final textAlign = _textAlignFromString(_stringValue(section['alignment']));
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final layoutStyle = _composeLayoutStyle([section]);
+    final logoStyle = _composeImageStyle([section, logo]);
+    final textAlign = _styleTextAlign(
+      titleStyle,
+      fallback: _textAlignFromString(_stringValue(section['alignment'])),
+    );
     final crossAxis = _crossAxisAlignmentFor(textAlign);
     final media = MediaQuery.of(context);
     final screenWidth = media.size.width;
     final dpr = media.devicePixelRatio;
-    final logoSize = screenWidth < 380 ? 74.0 : 92.0;
+    final logoSize = _styleDouble(logoStyle, [
+      'size',
+      'width',
+      'image_width',
+      'height',
+      'image_height',
+    ], screenWidth < 380 ? 74.0 : 92.0).clamp(24.0, 260.0).toDouble();
     final logoCacheSize = (logoSize * dpr).round().clamp(1, 512);
+    final logoSpacing = _styleDouble(layoutStyle, [
+      'logo_spacing',
+      'logo_bottom_spacing',
+    ], 18.0);
+    final logoFit = _parseDocumentBoxFit(
+      _firstDefinedStyleValue(logoStyle, ['fit', 'image_fit', 'object_fit']),
+      fallback: BoxFit.contain,
+    );
 
     return Column(
       crossAxisAlignment: crossAxis,
@@ -21257,7 +22163,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               imageUrl: _resolveDocumentUrl(logoUrl),
               width: logoSize,
               height: logoSize,
-              fit: BoxFit.contain,
+              fit: logoFit,
               memCacheWidth: logoCacheSize,
               memCacheHeight: logoCacheSize,
               maxWidthDiskCache: logoCacheSize,
@@ -21275,7 +22181,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               ),
             ),
           ),
-        if (logoUrl.isNotEmpty) const SizedBox(height: 18),
+        if (logoUrl.isNotEmpty) SizedBox(height: logoSpacing),
         if (title.isNotEmpty)
           Text(
             title,
@@ -21285,6 +22191,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               weight: FontWeight.w800,
               height: 1.08,
               color: _documentAccentColor,
+              style: titleStyle,
             ),
           ),
       ],
@@ -21303,6 +22210,34 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final imageUrl = _stringValue(image?['url'] ?? image?['image_url']);
     final imageFirst = layout == 'image_left_text_right';
     final useTwoColumns = bullets.length >= 6;
+    final bodyTextStyle = _composeTextStyleFor(
+      'text',
+      [section],
+      aliases: const ['body'],
+    );
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final leadStyle = _mergeStyleMaps([
+      bodyTextStyle,
+      _composeTextStyleFor('lead', [section], aliases: const ['intro_text']),
+    ]);
+    final noteStyle = _mergeStyleMaps([
+      bodyTextStyle,
+      _composeTextStyleFor(
+        'note',
+        [section],
+        aliases: const ['caption', 'muted'],
+      ),
+    ]);
+    final listStyle = _composeNamedStyle(
+      'list',
+      [section],
+      aliases: const ['bullets'],
+    );
+    final layoutStyle = _composeLayoutStyle([section]);
 
     Widget buildTextBlock() {
       return Column(
@@ -21317,10 +22252,16 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                 fontStyle: FontStyle.italic,
                 height: 1.2,
                 color: _documentAccentColor,
+                style: titleStyle,
               ),
             ),
           if (title.isNotEmpty && (lead.isNotEmpty || bullets.isNotEmpty))
-            const SizedBox(height: 16),
+            SizedBox(
+              height: _styleDouble(layoutStyle, [
+                'title_spacing',
+                'content_spacing',
+              ], 16.0),
+            ),
           if (lead.isNotEmpty)
             Text(
               lead,
@@ -21330,12 +22271,25 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                     ? FontStyle.italic
                     : FontStyle.normal,
                 height: 1.6,
+                style: leadStyle,
               ),
             ),
-          if (lead.isNotEmpty && bullets.isNotEmpty) const SizedBox(height: 18),
+          if (lead.isNotEmpty && bullets.isNotEmpty)
+            SizedBox(
+              height: _styleDouble(layoutStyle, [
+                'content_spacing',
+                'text_gap',
+              ], 18.0),
+            ),
           if (bullets.isNotEmpty)
-            _buildBulletList(bullets, columns: useTwoColumns ? 2 : 1),
-          if (note.isNotEmpty) const SizedBox(height: 16),
+            _buildBulletList(
+              bullets,
+              columns: useTwoColumns ? 2 : 1,
+              style: listStyle,
+              itemTextStyle: bodyTextStyle,
+            ),
+          if (note.isNotEmpty)
+            SizedBox(height: _styleDouble(layoutStyle, ['note_spacing'], 16.0)),
           if (note.isNotEmpty)
             Text(
               note,
@@ -21344,28 +22298,52 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                 fontStyle: FontStyle.italic,
                 height: 1.5,
                 color: _colorWithOpacity(_documentTextColor, 0.78),
+                style: noteStyle,
               ),
             ),
         ],
       );
     }
 
+    final imageStyle = _composeImageStyle([section, image]);
     final imageWidget = imageUrl.isEmpty
         ? const SizedBox.shrink()
-        : _buildSectionImage(imageUrl, height: 340, fit: BoxFit.contain);
+        : _buildSectionImage(
+            imageUrl,
+            height: 340,
+            fit: BoxFit.contain,
+            style: imageStyle,
+          );
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 760 && imageUrl.isNotEmpty;
+        final wide =
+            constraints.maxWidth >=
+                _styleDouble(layoutStyle, [
+                  'wide_breakpoint',
+                  'breakpoint',
+                ], 760.0) &&
+            imageUrl.isNotEmpty;
         if (!wide) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (imageFirst && imageUrl.isNotEmpty) imageWidget,
-              if (imageFirst && imageUrl.isNotEmpty) const SizedBox(height: 20),
+              if (imageFirst && imageUrl.isNotEmpty)
+                SizedBox(
+                  height: _styleDouble(layoutStyle, [
+                    'mobile_before_text_gap',
+                    'mobile_image_text_gap',
+                  ], 20.0),
+                ),
               buildTextBlock(),
               if (!imageFirst && imageUrl.isNotEmpty)
-                const SizedBox(height: 24),
+                SizedBox(
+                  height: _styleDouble(layoutStyle, [
+                    'mobile_after_text_gap',
+                    'mobile_image_text_gap',
+                  ], 24.0),
+                ),
               if (!imageFirst && imageUrl.isNotEmpty) imageWidget,
             ],
           );
@@ -21377,7 +22355,13 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(flex: 11, child: leftChild),
-            const SizedBox(width: 28),
+            SizedBox(
+              width: _styleDouble(layoutStyle, [
+                'column_gap',
+                'content_gap',
+                'image_text_gap',
+              ], 28.0),
+            ),
             Expanded(flex: 9, child: rightChild),
           ],
         );
@@ -21385,21 +22369,39 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     );
   }
 
-  Widget _buildCarouselDots(int count, int activeIndex) {
+  Widget _buildCarouselDots(
+    int count,
+    int activeIndex, {
+    Map<String, dynamic>? style,
+  }) {
     if (count <= 1) return const SizedBox.shrink();
+    final dotsStyle = style ?? const <String, dynamic>{};
+    final activeColor = _parseDocumentColor(
+      _firstDefinedStyleValue(dotsStyle, ['active_color']),
+      _documentAccentColor,
+    );
+    final inactiveColor = _parseDocumentColor(
+      _firstDefinedStyleValue(dotsStyle, ['inactive_color']),
+      _colorWithOpacity(_documentAccentColor, 0.18),
+    );
+    final activeWidth = _styleDouble(dotsStyle, ['active_width'], 18.0);
+    final inactiveWidth = _styleDouble(dotsStyle, [
+      'inactive_width',
+      'width',
+    ], 7.0);
+    final dotHeight = _styleDouble(dotsStyle, ['height', 'dot_height'], 7.0);
+    final dotSpacing = _styleDouble(dotsStyle, ['spacing', 'dot_spacing'], 3.0);
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: List.generate(count, (index) {
         final active = index == activeIndex;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          margin: const EdgeInsets.symmetric(horizontal: 3),
-          width: active ? 18 : 7,
-          height: 7,
+          margin: EdgeInsets.symmetric(horizontal: dotSpacing),
+          width: active ? activeWidth : inactiveWidth,
+          height: dotHeight,
           decoration: BoxDecoration(
-            color: active
-                ? _documentAccentColor
-                : _colorWithOpacity(_documentAccentColor, 0.18),
+            color: active ? activeColor : inactiveColor,
             borderRadius: BorderRadius.circular(999),
           ),
         );
@@ -21411,9 +22413,36 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final title = _stringValue(section['title']);
     final groups = _asMapList(section['groups']);
     final screenWidth = MediaQuery.of(context).size.width;
-    final imageHeight = screenWidth < 420 ? 132.0 : 156.0;
-    final headingSize = screenWidth < 420 ? 20.0 : 23.0;
-    final cardWidthFactor = screenWidth < 420 ? 0.92 : 0.82;
+    final layoutStyle = _composeLayoutStyle([section]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final imageHeight = _styleDouble(layoutStyle, [
+      'image_height',
+      'card_height',
+    ], screenWidth < 420 ? 132.0 : 156.0);
+    final headingSize = _styleDouble(titleStyle, [
+      'font_size',
+      'size',
+    ], screenWidth < 420 ? 20.0 : 23.0);
+    final cardWidthFactor = _styleDouble(layoutStyle, [
+      'width_factor',
+      'card_width_factor',
+    ], screenWidth < 420 ? 0.92 : 0.82).clamp(0.2, 1.0).toDouble();
+    final titleSpacing = _styleDouble(layoutStyle, [
+      'title_spacing',
+      'label_spacing',
+    ], 18.0);
+    final groupSpacing = _styleDouble(layoutStyle, [
+      'group_spacing',
+      'section_spacing',
+    ], 42.0);
+    final imageSpacing = _styleDouble(layoutStyle, [
+      'image_spacing',
+      'item_spacing',
+    ], 18.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -21427,51 +22456,86 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               weight: FontWeight.w800,
               height: 1.25,
               color: _documentAccentColor,
+              style: titleStyle,
             ),
           ),
-        if (title.isNotEmpty && groups.isEmpty) const SizedBox(height: 18),
-        for (var i = 0; i < groups.length; i++) ...[
-          if (_stringValue(groups[i]['label']).isNotEmpty)
-            Text(
-              _stringValue(groups[i]['label']),
-              textAlign: TextAlign.center,
-              style: _documentTextStyle(
-                size: headingSize,
-                weight: FontWeight.w800,
-                height: 1.35,
-                letterSpacing: 0.2,
-                color: _documentAccentColor,
+        if (title.isNotEmpty && groups.isEmpty) SizedBox(height: titleSpacing),
+        for (final entry in groups.asMap().entries) ...[
+          (() {
+            final group = entry.value;
+            final groupTitleStyle = _mergeStyleMaps([
+              titleStyle,
+              _composeTextStyleFor(
+                'label',
+                [section, group],
+                aliases: const ['subtitle'],
               ),
-            ),
-          if (_stringValue(groups[i]['label']).isNotEmpty)
-            const SizedBox(height: 18),
-          ...(() {
-            final urls = _asMapList(groups[i]['images'])
+            ]);
+            final groupLayoutStyle = _mergeStyleMaps([
+              layoutStyle,
+              _composeLayoutStyle([group]),
+            ]);
+            final groupCardWidthFactor = _styleDouble(groupLayoutStyle, [
+              'width_factor',
+              'card_width_factor',
+            ], cardWidthFactor).clamp(0.2, 1.0).toDouble();
+            final groupImageSpacing = _styleDouble(groupLayoutStyle, [
+              'image_spacing',
+              'item_spacing',
+            ], imageSpacing);
+            final imageItems = _asMapList(group['images']);
+            final urls = imageItems
                 .map((item) => _resolveDocumentUrl(_stringValue(item['url'])))
                 .where((item) => item.isNotEmpty)
                 .toList(growable: false);
-            return List<Widget>.generate(urls.length, (index) {
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: index == urls.length - 1 ? 0 : 18,
-                ),
-                child: Align(
-                  alignment: Alignment.center,
-                  child: FractionallySizedBox(
-                    widthFactor: cardWidthFactor,
-                    child: _buildSectionImage(
-                      urls[index],
-                      height: imageHeight,
-                      fit: BoxFit.contain,
-                      galleryImages: urls,
-                      initialIndex: index,
+
+            return Column(
+              children: [
+                if (_stringValue(group['label']).isNotEmpty)
+                  Text(
+                    _stringValue(group['label']),
+                    textAlign: TextAlign.center,
+                    style: _documentTextStyle(
+                      size: headingSize,
+                      weight: FontWeight.w800,
+                      height: 1.35,
+                      letterSpacing: 0.2,
+                      color: _documentAccentColor,
+                      style: groupTitleStyle,
                     ),
                   ),
-                ),
-              );
-            });
+                if (_stringValue(group['label']).isNotEmpty)
+                  SizedBox(height: titleSpacing),
+                ...List<Widget>.generate(urls.length, (index) {
+                  final itemStyle = _composeImageStyle([
+                    section,
+                    group,
+                    imageItems[index],
+                  ]);
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index == urls.length - 1 ? 0 : groupImageSpacing,
+                    ),
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: FractionallySizedBox(
+                        widthFactor: groupCardWidthFactor,
+                        child: _buildSectionImage(
+                          urls[index],
+                          height: imageHeight,
+                          fit: BoxFit.contain,
+                          style: itemStyle,
+                          galleryImages: urls,
+                          initialIndex: index,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            );
           })(),
-          if (i != groups.length - 1) const SizedBox(height: 42),
+          if (entry.key != groups.length - 1) SizedBox(height: groupSpacing),
         ],
       ],
     );
@@ -21480,21 +22544,27 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   Widget _buildListSection(Map<String, dynamic> section) {
     final title = _stringValue(section['title']);
     final items = _extractBulletItems(section['items']);
+    final surfaceStyle = _composeSurfaceStyle([section]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final bodyTextStyle = _composeTextStyleFor(
+      'text',
+      [section],
+      aliases: const ['body'],
+    );
+    final listStyle = _composeNamedStyle(
+      'list',
+      [section],
+      aliases: const ['bullets'],
+    );
+    final layoutStyle = _composeLayoutStyle([section]);
 
-    return Container(
+    return _buildStyledSurface(
+      style: surfaceStyle,
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(_documentRadius),
-        border: Border.all(color: _documentBorderColor),
-        boxShadow: [
-          BoxShadow(
-            color: _documentShadowColor,
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -21505,10 +22575,19 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                 size: 20,
                 weight: FontWeight.w700,
                 color: _documentAccentColor,
+                style: titleStyle,
               ),
             ),
-          if (title.isNotEmpty && items.isNotEmpty) const SizedBox(height: 14),
-          if (items.isNotEmpty) _buildBulletList(items),
+          if (title.isNotEmpty && items.isNotEmpty)
+            SizedBox(
+              height: _styleDouble(layoutStyle, ['title_spacing'], 14.0),
+            ),
+          if (items.isNotEmpty)
+            _buildBulletList(
+              items,
+              style: listStyle,
+              itemTextStyle: bodyTextStyle,
+            ),
         ],
       ),
     );
@@ -21516,17 +22595,24 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
 
   Widget _buildTextBlockSection(Map<String, dynamic> section) {
     final text = _stringValue(section['text'], _stringValue(section['title']));
-    final textAlign = _textAlignFromString(_stringValue(section['alignment']));
     final links = _asMapList(section['links']);
     if (text.isEmpty && links.isEmpty) return const SizedBox.shrink();
+    final surfaceStyle = _composeSurfaceStyle([section]);
+    final textStyle = _composeTextStyleFor(
+      'text',
+      [section],
+      aliases: const ['body'],
+    );
+    final layoutStyle = _composeLayoutStyle([section]);
+    final textAlign = _styleTextAlign(
+      textStyle,
+      fallback: _textAlignFromString(_stringValue(section['alignment'])),
+    );
 
-    return Container(
+    return _buildStyledSurface(
+      style: surfaceStyle,
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(_documentRadius),
-        border: Border.all(color: _documentBorderColor),
-      ),
+      showShadow: false,
       child: Column(
         crossAxisAlignment: _crossAxisAlignmentFor(textAlign),
         children: [
@@ -21538,10 +22624,15 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                 size: 17,
                 height: 1.6,
                 color: _documentAccentColor,
+                style: textStyle,
               ),
             ),
-          if (text.isNotEmpty && links.isNotEmpty) const SizedBox(height: 14),
-          if (links.isNotEmpty) _buildActionLinks(links),
+          if (text.isNotEmpty && links.isNotEmpty)
+            SizedBox(
+              height: _styleDouble(layoutStyle, ['content_spacing'], 14.0),
+            ),
+          if (links.isNotEmpty)
+            _buildActionLinks(links, styleSources: [section]),
         ],
       ),
     );
@@ -21558,7 +22649,21 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final autoPlay = _asBool(desktop?['autoplay'], fallback: false);
     final showDots = _asBool(mobile?['show_dots'], fallback: false);
     final screenWidth = MediaQuery.of(context).size.width;
-    final galleryHeight = screenWidth < 420 ? 320.0 : 380.0;
+    final layoutStyle = _composeLayoutStyle([section]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final dotsStyle = _composeNamedStyle(
+      'dots',
+      [section],
+      aliases: const ['carousel_dots'],
+    );
+    final galleryHeight = _styleDouble(layoutStyle, [
+      'gallery_height',
+      'height',
+    ], screenWidth < 420 ? 320.0 : 380.0);
     final urls = images
         .map((item) => _resolveDocumentUrl(_stringValue(item['url'])))
         .where((item) => item.isNotEmpty)
@@ -21574,9 +22679,11 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               size: 22,
               weight: FontWeight.w700,
               color: _documentAccentColor,
+              style: titleStyle,
             ),
           ),
-        if (title.isNotEmpty) const SizedBox(height: 16),
+        if (title.isNotEmpty)
+          SizedBox(height: _styleDouble(layoutStyle, ['title_spacing'], 16.0)),
         CarouselSlider(
           options: CarouselOptions(
             height: galleryHeight,
@@ -21589,16 +22696,24 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
             },
           ),
           items: urls.asMap().entries.map((entry) {
+            final itemStyle = _composeImageStyle([section, images[entry.key]]);
             return _buildSectionImage(
               entry.value,
               height: galleryHeight,
+              style: itemStyle,
               galleryImages: urls,
               initialIndex: entry.key,
             );
           }).toList(),
         ),
-        if (showDots) const SizedBox(height: 12),
-        if (showDots) _buildCarouselDots(urls.length, _galleryCarouselIndex),
+        if (showDots)
+          SizedBox(height: _styleDouble(layoutStyle, ['dots_spacing'], 12.0)),
+        if (showDots)
+          _buildCarouselDots(
+            urls.length,
+            _galleryCarouselIndex,
+            style: dotsStyle,
+          ),
       ],
     );
   }
@@ -21609,135 +22724,225 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final contact = _asMap(section['contact']);
     final buttonLabel = _stringValue(button?['label']);
     final buttonUrl = _stringValue(button?['url']);
-    final buttonStyle = _stringValue(button?['style']);
+    final buttonPreset = button?['style'] is String
+        ? (button?['style'] as String).trim()
+        : '';
     final contactText = _stringValue(contact?['text']);
     final phone = _stringValue(contact?['phone']);
     final phoneDisplay = _stringValue(contact?['phone_display'], phone);
-    final isDarkButton = buttonStyle == 'primary_dark';
+    final isDarkButton = buttonPreset == 'primary_dark';
+    final surfaceStyle = _composeSurfaceStyle([section]);
+    final layoutStyle = _composeLayoutStyle([section]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final buttonSurfaceStyle = _composeButtonStyle([section, button]);
+    final buttonTextStyle = _composeTextStyleFor(
+      'button_text',
+      [section, button],
+      aliases: const ['label'],
+    );
+    final contactTextStyle = _mergeStyleMaps([
+      _composeTextStyleFor('text', [section], aliases: const ['body']),
+      _composeTextStyleFor(
+        'contact_text',
+        [section, contact],
+        aliases: const ['contact'],
+      ),
+    ]);
+    final phoneTextStyle = _mergeStyleMaps([
+      _composeTextStyleFor('text', [section], aliases: const ['body']),
+      _composeTextStyleFor(
+        'phone_text',
+        [section, contact],
+        aliases: const ['phone'],
+      ),
+    ]);
     final screenWidth = MediaQuery.of(context).size.width;
-    final titleSize = screenWidth < 420 ? 28.0 : 32.0;
-    final buttonMaxWidth = screenWidth < 420 ? 300.0 : 340.0;
-    final buttonMinHeight = screenWidth < 420 ? 82.0 : 92.0;
-    final phoneSize = screenWidth < 420 ? 24.0 : 28.0;
+    final titleSize = _styleDouble(titleStyle, [
+      'font_size',
+      'size',
+    ], screenWidth < 420 ? 28.0 : 32.0);
+    final buttonMaxWidth = _styleDouble(layoutStyle, [
+      'button_max_width',
+    ], screenWidth < 420 ? 300.0 : 340.0);
+    final buttonMinHeight = _styleDouble(buttonSurfaceStyle, [
+      'min_height',
+      'button_min_height',
+    ], screenWidth < 420 ? 82.0 : 92.0);
+    final phoneSize = _styleDouble(phoneTextStyle, [
+      'font_size',
+      'size',
+    ], screenWidth < 420 ? 24.0 : 28.0);
+    final titleMaxWidth = _styleDouble(layoutStyle, ['title_max_width'], 520.0);
+    final contactMaxWidth = _styleDouble(layoutStyle, [
+      'contact_max_width',
+    ], 380.0);
+    final buttonPadding = _resolveEdgeInsets(
+      buttonSurfaceStyle,
+      'padding',
+      fallback: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+    );
+    final buttonRadius = _styleDouble(buttonSurfaceStyle, [
+      'border_radius',
+    ], 18.0).clamp(0.0, 36.0).toDouble();
+    final buttonShowBorder = _asBool(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['show_border']),
+      fallback: !isDarkButton,
+    );
+    final buttonBorderColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['border_color']),
+      _documentAccentColor,
+    );
+    final buttonBorderWidth = _styleDouble(buttonSurfaceStyle, [
+      'border_width',
+    ], 1.0).clamp(0.0, 6.0).toDouble();
+    final buttonBackgroundColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, ['background_color']),
+      isDarkButton ? _documentAccentColor : Colors.white,
+    );
+    final buttonTextColor = _parseDocumentColor(
+      _firstDefinedStyleValue(buttonSurfaceStyle, [
+        'text_color',
+        'foreground_color',
+      ]),
+      isDarkButton ? Colors.white : _documentAccentColor,
+    );
+    final titleAlign = _styleTextAlign(titleStyle, fallback: TextAlign.center);
+    final contactAlign = _styleTextAlign(
+      contactTextStyle,
+      fallback: TextAlign.center,
+    );
+    final phoneAlign = _styleTextAlign(
+      phoneTextStyle,
+      fallback: TextAlign.center,
+    );
 
     return Align(
       alignment: Alignment.center,
-      child: Container(
+      child: SizedBox(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(_documentRadius),
-          border: Border.all(
-            color: _colorWithOpacity(_documentAccentColor, 0.06),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            if (title.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: _documentTextStyle(
-                    size: titleSize,
-                    weight: FontWeight.w800,
-                    height: 1.22,
-                    letterSpacing: 0.2,
-                    color: _documentAccentColor,
-                  ),
-                ),
-              ),
-            if (title.isNotEmpty && buttonLabel.isNotEmpty)
-              const SizedBox(height: 26),
-            if (buttonLabel.isNotEmpty)
-              ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: buttonMaxWidth),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () =>
-                        _openDocumentLink(buttonUrl, title: buttonLabel),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: isDarkButton
-                          ? _documentAccentColor
-                          : Colors.white,
-                      foregroundColor: isDarkButton
-                          ? Colors.white
-                          : _documentAccentColor,
-                      elevation: 0,
-                      minimumSize: Size(double.infinity, buttonMinHeight),
-                      side: isDarkButton
-                          ? null
-                          : BorderSide(color: _documentAccentColor),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                    ),
-                    child: Text(
-                      buttonLabel,
-                      textAlign: TextAlign.center,
-                      style: _documentTextStyle(
-                        size: 18,
-                        weight: FontWeight.w700,
-                        color: isDarkButton
-                            ? Colors.white
-                            : _documentAccentColor,
-                        height: 1.35,
-                        letterSpacing: 0.25,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            if ((contactText.isNotEmpty || phoneDisplay.isNotEmpty) &&
-                buttonLabel.isNotEmpty)
-              const SizedBox(height: 28),
-            if (contactText.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 380),
-                child: Text(
-                  contactText,
-                  textAlign: TextAlign.center,
-                  style: _documentTextStyle(
-                    size: 17,
-                    height: 1.45,
-                    color: _colorWithOpacity(_documentTextColor, 0.78),
-                  ),
-                ),
-              ),
-            if (contactText.isNotEmpty && phoneDisplay.isNotEmpty)
-              const SizedBox(height: 18),
-            if (phoneDisplay.isNotEmpty)
-              InkWell(
-                onTap: () =>
-                    _openDocumentPhone(phone.isNotEmpty ? phone : phoneDisplay),
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
+        child: _buildStyledSurface(
+          style: _mergeStyleMaps([
+            {'border_color': _colorWithOpacity(_documentAccentColor, 0.06)},
+            surfaceStyle,
+          ]),
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+          showShadow: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (title.isNotEmpty)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: titleMaxWidth),
                   child: Text(
-                    phoneDisplay,
-                    textAlign: TextAlign.center,
+                    title,
+                    textAlign: titleAlign,
                     style: _documentTextStyle(
-                      size: phoneSize,
+                      size: titleSize,
                       weight: FontWeight.w800,
-                      height: 1.15,
+                      height: 1.22,
                       letterSpacing: 0.2,
                       color: _documentAccentColor,
+                      style: titleStyle,
                     ),
                   ),
                 ),
-              ),
-          ],
+              if (title.isNotEmpty && buttonLabel.isNotEmpty)
+                SizedBox(
+                  height: _styleDouble(layoutStyle, ['button_spacing'], 26.0),
+                ),
+              if (buttonLabel.isNotEmpty)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: buttonMaxWidth),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () =>
+                          _openDocumentLink(buttonUrl, title: buttonLabel),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: buttonBackgroundColor,
+                        foregroundColor: buttonTextColor,
+                        elevation: 0,
+                        minimumSize: Size(double.infinity, buttonMinHeight),
+                        side: buttonShowBorder
+                            ? BorderSide(
+                                color: buttonBorderColor,
+                                width: buttonBorderWidth,
+                              )
+                            : null,
+                        padding: buttonPadding,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(buttonRadius),
+                        ),
+                      ),
+                      child: Text(
+                        buttonLabel,
+                        textAlign: TextAlign.center,
+                        style: _documentTextStyle(
+                          size: 18,
+                          weight: FontWeight.w700,
+                          color: buttonTextColor,
+                          height: 1.35,
+                          letterSpacing: 0.25,
+                          style: buttonTextStyle,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if ((contactText.isNotEmpty || phoneDisplay.isNotEmpty) &&
+                  buttonLabel.isNotEmpty)
+                SizedBox(
+                  height: _styleDouble(layoutStyle, ['contact_spacing'], 28.0),
+                ),
+              if (contactText.isNotEmpty)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: contactMaxWidth),
+                  child: Text(
+                    contactText,
+                    textAlign: contactAlign,
+                    style: _documentTextStyle(
+                      size: 17,
+                      height: 1.45,
+                      color: _colorWithOpacity(_documentTextColor, 0.78),
+                      style: contactTextStyle,
+                    ),
+                  ),
+                ),
+              if (contactText.isNotEmpty && phoneDisplay.isNotEmpty)
+                SizedBox(
+                  height: _styleDouble(layoutStyle, ['phone_spacing'], 18.0),
+                ),
+              if (phoneDisplay.isNotEmpty)
+                InkWell(
+                  onTap: () => _openDocumentPhone(
+                    phone.isNotEmpty ? phone : phoneDisplay,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Text(
+                      phoneDisplay,
+                      textAlign: phoneAlign,
+                      style: _documentTextStyle(
+                        size: phoneSize,
+                        weight: FontWeight.w800,
+                        height: 1.15,
+                        letterSpacing: 0.2,
+                        color: _documentAccentColor,
+                        style: phoneTextStyle,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -21750,6 +22955,21 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     if (title.isEmpty && cards.isEmpty && footerText.isEmpty) {
       return const SizedBox.shrink();
     }
+    final layoutStyle = _composeLayoutStyle([section]);
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final bodyTextStyle = _composeTextStyleFor(
+      'text',
+      [section],
+      aliases: const ['body'],
+    );
+    final footerTextStyle = _mergeStyleMaps([
+      bodyTextStyle,
+      _composeTextStyleFor('footer', [section]),
+    ]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -21761,34 +22981,75 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
               size: 22,
               weight: FontWeight.w800,
               color: _documentAccentColor,
+              style: titleStyle,
             ),
           ),
-        if (title.isNotEmpty && cards.isNotEmpty) const SizedBox(height: 16),
+        if (title.isNotEmpty && cards.isNotEmpty)
+          SizedBox(height: _styleDouble(layoutStyle, ['title_spacing'], 16.0)),
         ...cards.map((card) {
           final cardTitle = _stringValue(card['title']);
           final description = _extractBulletItems(card['description']);
           final imageUrl = _stringValue(card['background_image_url']);
-          return Container(
-            margin: const EdgeInsets.only(bottom: 16),
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(_documentRadius),
-              border: Border.all(color: _documentBorderColor),
-              boxShadow: [
-                BoxShadow(
-                  color: _documentShadowColor,
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+          final imageStyle = _composeImageStyle([section, card]);
+          final cardSurfaceStyle = _mergeStyleMaps([
+            _composeSurfaceStyle([section], includeGenericSourceStyle: false),
+            _composeNamedStyle(
+              'card',
+              [section],
+              aliases: const ['item'],
+              includeGenericSourceStyle: false,
             ),
+            _composeSurfaceStyle([card]),
+            _composeNamedStyle(
+              'card',
+              [card],
+              aliases: const ['item'],
+              includeGenericSourceStyle: true,
+            ),
+          ]);
+          final cardTitleStyle = _mergeStyleMaps([
+            titleStyle,
+            _composeTextStyleFor(
+              'card_title',
+              [section, card],
+              aliases: const ['item_title'],
+            ),
+          ]);
+          final cardTextStyle = _mergeStyleMaps([
+            bodyTextStyle,
+            _composeTextStyleFor(
+              'card_text',
+              [section, card],
+              aliases: const ['item_text'],
+            ),
+          ]);
+          final cardListStyle = _composeNamedStyle(
+            'list',
+            [section, card],
+            aliases: const ['bullets'],
+          );
+          return _buildStyledSurface(
+            style: cardSurfaceStyle,
+            margin: EdgeInsets.only(
+              bottom: _styleDouble(layoutStyle, [
+                'card_spacing',
+                'item_spacing',
+              ], 16.0),
+            ),
+            padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (imageUrl.isNotEmpty) ...[
-                  _buildSectionImage(imageUrl, height: 180, fit: BoxFit.cover),
-                  const SizedBox(height: 16),
+                  _buildSectionImage(
+                    imageUrl,
+                    height: 180,
+                    fit: BoxFit.cover,
+                    style: imageStyle,
+                  ),
+                  SizedBox(
+                    height: _styleDouble(layoutStyle, ['image_spacing'], 16.0),
+                  ),
                 ],
                 if (cardTitle.isNotEmpty)
                   Text(
@@ -21797,17 +23058,35 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                       size: 20,
                       weight: FontWeight.w700,
                       color: _documentAccentColor,
+                      style: cardTitleStyle,
                     ),
                   ),
                 if (cardTitle.isNotEmpty && description.isNotEmpty)
-                  const SizedBox(height: 12),
-                if (description.isNotEmpty) _buildBulletList(description),
+                  SizedBox(
+                    height: _styleDouble(layoutStyle, [
+                      'description_spacing',
+                      'content_spacing',
+                    ], 12.0),
+                  ),
+                if (description.isNotEmpty)
+                  _buildBulletList(
+                    description,
+                    style: cardListStyle,
+                    itemTextStyle: cardTextStyle,
+                  ),
               ],
             ),
           );
         }),
         if (footerText.isNotEmpty)
-          Text(footerText, style: _documentTextStyle(size: 16, height: 1.55)),
+          Text(
+            footerText,
+            style: _documentTextStyle(
+              size: 16,
+              height: 1.55,
+              style: footerTextStyle,
+            ),
+          ),
       ],
     );
   }
@@ -21818,25 +23097,38 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       image?['url'] ?? section['image_url'] ?? image?['image_url'],
     );
     if (imageUrl.isEmpty) return const SizedBox.shrink();
-    return _buildSectionImage(imageUrl, height: 220, fit: BoxFit.cover);
+    final imageStyle = _composeImageStyle([section, image]);
+    return _buildSectionImage(
+      imageUrl,
+      height: 220,
+      fit: BoxFit.cover,
+      style: imageStyle,
+    );
   }
 
   Widget _buildFaqPlaceholderSection(Map<String, dynamic> section) {
     final text = _stringValue(section['placeholder_text']);
     if (text.isEmpty) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(_documentRadius),
-        border: Border.all(color: _documentBorderColor),
+    final surfaceStyle = _composeSurfaceStyle([section]);
+    final textStyle = _mergeStyleMaps([
+      _composeTextStyleFor('text', [section], aliases: const ['body']),
+      _composeTextStyleFor(
+        'note',
+        [section],
+        aliases: const ['caption', 'muted'],
       ),
+    ]);
+    return _buildStyledSurface(
+      style: surfaceStyle,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      showShadow: false,
       child: Text(
         text,
         style: _documentTextStyle(
           size: 15,
           height: 1.55,
           color: _colorWithOpacity(_documentTextColor, 0.78),
+          style: textStyle,
         ),
       ),
     );
@@ -21889,6 +23181,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   Widget _buildStructuredBody() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final layoutStyle = _composeLayoutStyle([_document['app_layout']]);
         final preloadExtent = (MediaQuery.of(context).size.height * 1.4).clamp(
           600.0,
           1600.0,
@@ -21899,9 +23192,19 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
             constraints: BoxConstraints(maxWidth: _documentMaxWidth),
             child: ListView.separated(
               cacheExtent: preloadExtent,
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+              padding: _resolveEdgeInsets(
+                layoutStyle,
+                'padding',
+                fallback: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+              ),
               itemCount: _documentSections.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 28),
+              separatorBuilder: (_, __) => SizedBox(
+                height: _styleDouble(layoutStyle, [
+                  'section_spacing',
+                  'gap',
+                  'item_spacing',
+                ], 28.0),
+              ),
               itemBuilder: (context, index) {
                 return _buildStructuredSection(_documentSections[index]);
               },

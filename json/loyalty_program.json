@@ -28,10 +28,24 @@
       "shadow": "0 4px 24px rgba(122, 92, 58, 0.08)"
     }
   },
+  "theme": {
+    "image": {
+      "background_color": "#FFFFFF",
+      "show_border": true,
+      "show_shadow": true,
+      "border_radius": 14
+    }
+  },
   "hero": {
     "type": "image_banner",
-    "image_url": "https://hozyain-barin.ru/wa-data/public/site/bonus/bonus_title_1.jpg",
-    "image_alt": "Новая бонусная система",
+    "image": {
+      "url": "https://hozyain-barin.ru/wa-data/public/site/bonus/bonus_title_1.jpg",
+      "alt": "Новая бонусная система",
+      "style": {
+        "height": 260,
+        "fit": "contain"
+      }
+    },
     "cta": {
       "label": "Зарегистрироваться",
       "action": {
@@ -102,6 +116,10 @@
   },
   "main_section": {
     "title": "КЭШБЕК",
+    "image_style": {
+      "height": 180,
+      "fit": "cover"
+    },
     "cards": [
       {
         "type": "birthday_bonus",
@@ -119,8 +137,14 @@
   },
   "wallet_banner": {
     "type": "image",
-    "image_url": "https://hozyain-barin.ru/wa-data/public/site/bonus/card_wallet.jpg",
-    "image_alt": "Карта лояльности в Wallet"
+    "image": {
+      "url": "https://hozyain-barin.ru/wa-data/public/site/bonus/card_wallet.jpg",
+      "alt": "Карта лояльности в Wallet",
+      "style": {
+        "height": 240,
+        "fit": "contain"
+      }
+    }
   },
   "faq": {
     "type": "dynamic_faq",
