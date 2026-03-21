@@ -20197,6 +20197,37 @@ List<String> _extractCriticalNativeJsonImageUrls(
           );
         }
         break;
+      case 'cards':
+      case 'main_section':
+        final cards = _nativeJsonMapList(section['cards']);
+        if (cards.isNotEmpty) {
+          final firstCard = cards.first;
+          _appendCriticalNativeJsonImage(
+            urls,
+            firstCard['background_image'],
+            baseUrl: baseUrl,
+            limit: limit,
+          );
+          _appendCriticalNativeJsonImage(
+            urls,
+            firstCard['background_image_url'],
+            baseUrl: baseUrl,
+            limit: limit,
+          );
+          _appendCriticalNativeJsonImage(
+            urls,
+            firstCard['image'],
+            baseUrl: baseUrl,
+            limit: limit,
+          );
+          _appendCriticalNativeJsonImage(
+            urls,
+            firstCard['image_url'],
+            baseUrl: baseUrl,
+            limit: limit,
+          );
+        }
+        break;
       default:
         _appendCriticalNativeJsonImage(
           urls,
@@ -21618,6 +21649,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     Color backgroundColor = Colors.white,
     bool showBorder = true,
     bool showShadow = true,
+    DecorationImage? backgroundImage,
   }) {
     final surfaceStyle = style ?? const <String, dynamic>{};
     final resolvedPadding = _resolveEdgeInsets(
@@ -21667,6 +21699,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       padding: resolvedPadding,
       decoration: BoxDecoration(
         color: resolvedBackground,
+        image: backgroundImage,
         borderRadius: BorderRadius.circular(resolvedRadius),
         border: resolvedShowBorder
             ? Border.all(color: resolvedBorderColor, width: resolvedBorderWidth)
@@ -21774,6 +21807,13 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   }
 
   List<String> _extractBulletItems(dynamic raw) {
+    if (raw is String) {
+      return raw
+          .split(RegExp(r'\r?\n'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
     if (raw is! List) return const <String>[];
     final items = <String>[];
     for (final item in raw) {
@@ -21786,6 +21826,106 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       if (text.isNotEmpty) items.add(text);
     }
     return items;
+  }
+
+  Widget _buildImageBackgroundCard({
+    required String title,
+    required List<String> description,
+    required String imageUrl,
+    required Map<String, dynamic> imageStyle,
+    required Map<String, dynamic> surfaceStyle,
+    required Map<String, dynamic> titleStyle,
+    required Map<String, dynamic> textStyle,
+    required Map<String, dynamic> descriptionStyle,
+    required Map<String, dynamic> layoutStyle,
+    required EdgeInsets margin,
+  }) {
+    final resolvedImageUrl = _resolveDocumentUrl(imageUrl);
+    final backgroundImage = resolvedImageUrl.isEmpty
+        ? null
+        : DecorationImage(
+            image: CachedNetworkImageProvider(resolvedImageUrl),
+            fit: _parseDocumentBoxFit(
+              _firstDefinedStyleValue(imageStyle, [
+                'fit',
+                'image_fit',
+                'object_fit',
+              ]),
+              fallback: BoxFit.cover,
+            ),
+            alignment: Alignment.center,
+          );
+    final textAlign = _styleTextAlign(
+      titleStyle,
+      fallback: _styleTextAlign(textStyle, fallback: TextAlign.left),
+    );
+    final descriptionSpacing = _styleDouble(layoutStyle, [
+      'description_spacing',
+      'content_spacing',
+    ], 12.0);
+    final lineSpacing = _styleDouble(descriptionStyle, [
+      'line_spacing',
+      'row_gap',
+      'item_spacing',
+    ], 14.0);
+    final minHeight = _styleDouble(surfaceStyle, [
+      'min_height',
+      'card_min_height',
+      'height',
+    ], 0.0).clamp(0.0, 2400.0).toDouble();
+
+    return SizedBox(
+      width: double.infinity,
+      child: _buildStyledSurface(
+        style: surfaceStyle,
+        margin: margin,
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
+        backgroundColor: const Color(0xFF3A312D),
+        showBorder: false,
+        showShadow: true,
+        backgroundImage: backgroundImage,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: minHeight),
+          child: Column(
+            crossAxisAlignment: _crossAxisAlignmentFor(textAlign),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (title.isNotEmpty)
+                Text(
+                  title,
+                  textAlign: textAlign,
+                  style: _documentTextStyle(
+                    size: 22,
+                    weight: FontWeight.w700,
+                    height: 1.35,
+                    color: Colors.white,
+                    style: titleStyle,
+                  ),
+                ),
+              if (title.isNotEmpty && description.isNotEmpty)
+                SizedBox(height: descriptionSpacing),
+              ...description.asMap().entries.map((entry) {
+                final isLast = entry.key == description.length - 1;
+                return Padding(
+                  padding: EdgeInsets.only(bottom: isLast ? 0 : lineSpacing),
+                  child: Text(
+                    entry.value,
+                    textAlign: textAlign,
+                    style: _documentTextStyle(
+                      size: 18,
+                      weight: FontWeight.w600,
+                      height: 1.45,
+                      color: Colors.white,
+                      style: textStyle,
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildActionLinks(
@@ -22987,9 +23127,16 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         if (title.isNotEmpty && cards.isNotEmpty)
           SizedBox(height: _styleDouble(layoutStyle, ['title_spacing'], 16.0)),
         ...cards.map((card) {
+          final cardVariant = _stringValue(card['variant']).toLowerCase();
           final cardTitle = _stringValue(card['title']);
           final description = _extractBulletItems(card['description']);
-          final imageUrl = _stringValue(card['background_image_url']);
+          final backgroundImage = _asMap(card['background_image']);
+          final imageUrl = _stringValue(
+            card['background_image_url'],
+            _stringValue(
+              backgroundImage?['url'] ?? backgroundImage?['image_url'],
+            ),
+          );
           final imageStyle = _composeImageStyle([section, card]);
           final cardSurfaceStyle = _mergeStyleMaps([
             _composeSurfaceStyle([section], includeGenericSourceStyle: false),
@@ -23028,14 +23175,29 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
             [section, card],
             aliases: const ['bullets'],
           );
+          final cardMargin = EdgeInsets.only(
+            bottom: _styleDouble(layoutStyle, [
+              'card_spacing',
+              'item_spacing',
+            ], 16.0),
+          );
+          if (cardVariant == 'image_background') {
+            return _buildImageBackgroundCard(
+              title: cardTitle,
+              description: description,
+              imageUrl: imageUrl,
+              imageStyle: imageStyle,
+              surfaceStyle: cardSurfaceStyle,
+              titleStyle: cardTitleStyle,
+              textStyle: cardTextStyle,
+              descriptionStyle: cardListStyle,
+              layoutStyle: layoutStyle,
+              margin: cardMargin,
+            );
+          }
           return _buildStyledSurface(
             style: cardSurfaceStyle,
-            margin: EdgeInsets.only(
-              bottom: _styleDouble(layoutStyle, [
-                'card_spacing',
-                'item_spacing',
-              ], 16.0),
-            ),
+            margin: cardMargin,
             padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -23321,6 +23483,10 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
                   ),
                   const SizedBox(width: 48),
                 ],
+              ),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(1.0),
+                child: Container(color: Colors.grey.shade200, height: 1.0),
               ),
             )
           : null,
