@@ -28,6 +28,12 @@
     "container": {
       "max_width": 950,
       "border_radius": 20
+    },
+    "image": {
+      "background_color": "#ffffff",
+      "show_border": true,
+      "show_shadow": true,
+      "border_radius": 20
     }
   },
   "sections": [
@@ -45,6 +51,10 @@
       "type": "two_column",
       "id": "intro",
       "layout": "text_left_image_right",
+      "image_style": {
+        "height": 340,
+        "fit": "contain"
+      },
       "text": {
         "lead": "Для истинных ценителей индивидуального подхода мы предлагаем нанести тиснение на предложенные изделия из наших коллекций:",
         "note": "(по индивидуальному согласованию)"
@@ -68,6 +78,10 @@
       "type": "two_column",
       "id": "personalization-options",
       "layout": "image_left_text_right",
+      "image_style": {
+        "height": 340,
+        "fit": "contain"
+      },
       "title": "Возможности персонализации:",
       "bullets": [
         "Одно или два слова на русском/английском языке",
@@ -125,6 +139,9 @@
       "type": "carousel_gallery",
       "id": "gallery",
       "title": "Галерея примеров",
+      "image_style": {
+        "fit": "cover"
+      },
       "behavior": {
         "desktop": {
           "slides_per_view": 3,
