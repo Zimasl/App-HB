@@ -20365,15 +20365,19 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     final documentMap = _asMap(source);
     if (documentMap != null) {
       final page = _asMap(documentMap['page']);
+      final screen = _asMap(documentMap['screen']);
       final titleRaw =
-          page?['title'] ?? documentMap['title'] ?? documentMap['name'];
+          page?['title'] ??
+          screen?['title'] ??
+          documentMap['title'] ??
+          documentMap['name'];
       final extractedTitle = titleRaw?.toString().trim() ?? '';
       if (extractedTitle.isNotEmpty) _pageTitle = extractedTitle;
     }
 
     final sections = documentMap == null
         ? const <Map<String, dynamic>>[]
-        : _asMapList(documentMap['sections']);
+        : _extractDocumentSections(documentMap);
     final useStructuredRenderer = documentMap != null && sections.isNotEmpty;
     final bodyText = _extractTextFromJson(source);
 
@@ -20392,6 +20396,70 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
 
     if (!mounted) return;
     setState(assign);
+  }
+
+  String _sectionTypeFromKey(String key, Map<String, dynamic>? payload) {
+    final explicit = _stringValue(payload?['type']);
+    if (explicit.isNotEmpty) return explicit;
+    switch (key) {
+      case 'quick_stats':
+        return 'stats_grid';
+      case 'wallet_banner':
+        return 'image_block';
+      case 'faq':
+        return 'faq_dynamic';
+      case 'main_section':
+        return 'cards';
+      default:
+        return key;
+    }
+  }
+
+  List<Map<String, dynamic>> _extractDocumentSections(
+    Map<String, dynamic>? document,
+  ) {
+    if (document == null) return const <Map<String, dynamic>>[];
+
+    final directSections = _asMapList(document['sections']);
+    if (directSections.isNotEmpty) {
+      return directSections;
+    }
+
+    final appLayout = _asMap(document['app_layout']);
+    final orderedKeys = _asStringList(appLayout?['sections']);
+    if (orderedKeys.isEmpty) return const <Map<String, dynamic>>[];
+
+    final sections = <Map<String, dynamic>>[];
+    for (final key in orderedKeys) {
+      final payload = document[key];
+      if (payload == null) continue;
+      final payloadMap = _asMap(payload);
+      if (payloadMap != null) {
+        sections.add({
+          ...payloadMap,
+          'id': _stringValue(payloadMap['id'], key),
+          'type': _sectionTypeFromKey(key, payloadMap),
+        });
+        continue;
+      }
+
+      if (payload is List) {
+        sections.add({
+          'id': key,
+          'type': _sectionTypeFromKey(key, null),
+          'items': payload,
+        });
+        continue;
+      }
+
+      sections.add({
+        'id': key,
+        'type': _sectionTypeFromKey(key, null),
+        'value': payload,
+      });
+    }
+
+    return sections;
   }
 
   Future<void> _loadDocument() async {
@@ -20416,7 +20484,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       final documentMap = _asMap(source);
       final sections = documentMap == null
           ? const <Map<String, dynamic>>[]
-          : _asMapList(documentMap['sections']);
+          : _extractDocumentSections(documentMap);
       final useStructuredRenderer = documentMap != null && sections.isNotEmpty;
       _applyLoadedDocument(source, shouldNotify: true);
       if (useStructuredRenderer) {
@@ -20453,28 +20521,43 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   Map<String, dynamic> get _documentThemeColors =>
       _asMap(_documentTheme['colors']) ?? const <String, dynamic>{};
 
+  Map<String, dynamic> get _documentScreenTheme =>
+      _asMap(_document['screen']) ?? const <String, dynamic>{};
+
   Map<String, dynamic> get _documentContainerTheme =>
       _asMap(_documentTheme['container']) ?? const <String, dynamic>{};
+
+  Map<String, dynamic> get _documentScreenContainerTheme =>
+      _asMap(_documentScreenTheme['container']) ?? const <String, dynamic>{};
 
   Map<String, dynamic> get _documentRenderHints =>
       _asMap(_document['app_render_hints']) ?? const <String, dynamic>{};
 
   List<Map<String, dynamic>> get _documentSections =>
-      _asMapList(_document['sections']);
+      _extractDocumentSections(_document);
 
-  String get _documentFontFamily =>
-      _stringValue(_documentTheme['font_family'], 'Roboto');
+  String get _documentFontFamily => _stringValue(
+    _documentTheme['font_family'],
+    _stringValue(_documentScreenTheme['font_family'], 'Roboto'),
+  );
 
   Color get _documentTextColor => _parseDocumentColor(
-    _documentThemeColors['text'],
+    _documentThemeColors['text'] ?? _documentScreenTheme['text_color'],
     const Color(0xFF1A1A1A),
   );
 
-  Color get _documentAccentColor =>
-      _parseDocumentColor(_documentThemeColors['accent'], _documentTextColor);
+  Color get _documentAccentColor => _parseDocumentColor(
+    _documentThemeColors['accent'] ??
+        _documentScreenTheme['accent_color'] ??
+        _documentScreenTheme['secondary_color'],
+    _documentTextColor,
+  );
 
-  Color get _documentBackgroundColor =>
-      _parseDocumentColor(_documentThemeColors['background'], Colors.white);
+  Color get _documentBackgroundColor => _parseDocumentColor(
+    _documentThemeColors['background'] ??
+        _documentScreenTheme['background_color'],
+    Colors.white,
+  );
 
   Color get _documentShadowColor => _parseDocumentColor(
     _documentThemeColors['shadow'],
@@ -20482,17 +20565,22 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   );
 
   Color get _documentBorderColor => _parseDocumentColor(
-    _documentThemeColors['border'],
+    _documentThemeColors['border'] ??
+        _documentScreenContainerTheme['border_color'],
     const Color(0x14D8B8A2),
   );
 
   double get _documentMaxWidth =>
-      (_asDouble(_documentContainerTheme['max_width']) ?? 950)
+      (_asDouble(_documentContainerTheme['max_width']) ??
+              _asDouble(_documentScreenContainerTheme['max_width']) ??
+              950)
           .clamp(320.0, 1200.0)
           .toDouble();
 
   double get _documentRadius =>
-      (_asDouble(_documentContainerTheme['border_radius']) ?? 20)
+      (_asDouble(_documentContainerTheme['border_radius']) ??
+              _asDouble(_documentScreenContainerTheme['border_radius']) ??
+              20)
           .clamp(0.0, 40.0)
           .toDouble();
 
@@ -20966,10 +21054,187 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     );
   }
 
+  List<String> _extractBulletItems(dynamic raw) {
+    if (raw is! List) return const <String>[];
+    final items = <String>[];
+    for (final item in raw) {
+      if (item is Map) {
+        final text = _stringValue(item['text']);
+        if (text.isNotEmpty) items.add(text);
+        continue;
+      }
+      final text = item?.toString().trim() ?? '';
+      if (text.isNotEmpty) items.add(text);
+    }
+    return items;
+  }
+
+  Widget _buildActionLinks(List<Map<String, dynamic>> links) {
+    if (links.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: links
+          .map((link) {
+            final label = _stringValue(
+              link['label'],
+              _stringValue(link['text']),
+            );
+            final url = _stringValue(link['url']);
+            if (label.isEmpty || url.isEmpty) return const SizedBox.shrink();
+            return OutlinedButton(
+              onPressed: () => _openDocumentLink(url, title: label),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: _documentAccentColor),
+                foregroundColor: _documentAccentColor,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: Text(
+                label,
+                style: _documentTextStyle(
+                  size: 14,
+                  weight: FontWeight.w600,
+                  color: _documentAccentColor,
+                  height: 1.2,
+                ),
+              ),
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Widget _buildImageBannerSection(Map<String, dynamic> section) {
+    final image = _asMap(section['image']);
+    final imageUrl = _stringValue(
+      image?['url'] ?? section['image_url'] ?? image?['image_url'],
+    );
+    final imageAlt = _stringValue(image?['alt'] ?? section['image_alt']);
+    final button = _asMap(section['button']) ?? _asMap(section['cta']);
+    final buttonAction = _asMap(button?['action']);
+    final buttonLabel = _stringValue(button?['label']);
+    final buttonUrl = _stringValue(
+      buttonAction?['url'],
+      _stringValue(button?['url']),
+    );
+    final card = _buildSectionImage(imageUrl, height: 220, fit: BoxFit.cover);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (imageUrl.isNotEmpty) card,
+        if (imageAlt.isNotEmpty && imageUrl.isNotEmpty)
+          const SizedBox(height: 10),
+        if (imageAlt.isNotEmpty)
+          Text(
+            imageAlt,
+            textAlign: TextAlign.center,
+            style: _documentTextStyle(
+              size: 14,
+              color: _colorWithOpacity(_documentTextColor, 0.72),
+            ),
+          ),
+        if (buttonLabel.isNotEmpty && buttonUrl.isNotEmpty)
+          const SizedBox(height: 18),
+        if (buttonLabel.isNotEmpty && buttonUrl.isNotEmpty)
+          FilledButton(
+            onPressed: () => _openDocumentLink(buttonUrl, title: buttonLabel),
+            style: FilledButton.styleFrom(
+              backgroundColor: _documentAccentColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: Text(
+              buttonLabel,
+              style: _documentTextStyle(
+                size: 15,
+                weight: FontWeight.w700,
+                color: Colors.white,
+                height: 1.2,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStatsGridSection(Map<String, dynamic> section) {
+    final items = _asMapList(section['items']);
+    if (items.isEmpty) return const SizedBox.shrink();
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: items.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1.45,
+      ),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final title = _stringValue(item['title']);
+        final subtitle = _stringValue(item['subtitle']);
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(_documentRadius),
+            border: Border.all(color: _documentBorderColor),
+            boxShadow: [
+              BoxShadow(
+                color: _documentShadowColor,
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (title.isNotEmpty)
+                Text(
+                  title,
+                  style: _documentTextStyle(
+                    size: 18,
+                    weight: FontWeight.w800,
+                    color: _documentAccentColor,
+                    height: 1.15,
+                  ),
+                ),
+              if (title.isNotEmpty && subtitle.isNotEmpty)
+                const SizedBox(height: 8),
+              if (subtitle.isNotEmpty)
+                Text(
+                  subtitle,
+                  style: _documentTextStyle(size: 14, height: 1.35),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildHeroSection(Map<String, dynamic> section) {
     final logo = _asMap(section['logo']);
     final logoUrl = _stringValue(logo?['image_url'] ?? logo?['url']);
     final title = _stringValue(section['title']);
+    final sectionType = _stringValue(section['type']);
+    if (sectionType == 'hero_banner' || sectionType == 'image_banner') {
+      return _buildImageBannerSection(section);
+    }
     final textAlign = _textAlignFromString(_stringValue(section['alignment']));
     final crossAxis = _crossAxisAlignmentFor(textAlign);
     final media = MediaQuery.of(context);
@@ -21214,7 +21479,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
 
   Widget _buildListSection(Map<String, dynamic> section) {
     final title = _stringValue(section['title']);
-    final items = _asStringList(section['items']);
+    final items = _extractBulletItems(section['items']);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -21250,9 +21515,10 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   }
 
   Widget _buildTextBlockSection(Map<String, dynamic> section) {
-    final text = _stringValue(section['text']);
+    final text = _stringValue(section['text'], _stringValue(section['title']));
     final textAlign = _textAlignFromString(_stringValue(section['alignment']));
-    if (text.isEmpty) return const SizedBox.shrink();
+    final links = _asMapList(section['links']);
+    if (text.isEmpty && links.isEmpty) return const SizedBox.shrink();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -21261,14 +21527,22 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         borderRadius: BorderRadius.circular(_documentRadius),
         border: Border.all(color: _documentBorderColor),
       ),
-      child: Text(
-        text,
-        textAlign: textAlign,
-        style: _documentTextStyle(
-          size: 17,
-          height: 1.6,
-          color: _documentAccentColor,
-        ),
+      child: Column(
+        crossAxisAlignment: _crossAxisAlignmentFor(textAlign),
+        children: [
+          if (text.isNotEmpty)
+            Text(
+              text,
+              textAlign: textAlign,
+              style: _documentTextStyle(
+                size: 17,
+                height: 1.6,
+                color: _documentAccentColor,
+              ),
+            ),
+          if (text.isNotEmpty && links.isNotEmpty) const SizedBox(height: 14),
+          if (links.isNotEmpty) _buildActionLinks(links),
+        ],
       ),
     );
   }
@@ -21469,23 +21743,139 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     );
   }
 
+  Widget _buildCardsSection(Map<String, dynamic> section) {
+    final title = _stringValue(section['title']);
+    final cards = _asMapList(section['cards']);
+    final footerText = _stringValue(section['footer_text']);
+    if (title.isEmpty && cards.isEmpty && footerText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title.isNotEmpty)
+          Text(
+            title,
+            style: _documentTextStyle(
+              size: 22,
+              weight: FontWeight.w800,
+              color: _documentAccentColor,
+            ),
+          ),
+        if (title.isNotEmpty && cards.isNotEmpty) const SizedBox(height: 16),
+        ...cards.map((card) {
+          final cardTitle = _stringValue(card['title']);
+          final description = _extractBulletItems(card['description']);
+          final imageUrl = _stringValue(card['background_image_url']);
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(_documentRadius),
+              border: Border.all(color: _documentBorderColor),
+              boxShadow: [
+                BoxShadow(
+                  color: _documentShadowColor,
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (imageUrl.isNotEmpty) ...[
+                  _buildSectionImage(imageUrl, height: 180, fit: BoxFit.cover),
+                  const SizedBox(height: 16),
+                ],
+                if (cardTitle.isNotEmpty)
+                  Text(
+                    cardTitle,
+                    style: _documentTextStyle(
+                      size: 20,
+                      weight: FontWeight.w700,
+                      color: _documentAccentColor,
+                    ),
+                  ),
+                if (cardTitle.isNotEmpty && description.isNotEmpty)
+                  const SizedBox(height: 12),
+                if (description.isNotEmpty) _buildBulletList(description),
+              ],
+            ),
+          );
+        }),
+        if (footerText.isNotEmpty)
+          Text(footerText, style: _documentTextStyle(size: 16, height: 1.55)),
+      ],
+    );
+  }
+
+  Widget _buildImageBlockSection(Map<String, dynamic> section) {
+    final image = _asMap(section['image']);
+    final imageUrl = _stringValue(
+      image?['url'] ?? section['image_url'] ?? image?['image_url'],
+    );
+    if (imageUrl.isEmpty) return const SizedBox.shrink();
+    return _buildSectionImage(imageUrl, height: 220, fit: BoxFit.cover);
+  }
+
+  Widget _buildFaqPlaceholderSection(Map<String, dynamic> section) {
+    final text = _stringValue(section['placeholder_text']);
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_documentRadius),
+        border: Border.all(color: _documentBorderColor),
+      ),
+      child: Text(
+        text,
+        style: _documentTextStyle(
+          size: 15,
+          height: 1.55,
+          color: _colorWithOpacity(_documentTextColor, 0.78),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStructuredSection(Map<String, dynamic> section) {
     final type = _stringValue(section['type']);
     switch (type) {
       case 'hero':
+      case 'hero_banner':
+      case 'image_banner':
         return _buildHeroSection(section);
       case 'two_column':
         return _buildTwoColumnSection(section);
       case 'font_examples':
         return _buildFontExamplesSection(section);
       case 'list':
+      case 'bulleted_list':
         return _buildListSection(section);
+      case 'intro':
       case 'text_block':
         return _buildTextBlockSection(section);
+      case 'stats_grid':
+        return _buildStatsGridSection(section);
       case 'carousel_gallery':
         return _buildCarouselGallerySection(section);
       case 'cta':
         return _buildCtaSection(section);
+      case 'cards':
+      case 'main_section':
+        return _buildCardsSection(section);
+      case 'image_block':
+      case 'image':
+      case 'wallet_banner':
+        return _buildImageBlockSection(section);
+      case 'faq_dynamic':
+      case 'dynamic_faq':
+      case 'faq':
+        return _buildFaqPlaceholderSection(section);
       default:
         final fallbackText = _extractTextFromJson(section).trim();
         if (fallbackText.isEmpty) return const SizedBox.shrink();
