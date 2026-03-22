@@ -115,6 +115,8 @@ const TextStyle _cardNameStyle = TextStyle(
 );
 const Set<String> _newCategoryIds = {"147"};
 const String _shopApiToken = "f616081435730714b089ec1115bac63b";
+const String _homeFeaturedProductsJsonUrl =
+    'https://hozyain-barin.ru/native/home_featured_products.json';
 const double _catalogBackSwipeEdgeWidth = 28;
 const double _catalogBackSwipeMinDistance = 72;
 const double _catalogBackSwipeMaxVerticalDrift = 96;
@@ -949,6 +951,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ScrollController _nativeScrollController;
   late final ScrollController _discountScrollController;
+  late final ScrollController _homeFeaturedProductsScrollController;
   late final ScrollController _homePromoScrollController;
   late final ScrollController _homeCategoryScrollController;
   late final ScrollController _homeDiscountTabsScrollController;
@@ -1129,6 +1132,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   int _heroBannerIndex = 0;
   Timer? _heroBannerRotateTimer;
   List<dynamic> _promoBanners = [];
+  Map<String, dynamic>? _homeFeaturedSectionConfig;
+  List<dynamic> _homeFeaturedProducts = [];
+  bool _isHomeFeaturedLoading = false;
   final Map<String, Map<String, dynamic>> _nativeJsonDocumentCache = {};
   final Map<String, Future<Map<String, dynamic>?>> _nativeJsonDocumentInFlight =
       {};
@@ -1336,12 +1342,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   String _compareRowsKey = "";
   List<Map<String, dynamic>> _compareRowsCache = [];
 
-  // Данные для блока "О компании"
-  String _aboutImageUrl =
-      'https://hozyain-barin.ru/wa-data/public/site/native/about.webp';
-  String _aboutTitle = 'Мужские и женские сумки от "Хозяин Барин"';
-  List<dynamic> _aboutDescription = [];
-
   final String _apiToken = "f616081435730714b089ec1115bac63b";
   String? _expandedCategoryId;
 
@@ -1410,6 +1410,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
     _initDeepLinks();
     _discountScrollController = ScrollController();
+    _homeFeaturedProductsScrollController = ScrollController();
     _homePromoScrollController = ScrollController();
     _homeCategoryScrollController = ScrollController();
     _homeDiscountTabsScrollController = ScrollController();
@@ -1809,6 +1810,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _subcategoryMainScrollController.dispose();
     _subcategoryPreviewScrollController.dispose();
     _discountScrollController.dispose();
+    _homeFeaturedProductsScrollController.dispose();
     _homePromoScrollController.dispose();
     _homeCategoryScrollController.dispose();
     _homeDiscountTabsScrollController.dispose();
@@ -1874,6 +1876,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   String get _currentHeroBannerImageUrl =>
       (_currentHeroBanner['image'] ?? "").toString();
+
+  String _stringValue(dynamic raw, [String fallback = '']) {
+    final value = raw?.toString().trim() ?? '';
+    return value.isNotEmpty ? value : fallback;
+  }
+
+  bool _asBool(dynamic raw, {required bool fallback}) {
+    if (raw is bool) return raw;
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    if (value.isEmpty) return fallback;
+    if (value == 'true' || value == '1' || value == 'yes') return true;
+    if (value == 'false' || value == '0' || value == 'no') return false;
+    return fallback;
+  }
 
   Color _parseHexColor(String? value, Color fallback) {
     final raw = value?.trim() ?? "";
@@ -1970,6 +1986,108 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       default:
         return null;
     }
+  }
+
+  Map<String, dynamic> _homeFeaturedMap(dynamic raw) {
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  double? _homeFeaturedClampedDouble(dynamic raw, {double? min, double? max}) {
+    final value = _parseOptionalDouble(raw);
+    if (value == null) return null;
+    var normalized = value;
+    if (min != null) normalized = math.max(min, normalized);
+    if (max != null) normalized = math.min(max, normalized);
+    return normalized;
+  }
+
+  TextAlign _homeFeaturedTextAlign(
+    Map<String, dynamic> style, {
+    TextAlign fallback = TextAlign.left,
+  }) {
+    switch (_stringValue(style['text_align'] ?? style['align']).toLowerCase()) {
+      case 'center':
+        return TextAlign.center;
+      case 'right':
+        return TextAlign.right;
+      case 'start':
+        return TextAlign.start;
+      case 'end':
+        return TextAlign.end;
+      case 'justify':
+        return TextAlign.justify;
+      default:
+        return fallback;
+    }
+  }
+
+  CrossAxisAlignment _homeFeaturedCrossAxisAlignment(TextAlign align) {
+    switch (align) {
+      case TextAlign.center:
+        return CrossAxisAlignment.center;
+      case TextAlign.right:
+      case TextAlign.end:
+        return CrossAxisAlignment.end;
+      default:
+        return CrossAxisAlignment.start;
+    }
+  }
+
+  Alignment _homeFeaturedAlignment(TextAlign align) {
+    switch (align) {
+      case TextAlign.center:
+        return Alignment.topCenter;
+      case TextAlign.right:
+      case TextAlign.end:
+        return Alignment.topRight;
+      default:
+        return Alignment.topLeft;
+    }
+  }
+
+  TextStyle _homeFeaturedTextStyle(
+    Map<String, dynamic> style, {
+    required double fallbackSize,
+    required FontWeight fallbackWeight,
+    required Color fallbackColor,
+    double fallbackLetterSpacing = 0,
+    double? fallbackHeight,
+    FontStyle fallbackFontStyle = FontStyle.normal,
+    TextDecoration decoration = TextDecoration.none,
+  }) {
+    final fontSize =
+        ((_homeFeaturedClampedDouble(style['font_size'], min: 8, max: 64) ??
+                    fallbackSize)
+                .clamp(8.0, 64.0))
+            .toDouble();
+    final fontWeight =
+        _parseOptionalFontWeight(style['font_weight'] ?? style['weight']) ??
+        fallbackWeight;
+    final color = _parseHexColor(_stringValue(style['color']), fallbackColor);
+    final lineHeight = _homeFeaturedClampedDouble(
+      style['line_height'] ?? style['height'],
+    );
+    final letterSpacing =
+        _parseOptionalDouble(style['letter_spacing']) ?? fallbackLetterSpacing;
+    final fontStyleRaw = _stringValue(style['font_style']).trim().toLowerCase();
+    final isItalic =
+        fontStyleRaw == 'italic' ||
+        _asBool(
+          style['italic'],
+          fallback: fallbackFontStyle == FontStyle.italic,
+        );
+
+    return TextStyle(
+      fontFamily: 'Roboto',
+      color: color,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
+      height: lineHeight ?? fallbackHeight,
+      letterSpacing: letterSpacing,
+      decoration: decoration,
+    );
   }
 
   Map<String, dynamic>? _normalizeHeroBannerConfig(dynamic item) {
@@ -2132,6 +2250,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _fetchHeroBanners(),
       _fetchBanners(),
       _fetchPromoBanners(),
+      _fetchHomeFeaturedSection(),
       _fetchDiscountedProducts(),
       CategoryCounterService.loadCounts(),
     ]);
@@ -2182,8 +2301,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _fetchCategories(),
       _fetchBanners(),
       _fetchPromoBanners(),
+      _fetchHomeFeaturedSection(),
       _fetchDiscountConfig(),
-      _fetchAboutData(),
       _fetchDiscountedProducts(),
       CategoryCounterService.loadCounts(),
     ]);
@@ -5338,6 +5457,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _resetHomeHorizontalScrolls() {
+    _resetHorizontalScrollController(_homeFeaturedProductsScrollController);
     _resetHorizontalScrollController(_homePromoScrollController);
     _resetHorizontalScrollController(_homeCategoryScrollController);
     _resetHorizontalScrollController(_homeDiscountTabsScrollController);
@@ -5701,6 +5821,32 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     List<String> gallery, {
     bool notify = true,
   }) {
+    List<String> normalizedGallery = gallery
+        .where((u) => u.isNotEmpty)
+        .toList(growable: false);
+    if (normalizedGallery.isEmpty) return;
+    if (categoryKey.startsWith('home_featured_')) {
+      bool updatedHomeFeatured = false;
+      for (int i = 0; i < _homeFeaturedProducts.length; i++) {
+        final item = _homeFeaturedProducts[i];
+        if (item is! Map || item['id']?.toString() != productId) continue;
+        final existingGallery = item['gallery'];
+        final existingLen = existingGallery is List
+            ? existingGallery.length
+            : 0;
+        if (existingLen < normalizedGallery.length) {
+          item['gallery'] = normalizedGallery;
+          _putGalleryCache(productId, normalizedGallery);
+          updatedHomeFeatured = true;
+        }
+        break;
+      }
+      if (updatedHomeFeatured && notify) {
+        _notifyGalleryUpdated(productId);
+      }
+      return;
+    }
+
     // Получаем актуальные списки по ключу категории
     final list = _getNativeListByKey(categoryKey);
     final original = _getOriginalNativeListByKey(categoryKey);
@@ -5708,9 +5854,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     // Ищем товар по productId и обновляем
     bool updatedList = false;
     bool updatedOriginal = false;
-    List<String> normalizedGallery = gallery
-        .where((u) => u.isNotEmpty)
-        .toList();
     for (int i = 0; i < list.length; i++) {
       if (list[i] is Map && list[i]['id']?.toString() == productId) {
         final listItem = list[i];
@@ -6389,34 +6532,307 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     for (final list in _originalNativeLists.values) {
       _applyDiscountConfigToProducts(list);
     }
+    _applyDiscountConfigToProducts(_homeFeaturedProducts);
     _applyDiscountConfigToProducts(_discountedProducts);
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchAboutData() async {
-    try {
-      final response = await _httpGet(
-        Uri.parse('https://hozyain-barin.ru/native/about.json'),
-      );
-      if (response.statusCode == 200) {
-        final dynamic decoded = json.decode(utf8.decode(response.bodyBytes));
-        dynamic data;
-        if (decoded is List && decoded.isNotEmpty) {
-          data = decoded[0];
-        } else if (decoded is Map) {
-          data = decoded;
-        }
+  int _homeFeaturedLimitFromRaw(dynamic raw, {int fallback = 8}) {
+    final parsed = int.tryParse(raw?.toString() ?? '');
+    if (parsed == null) return fallback;
+    return parsed.clamp(1, 20).toInt();
+  }
 
-        if (data != null) {
-          setState(() {
-            _aboutImageUrl = data['image'] ?? _aboutImageUrl;
-            _aboutTitle = data['title'] ?? _aboutTitle;
-            _aboutDescription = data['description'] ?? [];
-          });
+  DateTime? _parseHomeFeaturedDateTime(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is num) {
+      final value = raw.toInt();
+      final millis = value > 1000000000000 ? value : value * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(millis);
+    }
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    final numeric = int.tryParse(text);
+    if (numeric != null) {
+      final millis = numeric > 1000000000000 ? numeric : numeric * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(millis);
+    }
+    return DateTime.tryParse(text);
+  }
+
+  BoxFit _homeFeaturedBannerFit(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'contain':
+        return BoxFit.contain;
+      case 'fill':
+        return BoxFit.fill;
+      case 'fit_height':
+      case 'fitheight':
+        return BoxFit.fitHeight;
+      case 'fit_width':
+      case 'fitwidth':
+        return BoxFit.fitWidth;
+      default:
+        return BoxFit.cover;
+    }
+  }
+
+  Map<String, dynamic>? _normalizeHomeFeaturedSectionConfig(dynamic raw) {
+    dynamic data = raw;
+    if (data is List) {
+      if (data.isEmpty) return null;
+      data = data.first;
+    }
+    if (data is! Map) return null;
+
+    final map = Map<String, dynamic>.from(data);
+    final title = _stringValue(map['title'], 'Товары дня');
+    final categoryId = _stringValue(map['category_id'] ?? map['categoryId']);
+    final layout = _homeFeaturedMap(map['layout']);
+    final banner = _homeFeaturedMap(map['banner']);
+    final timer = _homeFeaturedMap(banner['timer']);
+    final overlay = _homeFeaturedMap(banner['overlay']);
+    final textStyles = _homeFeaturedMap(
+      map['text_styles'] ?? map['textStyles'] ?? map['styles'],
+    );
+    final positions = _homeFeaturedMap(
+      map['positions'] ?? map['text_positions'] ?? map['textPositions'],
+    );
+    final cardLayout = _homeFeaturedMap(
+      map['card_layout'] ?? map['cardLayout'],
+    );
+    final bannerHeight = _parseOptionalDouble(
+      layout['banner_height'] ?? banner['height'],
+    );
+    final cardOverlap = _parseOptionalDouble(layout['card_overlap']);
+    final cardGap = _parseOptionalDouble(layout['card_gap']);
+    final cardVisibleSlots = _parseOptionalDouble(layout['card_visible_slots']);
+    final horizontalPadding = _parseOptionalDouble(
+      layout['horizontal_padding'],
+    );
+    final imageFit = _stringValue(banner['image_fit'], 'cover');
+
+    return <String, dynamic>{
+      'enabled':
+          _asBool(map['enabled'], fallback: true) && categoryId.isNotEmpty,
+      'title': title,
+      'background_color': _stringValue(map['background_color'], '#FFFFFF'),
+      'category_id': categoryId,
+      'category_title': _stringValue(map['category_title'], title),
+      'view_all_label': _stringValue(map['view_all_label'], 'Все'),
+      'product_limit': _homeFeaturedLimitFromRaw(
+        map['product_limit'] ?? map['limit'],
+        fallback: 8,
+      ),
+      'layout': <String, dynamic>{
+        if (bannerHeight != null && bannerHeight > 0)
+          'banner_height': bannerHeight,
+        if (cardOverlap != null && cardOverlap > 0) 'card_overlap': cardOverlap,
+        if (cardGap != null && cardGap >= 0) 'card_gap': cardGap,
+        if (cardVisibleSlots != null && cardVisibleSlots > 1)
+          'card_visible_slots': cardVisibleSlots,
+        if (horizontalPadding != null && horizontalPadding >= 0)
+          'horizontal_padding': horizontalPadding,
+      },
+      'text_styles': textStyles,
+      'positions': positions,
+      'card_layout': cardLayout,
+      'banner': <String, dynamic>{
+        'enabled': _asBool(banner['enabled'], fallback: true),
+        'title': _stringValue(banner['title']),
+        'subtitle': _stringValue(banner['subtitle']),
+        'image': _resolveNativeJsonUrl(
+          _homeFeaturedProductsJsonUrl,
+          _stringValue(banner['image']),
+        ),
+        'background_color': _stringValue(banner['background_color']),
+        'image_fit': imageFit,
+        'overlay': overlay,
+        'timer': <String, dynamic>{
+          'enabled': _asBool(timer['enabled'], fallback: false),
+          'end_at': _parseHomeFeaturedDateTime(
+            timer['end_at'] ?? timer['endAt'],
+          ),
+          'expired_text': _stringValue(
+            timer['expired_text'],
+            'Акция завершена',
+          ),
+        },
+      },
+    };
+  }
+
+  Future<List<dynamic>> _loadHomeFeaturedProducts({
+    required String categoryId,
+    required int limit,
+  }) async {
+    final safeLimit = limit.clamp(1, 20).toInt();
+    final queryParts = <String>[
+      'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+      'limit=$safeLimit',
+      'offset=0',
+      'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
+      'sort=create_datetime',
+      'order=desc',
+      'status=1',
+      'in_stock=1',
+    ];
+    final url =
+        'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
+    final response = await _httpGet(Uri.parse(url));
+    if (response.statusCode != 200) return const <dynamic>[];
+
+    final parsed = await compute(_parseNativeCategoryPayload, response.body);
+    final rawItems = parsed['items'];
+    final products = (rawItems is List)
+        ? List<dynamic>.from(rawItems)
+        : <dynamic>[];
+
+    if (_hasDiscountConfig) {
+      _applyDiscountConfigToProducts(products);
+    }
+
+    for (final product in products) {
+      if (product is! Map) continue;
+      product['source_category_id'] = categoryId;
+      if (_newCategoryIds.contains(categoryId)) {
+        product['is_new'] = true;
+      } else {
+        final ids = product['category_ids'];
+        if (ids is List &&
+            ids.any(
+              (id) => id != null && _newCategoryIds.contains(id.toString()),
+            )) {
+          product['is_new'] = true;
         }
       }
+    }
+
+    return products.take(safeLimit).toList(growable: false);
+  }
+
+  Future<void> _prefetchHomeFeaturedGalleries(
+    String categoryId,
+    List<dynamic> products,
+  ) async {
+    if (products.isEmpty) return;
+    final categoryKey = 'home_featured_$categoryId';
+    final pendingIds = <String>[];
+
+    for (final product in products) {
+      if (product is! Map) continue;
+      final productId = product['id']?.toString() ?? '';
+      if (productId.isEmpty) continue;
+      final cached = _galleryCache[productId];
+      if (cached != null && cached.isNotEmpty) {
+        _updateProductGalleryFromCache(
+          productId,
+          categoryKey,
+          cached,
+          notify: true,
+        );
+        continue;
+      }
+      if (_isGalleryNoImagesCooldown(productId) ||
+          _isGalleryRequestBusy(categoryKey, productId)) {
+        continue;
+      }
+      pendingIds.add(productId);
+    }
+
+    if (pendingIds.isEmpty) return;
+
+    await Future.wait(
+      pendingIds.map((productId) {
+        _markGalleryRequestInFlight(categoryKey, productId);
+        return _fetchGalleryForProductImmediate(
+          productId,
+          categoryKey,
+        ).catchError((error, stackTrace) {
+          debugPrint(
+            'Home featured gallery fetch error for $productId: $error',
+          );
+          if (kDebugMode) debugPrint('$stackTrace');
+        });
+      }),
+    );
+  }
+
+  Future<void> _fetchHomeFeaturedSection() async {
+    if (mounted) {
+      setState(() => _isHomeFeaturedLoading = true);
+    } else {
+      _isHomeFeaturedLoading = true;
+    }
+
+    try {
+      final response = await _httpGet(Uri.parse(_homeFeaturedProductsJsonUrl));
+      if (response.statusCode != 200) {
+        if (mounted) {
+          setState(() => _isHomeFeaturedLoading = false);
+        } else {
+          _isHomeFeaturedLoading = false;
+        }
+        return;
+      }
+
+      final decoded = json.decode(utf8.decode(response.bodyBytes));
+      final config = _normalizeHomeFeaturedSectionConfig(decoded);
+      if (config == null) {
+        if (mounted) {
+          setState(() {
+            _homeFeaturedSectionConfig = null;
+            _homeFeaturedProducts = [];
+            _isHomeFeaturedLoading = false;
+          });
+        } else {
+          _homeFeaturedSectionConfig = null;
+          _homeFeaturedProducts = [];
+          _isHomeFeaturedLoading = false;
+        }
+        return;
+      }
+
+      final enabled = _asBool(config['enabled'], fallback: false);
+      final categoryId = _stringValue(config['category_id']);
+      if (!enabled || categoryId.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _homeFeaturedSectionConfig = config;
+            _homeFeaturedProducts = [];
+            _isHomeFeaturedLoading = false;
+          });
+        } else {
+          _homeFeaturedSectionConfig = config;
+          _homeFeaturedProducts = [];
+          _isHomeFeaturedLoading = false;
+        }
+        return;
+      }
+
+      final products = await _loadHomeFeaturedProducts(
+        categoryId: categoryId,
+        limit: _homeFeaturedLimitFromRaw(config['product_limit'], fallback: 8),
+      );
+      if (mounted) {
+        setState(() {
+          _homeFeaturedSectionConfig = config;
+          _homeFeaturedProducts = products;
+          _isHomeFeaturedLoading = false;
+        });
+      } else {
+        _homeFeaturedSectionConfig = config;
+        _homeFeaturedProducts = products;
+        _isHomeFeaturedLoading = false;
+      }
+      _prefetchHomeFeaturedGalleries(categoryId, products);
     } catch (e) {
-      debugPrint("About data error: $e");
+      debugPrint("Home featured section error: $e");
+      if (mounted) {
+        setState(() => _isHomeFeaturedLoading = false);
+      } else {
+        _isHomeFeaturedLoading = false;
+      }
     }
   }
 
@@ -8140,8 +8556,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             child: _buildDiscountedProductsSection(forPreview: true),
           ),
         ),
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
-        SliverToBoxAdapter(child: _buildAboutSection()),
+        SliverToBoxAdapter(child: _buildHomeFeaturedSection(forPreview: true)),
       ],
     );
   }
@@ -9002,8 +9417,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         child: _buildDiscountedProductsSection(),
                       ),
                     ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
-                    SliverToBoxAdapter(child: _buildAboutSection()),
+                    SliverToBoxAdapter(child: _buildHomeFeaturedSection()),
                   ],
                 ),
               ),
@@ -9245,6 +9659,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _discountedProductCard(
     dynamic product, {
     double? horizontalCardWidth,
+    TextStyle? priceTextStyle,
+    TextStyle? oldPriceTextStyle,
+    TextStyle? nameTextStyle,
+    TextStyle? cartButtonTextStyle,
+    EdgeInsetsGeometry? contentPadding,
+    double? priceNameGap,
+    double? nameActionsGap,
   }) {
     final id = product['id']?.toString() ?? "";
     return NativeProductCard(
@@ -9253,6 +9674,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       isNew: product is Map ? _isNewProduct(product) : false,
       isHorizontal: true,
       horizontalCardWidth: horizontalCardWidth,
+      priceTextStyle: priceTextStyle,
+      oldPriceTextStyle: oldPriceTextStyle,
+      nameTextStyle: nameTextStyle,
+      cartButtonTextStyle: cartButtonTextStyle,
+      contentPadding: contentPadding,
+      priceNameGap: priceNameGap,
+      nameActionsGap: nameActionsGap,
       galleryListenable: id.isNotEmpty ? _getGalleryNotifier(id) : null,
       favoriteListenable: id.isNotEmpty ? _getFavoriteNotifier(id) : null,
       isFavoriteResolver: _isFavorite,
@@ -12628,7 +13056,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
     return Container(
       padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
-      color: const Color(0xFFF8F8F8),
+      color: Colors.transparent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -12847,103 +13275,695 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildAboutSection() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 25),
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(
-          color: Colors.grey.shade200,
-        ), // Та же серая обводка, что и в контактах
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(
-              10,
-            ), // Чуть меньше, чем у рамки, для красоты
-            child: CachedNetworkImage(
-              imageUrl: _aboutImageUrl,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              placeholder: (context, url) => Container(
-                height: 200,
-                color: Colors.grey.shade100,
-                child: const Center(
-                  child: CircularProgressIndicator(color: Colors.black12),
-                ),
-              ),
-              errorWidget: (context, url, error) => Container(
-                height: 200,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.storefront,
-                  size: 50,
-                  color: Colors.grey,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 25),
-          Text(
-            _aboutTitle,
-            style: const TextStyle(
-              fontFamily: 'Roboto',
-              fontSize: 22,
-              fontWeight: FontWeight.normal,
-              color: Colors.black,
-              height: 1.1, // Уменьшил с 1.2
-              letterSpacing: 0.3,
-            ),
-          ),
-          const SizedBox(height: 15),
-          if (_aboutDescription.isEmpty) ...[
-            _aboutText(
-              'Ищете идеальную кожаную сумку или аксессуар?',
-              isBold: true,
-            ),
-            _aboutText(
-              'Вам больше не придется выбирать между стилем, качеством и практичностью. Мы уже нашли идеальный баланс для вас — HOZYAIN-BARIN.RU',
-            ),
-            _aboutText(
-              'В «Хозяин Барин» мы создаём не просто аксессуары, а надёжных партнёров в создании безупречного образа.',
-            ),
-          ] else
-            ..._aboutDescription.map((item) {
-              if (item is Map) {
-                return _aboutText(
-                  item['text']?.toString() ?? "",
-                  isBold: item['is_bold'] == true,
+  void _openHomeFeaturedCategory() {
+    final config = _homeFeaturedSectionConfig;
+    if (config == null) return;
+    final categoryId = _stringValue(config['category_id']);
+    if (categoryId.isEmpty) return;
+    final title = _stringValue(
+      config['category_title'],
+      _stringValue(config['title'], 'Категория'),
+    );
+    _openNativeCategoryById(
+      key: 'home_featured_$categoryId',
+      categoryId: categoryId,
+      title: title,
+    );
+  }
+
+  Widget _buildHomeFeaturedProductRail({
+    required bool forPreview,
+    required double cardWidth,
+    required double cardsHeight,
+    required double horizontalPadding,
+    required double cardGap,
+    TextStyle? cardPriceTextStyle,
+    TextStyle? cardOldPriceTextStyle,
+    TextStyle? cardNameTextStyle,
+    TextStyle? cardButtonTextStyle,
+    EdgeInsetsGeometry? cardContentPadding,
+    double? cardPriceNameGap,
+    double? cardNameActionsGap,
+  }) {
+    return SizedBox(
+      height: cardsHeight,
+      child: _isHomeFeaturedLoading
+          ? ListView.builder(
+              controller: forPreview
+                  ? null
+                  : _homeFeaturedProductsScrollController,
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              itemCount: 3,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: EdgeInsets.only(right: index == 2 ? 0 : cardGap),
+                  child: SizedBox(
+                    width: cardWidth,
+                    child: _buildLoadingProductCard(),
+                  ),
                 );
-              }
-              return _aboutText(item.toString());
-            }),
-        ],
+              },
+            )
+          : ListView.builder(
+              controller: forPreview
+                  ? null
+                  : _homeFeaturedProductsScrollController,
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              itemCount: _homeFeaturedProducts.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: EdgeInsets.only(
+                    right: index == _homeFeaturedProducts.length - 1
+                        ? 0
+                        : cardGap,
+                  ),
+                  child: _discountedProductCard(
+                    _homeFeaturedProducts[index],
+                    horizontalCardWidth: cardWidth,
+                    priceTextStyle: cardPriceTextStyle,
+                    oldPriceTextStyle: cardOldPriceTextStyle,
+                    nameTextStyle: cardNameTextStyle,
+                    cartButtonTextStyle: cardButtonTextStyle,
+                    contentPadding: cardContentPadding,
+                    priceNameGap: cardPriceNameGap,
+                    nameActionsGap: cardNameActionsGap,
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _buildHomeFeaturedBanner(
+    Map<String, dynamic> config, {
+    required double bannerHeight,
+    required double cardOverlap,
+  }) {
+    final banner = _homeFeaturedMap(config['banner']);
+    final timer = _homeFeaturedMap(banner['timer']);
+    final overlay = _homeFeaturedMap(banner['overlay']);
+    final textStyles = _homeFeaturedMap(config['text_styles']);
+    final positions = _homeFeaturedMap(config['positions']);
+    final bannerTitleStyleMap = _homeFeaturedMap(textStyles['banner_title']);
+    final bannerSubtitleStyleMap = _homeFeaturedMap(
+      textStyles['banner_subtitle'],
+    );
+    final timerStyleMap = _homeFeaturedMap(textStyles['timer']);
+    final timerExpiredStyleMap = _homeFeaturedMap(textStyles['timer_expired']);
+    final imageUrl = _stringValue(banner['image']);
+    final title = _stringValue(banner['title']);
+    final subtitle = _stringValue(banner['subtitle']);
+    final backgroundColor = _parseHexColor(
+      _stringValue(banner['background_color']),
+      const Color(0xFF3B1A78),
+    );
+    final imageFit = _homeFeaturedBannerFit(
+      _stringValue(banner['image_fit'], 'cover'),
+    );
+    final showTimer = _asBool(timer['enabled'], fallback: false);
+    final endAt = timer['end_at'] as DateTime?;
+    final expiredText = _stringValue(timer['expired_text'], 'Акция завершена');
+    final titleStyle = _homeFeaturedTextStyle(
+      bannerTitleStyleMap,
+      fallbackSize: 24,
+      fallbackWeight: FontWeight.w900,
+      fallbackColor: Colors.white,
+      fallbackHeight: 1.0,
+      fallbackFontStyle: FontStyle.italic,
+    );
+    final titleAlign = _homeFeaturedTextAlign(
+      bannerTitleStyleMap,
+      fallback: TextAlign.left,
+    );
+    final subtitleStyle = _homeFeaturedTextStyle(
+      bannerSubtitleStyleMap,
+      fallbackSize: 14,
+      fallbackWeight: FontWeight.w700,
+      fallbackColor: Colors.white,
+      fallbackHeight: 1.05,
+    );
+    final subtitleAlign = _homeFeaturedTextAlign(
+      bannerSubtitleStyleMap,
+      fallback: TextAlign.left,
+    );
+    final timerTextStyle = _homeFeaturedTextStyle(
+      timerStyleMap,
+      fallbackSize: 16,
+      fallbackWeight: FontWeight.w700,
+      fallbackColor: Colors.white,
+    );
+    final timerExpiredStyle = _homeFeaturedTextStyle(
+      timerExpiredStyleMap,
+      fallbackSize: 13,
+      fallbackWeight: FontWeight.w700,
+      fallbackColor: Colors.white,
+    );
+    final showOverlay = overlay.isEmpty
+        ? true
+        : _asBool(overlay['enabled'], fallback: true);
+    final overlayColor = _parseHexColor(
+      _stringValue(overlay['color']),
+      const Color(0xFF0F0A1F),
+    );
+    final overlayStartOpacity =
+        (_homeFeaturedClampedDouble(
+                  overlay['start_opacity'] ?? overlay['opacity'],
+                  min: 0,
+                  max: 1,
+                ) ??
+                0.75)
+            .toDouble();
+    final overlayMiddleOpacity =
+        (_homeFeaturedClampedDouble(
+                  overlay['middle_opacity'] ?? overlay['secondary_opacity'],
+                  min: 0,
+                  max: 1,
+                ) ??
+                0.45)
+            .toDouble();
+    final overlayEndOpacity =
+        (_homeFeaturedClampedDouble(overlay['end_opacity'], min: 0, max: 1) ??
+                0.0)
+            .toDouble();
+    final bannerTextLeft =
+        (_homeFeaturedClampedDouble(
+                  positions['banner_text_left'],
+                  min: 0,
+                  max: 80,
+                ) ??
+                16.0)
+            .toDouble();
+    final bannerTextTop =
+        (_homeFeaturedClampedDouble(
+                  positions['banner_text_top'],
+                  min: 0,
+                  max: 120,
+                ) ??
+                24.0)
+            .toDouble();
+    final bannerTextRight =
+        (_homeFeaturedClampedDouble(
+                  positions['banner_text_right'],
+                  min: 0,
+                  max: 80,
+                ) ??
+                16.0)
+            .toDouble();
+    final bannerTitleBottomGap =
+        (_homeFeaturedClampedDouble(
+                  positions['banner_title_bottom_gap'],
+                  min: 0,
+                  max: 48,
+                ) ??
+                18.0)
+            .toDouble();
+    final bottomRowLeft =
+        (_homeFeaturedClampedDouble(
+                  positions['bottom_row_left'],
+                  min: 0,
+                  max: 80,
+                ) ??
+                bannerTextLeft)
+            .toDouble();
+    final bottomRowRight =
+        (_homeFeaturedClampedDouble(
+                  positions['bottom_row_right'],
+                  min: 0,
+                  max: 80,
+                ) ??
+                bannerTextRight)
+            .toDouble();
+    final bottomRowGap =
+        (_homeFeaturedClampedDouble(
+                  positions['bottom_row_gap'],
+                  min: 0,
+                  max: 40,
+                ) ??
+                12.0)
+            .toDouble();
+    final timerIconColor = _parseHexColor(
+      _stringValue(timerStyleMap['icon_color']),
+      const Color(0xFFFF6B3D),
+    );
+    final timerIconSize =
+        (_homeFeaturedClampedDouble(
+                  timerStyleMap['icon_size'],
+                  min: 10,
+                  max: 40,
+                ) ??
+                18.0)
+            .toDouble();
+    final timerIconSpacing =
+        (_homeFeaturedClampedDouble(
+                  timerStyleMap['icon_spacing'],
+                  min: 0,
+                  max: 24,
+                ) ??
+                4.0)
+            .toDouble();
+    final screenWidth = MediaQuery.of(context).size.width;
+    final computedBottomContentInset = math.min(
+      math.max(cardOverlap + 16.0, 104.0),
+      math.max(24.0, bannerHeight - 44.0),
+    );
+    final bottomContentInset =
+        (_homeFeaturedClampedDouble(
+                  positions['bottom_row_bottom'],
+                  min: 12,
+                  max: math.max(12.0, bannerHeight - 20.0),
+                ) ??
+                computedBottomContentInset)
+            .toDouble();
+    final titleWidth =
+        ((_homeFeaturedClampedDouble(
+                      bannerTitleStyleMap['max_width'] ??
+                          positions['banner_title_max_width'] ??
+                          banner['title_max_width'],
+                      min: 120,
+                      max: 260,
+                    ) ??
+                    screenWidth * 0.42)
+                .clamp(120.0, 280.0))
+            .toDouble();
+
+    return GestureDetector(
+      onTap: _openHomeFeaturedCategory,
+      child: SizedBox(
+        height: bannerHeight,
+        width: double.infinity,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(color: backgroundColor),
+            if (imageUrl.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: imageUrl,
+                fit: imageFit,
+                alignment: Alignment.centerRight,
+                placeholder: (_, __) => const SizedBox.expand(),
+                errorWidget: (_, __, ___) => const SizedBox.expand(),
+              ),
+            if (showOverlay)
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      overlayColor.withValues(alpha: overlayStartOpacity),
+                      overlayColor.withValues(alpha: overlayMiddleOpacity),
+                      overlayColor.withValues(alpha: overlayEndOpacity),
+                    ],
+                  ),
+                ),
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                bannerTextLeft,
+                bannerTextTop,
+                bannerTextRight,
+                bottomContentInset + bannerTitleBottomGap,
+              ),
+              child: Column(
+                crossAxisAlignment: _homeFeaturedCrossAxisAlignment(titleAlign),
+                children: [
+                  if (title.isNotEmpty)
+                    Align(
+                      alignment: _homeFeaturedAlignment(titleAlign),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: titleWidth),
+                        child: Text(
+                          title,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: titleAlign,
+                          style: titleStyle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (subtitle.isNotEmpty || (showTimer && endAt != null))
+              Positioned(
+                left: bottomRowLeft,
+                right: bottomRowRight,
+                bottom: bottomContentInset,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (subtitle.isNotEmpty)
+                      Expanded(
+                        child: Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: subtitleAlign,
+                          style: subtitleStyle,
+                        ),
+                      ),
+                    if (subtitle.isNotEmpty && showTimer && endAt != null)
+                      SizedBox(width: bottomRowGap),
+                    if (showTimer && endAt != null)
+                      _HomeFeaturedCountdown(
+                        endAt: endAt,
+                        expiredText: expiredText,
+                        timerTextStyle: timerTextStyle,
+                        expiredTextStyle: timerExpiredStyle,
+                        iconColor: timerIconColor,
+                        iconSize: timerIconSize,
+                        iconSpacing: timerIconSpacing,
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _aboutText(String text, {bool isBold = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontFamily: 'Roboto',
-          fontSize: 15,
-          fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-          // Темно-серый для жирного, обычный серый для остального
-          color: isBold ? Colors.grey.shade800 : Colors.black54,
-          height: 1.1, // Уменьшил межстрочное расстояние (было 1.3)
-          letterSpacing: 0.3,
-        ),
+  Widget _buildHomeFeaturedSection({bool forPreview = false}) {
+    final config = _homeFeaturedSectionConfig;
+    if (config == null || !_asBool(config['enabled'], fallback: false)) {
+      return const SizedBox.shrink();
+    }
+
+    final banner = _homeFeaturedMap(config['banner']);
+    final layout = _homeFeaturedMap(config['layout']);
+    final textStyles = _homeFeaturedMap(config['text_styles']);
+    final positions = _homeFeaturedMap(config['positions']);
+    final cardLayout = _homeFeaturedMap(config['card_layout']);
+    final sectionTitleStyleMap = _homeFeaturedMap(textStyles['section_title']);
+    final viewAllStyleMap = _homeFeaturedMap(textStyles['view_all']);
+    final cardPriceStyleMap = _homeFeaturedMap(textStyles['card_price']);
+    final cardOldPriceStyleMap = _homeFeaturedMap(textStyles['card_old_price']);
+    final cardNameStyleMap = _homeFeaturedMap(textStyles['card_name']);
+    final cardButtonStyleMap = _homeFeaturedMap(textStyles['card_button']);
+    final title = _stringValue(config['title'], 'Товары дня');
+    final viewAllLabel = _stringValue(config['view_all_label'], 'Все');
+    final sectionBackgroundColor = _parseHexColor(
+      _stringValue(config['background_color'], '#FFFFFF'),
+      Colors.white,
+    );
+    final showBanner = _asBool(banner['enabled'], fallback: true);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final sectionPaddingTop =
+        (_homeFeaturedClampedDouble(
+                  positions['section_padding_top'],
+                  min: 0,
+                  max: 48,
+                ) ??
+                20.0)
+            .toDouble();
+    final sectionPaddingBottom =
+        (_homeFeaturedClampedDouble(
+                  positions['section_padding_bottom'],
+                  min: 0,
+                  max: 48,
+                ) ??
+                16.0)
+            .toDouble();
+    final headerPaddingLeft =
+        (_homeFeaturedClampedDouble(
+                  positions['header_padding_left'],
+                  min: 0,
+                  max: 48,
+                ) ??
+                10.0)
+            .toDouble();
+    final headerPaddingTop =
+        (_homeFeaturedClampedDouble(
+                  positions['header_padding_top'],
+                  min: 0,
+                  max: 32,
+                ) ??
+                4.0)
+            .toDouble();
+    final headerPaddingRight =
+        (_homeFeaturedClampedDouble(
+                  positions['header_padding_right'],
+                  min: 0,
+                  max: 48,
+                ) ??
+                10.0)
+            .toDouble();
+    final headerPaddingBottom =
+        (_homeFeaturedClampedDouble(
+                  positions['header_padding_bottom'],
+                  min: 0,
+                  max: 32,
+                ) ??
+                10.0)
+            .toDouble();
+    final horizontalPadding =
+        ((_parseOptionalDouble(layout['horizontal_padding']) ?? 16.0).clamp(
+          10.0,
+          28.0,
+        )).toDouble();
+    final cardGap = ((_parseOptionalDouble(layout['card_gap']) ?? 8.0).clamp(
+      6.0,
+      20.0,
+    )).toDouble();
+    final visibleCardSlots =
+        ((_parseOptionalDouble(layout['card_visible_slots']) ?? 2.1).clamp(
+          1.8,
+          3.2,
+        )).toDouble();
+    final visibleGapCount = math.max(0.0, visibleCardSlots - 1.0);
+    final cardWidth =
+        ((screenWidth - (horizontalPadding * 2) - (cardGap * visibleGapCount)) /
+                visibleCardSlots)
+            .clamp(126.0, 184.0)
+            .toDouble();
+    final cardImageHeight = cardWidth * 4 / 3;
+    final cardsHeight = cardImageHeight + 152;
+    final bannerHeight =
+        ((_parseOptionalDouble(layout['banner_height']) ??
+                    _parseOptionalDouble(banner['height']) ??
+                    242.0)
+                .clamp(180.0, 320.0))
+            .toDouble();
+    final cardOverlap =
+        ((_parseOptionalDouble(layout['card_overlap']) ?? 96.0).clamp(
+          44.0,
+          cardsHeight - 32.0,
+        )).toDouble();
+    final productsOffsetY =
+        (_homeFeaturedClampedDouble(
+                  positions['products_offset_y'] ??
+                      positions['products_vertical_offset'] ??
+                      positions['cards_offset_y'],
+                  min: -120,
+                  max: 180,
+                ) ??
+                0.0)
+            .toDouble();
+    final showCards =
+        _isHomeFeaturedLoading || _homeFeaturedProducts.isNotEmpty;
+    final sectionTitleStyle = _homeFeaturedTextStyle(
+      sectionTitleStyleMap,
+      fallbackSize: 22,
+      fallbackWeight: FontWeight.normal,
+      fallbackColor: Colors.black,
+    );
+    final sectionTitleAlign = _homeFeaturedTextAlign(
+      sectionTitleStyleMap,
+      fallback: TextAlign.left,
+    );
+    final viewAllStyle = _homeFeaturedTextStyle(
+      viewAllStyleMap,
+      fallbackSize: 16,
+      fallbackWeight: FontWeight.w500,
+      fallbackColor: const Color(0xFF4B5563),
+    );
+    final viewAllAlign = _homeFeaturedTextAlign(
+      viewAllStyleMap,
+      fallback: TextAlign.right,
+    );
+    final cardPriceTextStyle = _homeFeaturedTextStyle(
+      cardPriceStyleMap,
+      fallbackSize: 17,
+      fallbackWeight: FontWeight.bold,
+      fallbackColor: Colors.black,
+    );
+    final cardOldPriceTextStyle = _homeFeaturedTextStyle(
+      cardOldPriceStyleMap,
+      fallbackSize: 12,
+      fallbackWeight: FontWeight.w400,
+      fallbackColor: const Color(0xFFBDBDBD),
+      decoration: TextDecoration.lineThrough,
+    );
+    final cardNameTextStyle = _homeFeaturedTextStyle(
+      cardNameStyleMap,
+      fallbackSize: 13,
+      fallbackWeight: FontWeight.w400,
+      fallbackColor: Colors.black87,
+      fallbackLetterSpacing: 0.1,
+      fallbackHeight: 1.2,
+    );
+    final cardButtonTextStyle = _homeFeaturedTextStyle(
+      cardButtonStyleMap,
+      fallbackSize: 12,
+      fallbackWeight: FontWeight.normal,
+      fallbackColor: Colors.white,
+    );
+    final cardContentPaddingHorizontal =
+        (_homeFeaturedClampedDouble(
+                  cardLayout['content_padding_horizontal'],
+                  min: 0,
+                  max: 24,
+                ) ??
+                12.0)
+            .toDouble();
+    final cardContentPaddingTop =
+        (_homeFeaturedClampedDouble(
+                  cardLayout['content_padding_top'],
+                  min: 0,
+                  max: 24,
+                ) ??
+                6.0)
+            .toDouble();
+    final cardContentPaddingBottom =
+        (_homeFeaturedClampedDouble(
+                  cardLayout['content_padding_bottom'],
+                  min: 0,
+                  max: 32,
+                ) ??
+                15.0)
+            .toDouble();
+    final cardPriceNameGap =
+        (_homeFeaturedClampedDouble(
+                  cardLayout['price_name_gap'],
+                  min: 0,
+                  max: 32,
+                ) ??
+                10.0)
+            .toDouble();
+    final cardNameActionsGap =
+        (_homeFeaturedClampedDouble(
+                  cardLayout['name_actions_gap'],
+                  min: 0,
+                  max: 32,
+                ) ??
+                15.0)
+            .toDouble();
+    final cardContentPadding = EdgeInsets.fromLTRB(
+      cardContentPaddingHorizontal,
+      cardContentPaddingTop,
+      cardContentPaddingHorizontal,
+      cardContentPaddingBottom,
+    );
+
+    if (!showBanner && !showCards) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        0,
+        sectionPaddingTop,
+        0,
+        sectionPaddingBottom,
+      ),
+      color: sectionBackgroundColor,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              headerPaddingLeft,
+              headerPaddingTop,
+              headerPaddingRight,
+              headerPaddingBottom,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    textAlign: sectionTitleAlign,
+                    style: sectionTitleStyle,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _openHomeFeaturedCategory,
+                  child: Text(
+                    viewAllLabel,
+                    textAlign: viewAllAlign,
+                    style: viewAllStyle,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (showBanner && showCards)
+            SizedBox(
+              height:
+                  bannerHeight +
+                  cardsHeight -
+                  cardOverlap +
+                  math.max(0.0, productsOffsetY) +
+                  6,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: _buildHomeFeaturedBanner(
+                      config,
+                      bannerHeight: bannerHeight,
+                      cardOverlap: cardOverlap,
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: bannerHeight - cardOverlap + productsOffsetY,
+                    child: _buildHomeFeaturedProductRail(
+                      forPreview: forPreview,
+                      cardWidth: cardWidth,
+                      cardsHeight: cardsHeight,
+                      horizontalPadding: horizontalPadding,
+                      cardGap: cardGap,
+                      cardPriceTextStyle: cardPriceTextStyle,
+                      cardOldPriceTextStyle: cardOldPriceTextStyle,
+                      cardNameTextStyle: cardNameTextStyle,
+                      cardButtonTextStyle: cardButtonTextStyle,
+                      cardContentPadding: cardContentPadding,
+                      cardPriceNameGap: cardPriceNameGap,
+                      cardNameActionsGap: cardNameActionsGap,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (showBanner)
+            _buildHomeFeaturedBanner(
+              config,
+              bannerHeight: bannerHeight,
+              cardOverlap: 0,
+            )
+          else if (showCards)
+            _buildHomeFeaturedProductRail(
+              forPreview: forPreview,
+              cardWidth: cardWidth,
+              cardsHeight: cardsHeight,
+              horizontalPadding: horizontalPadding,
+              cardGap: cardGap,
+              cardPriceTextStyle: cardPriceTextStyle,
+              cardOldPriceTextStyle: cardOldPriceTextStyle,
+              cardNameTextStyle: cardNameTextStyle,
+              cardButtonTextStyle: cardButtonTextStyle,
+              cardContentPadding: cardContentPadding,
+              cardPriceNameGap: cardPriceNameGap,
+              cardNameActionsGap: cardNameActionsGap,
+            ),
+        ],
       ),
     );
   }
@@ -17602,6 +18622,124 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
+  }
+}
+
+class _HomeFeaturedCountdown extends StatefulWidget {
+  final DateTime endAt;
+  final String expiredText;
+  final TextStyle? timerTextStyle;
+  final TextStyle? expiredTextStyle;
+  final Color iconColor;
+  final double iconSize;
+  final double iconSpacing;
+
+  const _HomeFeaturedCountdown({
+    required this.endAt,
+    required this.expiredText,
+    this.timerTextStyle,
+    this.expiredTextStyle,
+    this.iconColor = const Color(0xFFFF6B3D),
+    this.iconSize = 18,
+    this.iconSpacing = 4,
+  });
+
+  @override
+  State<_HomeFeaturedCountdown> createState() => _HomeFeaturedCountdownState();
+}
+
+class _HomeFeaturedCountdownState extends State<_HomeFeaturedCountdown> {
+  Timer? _timer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _restartTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeFeaturedCountdown oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.endAt != widget.endAt) {
+      _restartTimer();
+    }
+  }
+
+  void _restartTimer() {
+    _timer?.cancel();
+    _now = DateTime.now();
+    if (!widget.endAt.isAfter(_now)) return;
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final nextNow = DateTime.now();
+      if (!widget.endAt.isAfter(nextNow)) {
+        timer.cancel();
+      }
+      setState(() => _now = nextNow);
+    });
+  }
+
+  String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = widget.endAt.difference(_now);
+    if (remaining <= Duration.zero) {
+      return Text(
+        widget.expiredText,
+        style:
+            widget.expiredTextStyle ??
+            const TextStyle(
+              fontFamily: 'Roboto',
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+      );
+    }
+
+    final days = remaining.inDays;
+    final hours = remaining.inHours.remainder(24);
+    final minutes = remaining.inMinutes.remainder(60);
+    final seconds = remaining.inSeconds.remainder(60);
+    final timerLabel = days > 0
+        ? '$days д ${_twoDigits(hours)} : ${_twoDigits(minutes)} : ${_twoDigits(seconds)}'
+        : '${_twoDigits(hours)} : ${_twoDigits(minutes)} : ${_twoDigits(seconds)}';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.local_fire_department_rounded,
+          size: widget.iconSize,
+          color: widget.iconColor,
+        ),
+        SizedBox(width: widget.iconSpacing),
+        Text(
+          timerLabel,
+          style:
+              widget.timerTextStyle ??
+              const TextStyle(
+                fontFamily: 'Roboto',
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+        ),
+      ],
+    );
   }
 }
 
@@ -33288,6 +34426,13 @@ class NativeProductCard extends StatefulWidget {
   final bool Function(String id)? isInCartResolver;
   final bool deferHighRes;
   final double? horizontalCardWidth;
+  final TextStyle? priceTextStyle;
+  final TextStyle? oldPriceTextStyle;
+  final TextStyle? nameTextStyle;
+  final TextStyle? cartButtonTextStyle;
+  final EdgeInsetsGeometry? contentPadding;
+  final double? priceNameGap;
+  final double? nameActionsGap;
   const NativeProductCard({
     super.key,
     required this.product,
@@ -33308,6 +34453,13 @@ class NativeProductCard extends StatefulWidget {
     this.cartListenable,
     this.isInCartResolver,
     this.horizontalCardWidth,
+    this.priceTextStyle,
+    this.oldPriceTextStyle,
+    this.nameTextStyle,
+    this.cartButtonTextStyle,
+    this.contentPadding,
+    this.priceNameGap,
+    this.nameActionsGap,
   });
 
   @override
@@ -34401,12 +35553,14 @@ class _NativeProductCardState extends State<NativeProductCard>
           ),
           Expanded(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                widget.isHorizontal ? 12 : 8,
-                6,
-                widget.isHorizontal ? 12 : 8,
-                15, // отступ снизу
-              ),
+              padding:
+                  widget.contentPadding ??
+                  EdgeInsets.fromLTRB(
+                    widget.isHorizontal ? 12 : 8,
+                    6,
+                    widget.isHorizontal ? 12 : 8,
+                    15, // отступ снизу
+                  ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -34415,26 +35569,34 @@ class _NativeProductCardState extends State<NativeProductCard>
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
                     children: [
-                      Text(p['price'] ?? "", style: _cardPriceStyle),
+                      Text(
+                        p['price'] ?? "",
+                        style: widget.priceTextStyle ?? _cardPriceStyle,
+                      ),
                       if (p['old_price'] != null) ...[
                         const SizedBox(width: 6),
-                        Text(p['old_price'], style: _cardOldPriceStyle),
+                        Text(
+                          p['old_price'],
+                          style: widget.oldPriceTextStyle ?? _cardOldPriceStyle,
+                        ),
                       ],
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  SizedBox(height: widget.priceNameGap ?? 10),
                   // Название товара (полное)
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: widget.onTap,
                     child: Text(
                       p['name'] ?? "",
-                      style: _cardNameStyle,
+                      style: widget.nameTextStyle ?? _cardNameStyle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(height: 15), // Отступ над кнопкой
+                  SizedBox(
+                    height: widget.nameActionsGap ?? 15,
+                  ), // Отступ над кнопкой
                   // Нижняя панель: Кнопка + иконки
                   Row(
                     children: [
@@ -34544,11 +35706,14 @@ class _NativeProductCardState extends State<NativeProductCard>
           isInCart ? "В корзине" : "В корзину",
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: isInCart ? Colors.black : Colors.white,
-            fontSize: compact ? 12 : 13,
-            fontWeight: FontWeight.normal,
-          ),
+          style:
+              (widget.cartButtonTextStyle ??
+                      TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: compact ? 12 : 13,
+                        fontWeight: FontWeight.normal,
+                      ))
+                  .copyWith(color: isInCart ? Colors.black : Colors.white),
         ),
       ),
     );
