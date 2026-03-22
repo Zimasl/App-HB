@@ -2,7 +2,7 @@ name: hozyain_barin
 description: "Мобильное приложение для магазина Хозяин Барин"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: '>=3.10.4 <4.0.0'
