@@ -113,6 +113,7 @@ const Set<String> _newCategoryIds = {"147"};
 const String _shopApiToken = "f616081435730714b089ec1115bac63b";
 const String _homeFeaturedProductsJsonUrl =
     'https://hozyain-barin.ru/native/home_featured_products.json';
+const int _maxHomeFeaturedSections = 3;
 const double _catalogBackSwipeEdgeWidth = 28;
 const double _catalogBackSwipeMinDistance = 72;
 const double _catalogBackSwipeMaxVerticalDrift = 96;
@@ -947,7 +948,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ScrollController _nativeScrollController;
   late final ScrollController _discountScrollController;
-  late final ScrollController _homeFeaturedProductsScrollController;
+  late final List<ScrollController> _homeFeaturedProductsScrollControllers;
   late final ScrollController _homePromoScrollController;
   late final ScrollController _homeCategoryScrollController;
   late final ScrollController _homeDiscountTabsScrollController;
@@ -1128,8 +1129,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   int _heroBannerIndex = 0;
   Timer? _heroBannerRotateTimer;
   List<dynamic> _promoBanners = [];
-  Map<String, dynamic>? _homeFeaturedSectionConfig;
-  List<dynamic> _homeFeaturedProducts = [];
+  List<Map<String, dynamic>> _homeFeaturedSections = [];
   bool _isHomeFeaturedLoading = false;
   final Map<String, Map<String, dynamic>> _nativeJsonDocumentCache = {};
   final Map<String, Future<Map<String, dynamic>?>> _nativeJsonDocumentInFlight =
@@ -1403,7 +1403,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
     _initDeepLinks();
     _discountScrollController = ScrollController();
-    _homeFeaturedProductsScrollController = ScrollController();
+    _homeFeaturedProductsScrollControllers = List<ScrollController>.generate(
+      _maxHomeFeaturedSections,
+      (_) => ScrollController(),
+      growable: false,
+    );
     _homePromoScrollController = ScrollController();
     _homeCategoryScrollController = ScrollController();
     _homeDiscountTabsScrollController = ScrollController();
@@ -1803,7 +1807,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _subcategoryMainScrollController.dispose();
     _subcategoryPreviewScrollController.dispose();
     _discountScrollController.dispose();
-    _homeFeaturedProductsScrollController.dispose();
+    for (final controller in _homeFeaturedProductsScrollControllers) {
+      controller.dispose();
+    }
     _homePromoScrollController.dispose();
     _homeCategoryScrollController.dispose();
     _homeDiscountTabsScrollController.dispose();
@@ -5384,7 +5390,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _resetHomeHorizontalScrolls() {
-    _resetHorizontalScrollController(_homeFeaturedProductsScrollController);
+    for (final controller in _homeFeaturedProductsScrollControllers) {
+      _resetHorizontalScrollController(controller);
+    }
     _resetHorizontalScrollController(_homePromoScrollController);
     _resetHorizontalScrollController(_homeCategoryScrollController);
     _resetHorizontalScrollController(_homeDiscountTabsScrollController);
@@ -5754,19 +5762,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (normalizedGallery.isEmpty) return;
     if (categoryKey.startsWith('home_featured_')) {
       bool updatedHomeFeatured = false;
-      for (int i = 0; i < _homeFeaturedProducts.length; i++) {
-        final item = _homeFeaturedProducts[i];
-        if (item is! Map || item['id']?.toString() != productId) continue;
-        final existingGallery = item['gallery'];
-        final existingLen = existingGallery is List
-            ? existingGallery.length
-            : 0;
-        if (existingLen < normalizedGallery.length) {
-          item['gallery'] = normalizedGallery;
-          _putGalleryCache(productId, normalizedGallery);
-          updatedHomeFeatured = true;
+      for (final section in _homeFeaturedSections) {
+        final products = section['products'];
+        if (products is! List) continue;
+        for (int i = 0; i < products.length; i++) {
+          final item = products[i];
+          if (item is! Map || item['id']?.toString() != productId) continue;
+          final existingGallery = item['gallery'];
+          final existingLen = existingGallery is List
+              ? existingGallery.length
+              : 0;
+          if (existingLen < normalizedGallery.length) {
+            item['gallery'] = normalizedGallery;
+            _putGalleryCache(productId, normalizedGallery);
+            updatedHomeFeatured = true;
+          }
         }
-        break;
       }
       if (updatedHomeFeatured && notify) {
         _notifyGalleryUpdated(productId);
@@ -6459,7 +6470,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     for (final list in _originalNativeLists.values) {
       _applyDiscountConfigToProducts(list);
     }
-    _applyDiscountConfigToProducts(_homeFeaturedProducts);
+    for (final section in _homeFeaturedSections) {
+      final products = section['products'];
+      if (products is List) {
+        _applyDiscountConfigToProducts(products);
+      }
+    }
     _applyDiscountConfigToProducts(_discountedProducts);
     if (mounted) setState(() {});
   }
@@ -6504,17 +6520,49 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  Map<String, dynamic>? _normalizeHomeFeaturedSectionConfig(dynamic raw) {
-    dynamic data = raw;
-    if (data is List) {
-      if (data.isEmpty) return null;
-      data = data.first;
+  List<Map<String, dynamic>> _normalizeHomeFeaturedSectionsConfig(dynamic raw) {
+    final candidates = <dynamic>[];
+    if (raw is List) {
+      candidates.addAll(raw);
+    } else if (raw is Map) {
+      final map = Map<String, dynamic>.from(raw);
+      final sections = map['sections'] ?? map['items'] ?? map['blocks'];
+      if (sections is List) {
+        candidates.addAll(sections);
+      } else {
+        candidates.add(map);
+      }
+    } else {
+      return const <Map<String, dynamic>>[];
     }
-    if (data is! Map) return null;
 
-    final map = Map<String, dynamic>.from(data);
+    final normalized = <Map<String, dynamic>>[];
+    for (final section in candidates) {
+      final config = _normalizeHomeFeaturedSectionConfig(
+        section,
+        index: normalized.length,
+      );
+      if (config == null) continue;
+      normalized.add(config);
+      if (normalized.length >= _maxHomeFeaturedSections) break;
+    }
+    return normalized;
+  }
+
+  Map<String, dynamic>? _normalizeHomeFeaturedSectionConfig(
+    dynamic raw, {
+    required int index,
+  }) {
+    if (raw is! Map) return null;
+
+    final map = Map<String, dynamic>.from(raw);
     final title = _stringValue(map['title'], 'Товары дня');
     final categoryId = _stringValue(map['category_id'] ?? map['categoryId']);
+    final rawSectionId = _stringValue(
+      map['id'] ?? map['section_id'] ?? map['sectionId'],
+      categoryId.isEmpty ? 'featured' : categoryId,
+    );
+    final sectionKey = 'section_${index + 1}_$rawSectionId';
     final layout = _homeFeaturedMap(map['layout']);
     final banner = _homeFeaturedMap(map['banner']);
     final timer = _homeFeaturedMap(banner['timer']);
@@ -6540,6 +6588,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final imageFit = _stringValue(banner['image_fit'], 'cover');
 
     return <String, dynamic>{
+      'section_key': sectionKey,
       'enabled':
           _asBool(map['enabled'], fallback: true) && categoryId.isNotEmpty,
       'title': title,
@@ -6586,6 +6635,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ),
         },
       },
+      'products': const <dynamic>[],
     };
   }
 
@@ -6639,11 +6689,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<void> _prefetchHomeFeaturedGalleries(
-    String categoryId,
+    String sectionKey,
     List<dynamic> products,
   ) async {
     if (products.isEmpty) return;
-    final categoryKey = 'home_featured_$categoryId';
+    final categoryKey = 'home_featured_$sectionKey';
     final pendingIds = <String>[];
 
     for (final product in products) {
@@ -6704,55 +6754,58 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       }
 
       final decoded = json.decode(utf8.decode(response.bodyBytes));
-      final config = _normalizeHomeFeaturedSectionConfig(decoded);
-      if (config == null) {
+      final configs = _normalizeHomeFeaturedSectionsConfig(decoded);
+      if (configs.isEmpty) {
         if (mounted) {
           setState(() {
-            _homeFeaturedSectionConfig = null;
-            _homeFeaturedProducts = [];
+            _homeFeaturedSections = [];
             _isHomeFeaturedLoading = false;
           });
         } else {
-          _homeFeaturedSectionConfig = null;
-          _homeFeaturedProducts = [];
+          _homeFeaturedSections = [];
           _isHomeFeaturedLoading = false;
         }
         return;
       }
 
-      final enabled = _asBool(config['enabled'], fallback: false);
-      final categoryId = _stringValue(config['category_id']);
-      if (!enabled || categoryId.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _homeFeaturedSectionConfig = config;
-            _homeFeaturedProducts = [];
-            _isHomeFeaturedLoading = false;
-          });
-        } else {
-          _homeFeaturedSectionConfig = config;
-          _homeFeaturedProducts = [];
-          _isHomeFeaturedLoading = false;
-        }
-        return;
-      }
+      final sections = await Future.wait(
+        configs.map((config) async {
+          final section = Map<String, dynamic>.from(config);
+          final enabled = _asBool(section['enabled'], fallback: false);
+          final categoryId = _stringValue(section['category_id']);
+          if (!enabled || categoryId.isEmpty) {
+            section['products'] = const <dynamic>[];
+            return section;
+          }
 
-      final products = await _loadHomeFeaturedProducts(
-        categoryId: categoryId,
-        limit: _homeFeaturedLimitFromRaw(config['product_limit'], fallback: 8),
+          final products = await _loadHomeFeaturedProducts(
+            categoryId: categoryId,
+            limit: _homeFeaturedLimitFromRaw(
+              section['product_limit'],
+              fallback: 8,
+            ),
+          );
+          section['products'] = products;
+          return section;
+        }),
       );
       if (mounted) {
         setState(() {
-          _homeFeaturedSectionConfig = config;
-          _homeFeaturedProducts = products;
+          _homeFeaturedSections = sections;
           _isHomeFeaturedLoading = false;
         });
       } else {
-        _homeFeaturedSectionConfig = config;
-        _homeFeaturedProducts = products;
+        _homeFeaturedSections = sections;
         _isHomeFeaturedLoading = false;
       }
-      _prefetchHomeFeaturedGalleries(categoryId, products);
+      for (final section in sections) {
+        final products = section['products'];
+        if (products is! List || products.isEmpty) continue;
+        _prefetchHomeFeaturedGalleries(
+          _stringValue(section['section_key']),
+          products,
+        );
+      }
     } catch (e) {
       debugPrint("Home featured section error: $e");
       if (mounted) {
@@ -8483,7 +8536,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             child: _buildDiscountedProductsSection(forPreview: true),
           ),
         ),
-        SliverToBoxAdapter(child: _buildHomeFeaturedSection(forPreview: true)),
+        SliverToBoxAdapter(child: _buildHomeFeaturedSections(forPreview: true)),
       ],
     );
   }
@@ -9344,7 +9397,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         child: _buildDiscountedProductsSection(),
                       ),
                     ),
-                    SliverToBoxAdapter(child: _buildHomeFeaturedSection()),
+                    SliverToBoxAdapter(child: _buildHomeFeaturedSections()),
                   ],
                 ),
               ),
@@ -13202,9 +13255,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  void _openHomeFeaturedCategory() {
-    final config = _homeFeaturedSectionConfig;
-    if (config == null) return;
+  void _openHomeFeaturedCategory(Map<String, dynamic> config) {
     final categoryId = _stringValue(config['category_id']);
     if (categoryId.isEmpty) return;
     final title = _stringValue(
@@ -13220,10 +13271,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildHomeFeaturedProductRail({
     required bool forPreview,
+    required List<dynamic> products,
+    required bool isLoading,
     required double cardWidth,
     required double cardsHeight,
     required double horizontalPadding,
     required double cardGap,
+    ScrollController? scrollController,
     TextStyle? cardPriceTextStyle,
     TextStyle? cardOldPriceTextStyle,
     TextStyle? cardNameTextStyle,
@@ -13234,11 +13288,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }) {
     return SizedBox(
       height: cardsHeight,
-      child: _isHomeFeaturedLoading
+      child: isLoading
           ? ListView.builder(
-              controller: forPreview
-                  ? null
-                  : _homeFeaturedProductsScrollController,
+              controller: forPreview ? null : scrollController,
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
               itemCount: 3,
@@ -13253,21 +13305,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               },
             )
           : ListView.builder(
-              controller: forPreview
-                  ? null
-                  : _homeFeaturedProductsScrollController,
+              controller: forPreview ? null : scrollController,
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-              itemCount: _homeFeaturedProducts.length,
+              itemCount: products.length,
               itemBuilder: (context, index) {
                 return Padding(
                   padding: EdgeInsets.only(
-                    right: index == _homeFeaturedProducts.length - 1
-                        ? 0
-                        : cardGap,
+                    right: index == products.length - 1 ? 0 : cardGap,
                   ),
                   child: _discountedProductCard(
-                    _homeFeaturedProducts[index],
+                    products[index],
                     horizontalCardWidth: cardWidth,
                     priceTextStyle: cardPriceTextStyle,
                     oldPriceTextStyle: cardOldPriceTextStyle,
@@ -13287,6 +13335,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     Map<String, dynamic> config, {
     required double bannerHeight,
     required double cardOverlap,
+    required VoidCallback onTap,
   }) {
     final banner = _homeFeaturedMap(config['banner']);
     final timer = _homeFeaturedMap(banner['timer']);
@@ -13476,7 +13525,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             .toDouble();
 
     return GestureDetector(
-      onTap: _openHomeFeaturedCategory,
+      onTap: onTap,
       child: SizedBox(
         height: bannerHeight,
         width: double.infinity,
@@ -13572,12 +13621,40 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildHomeFeaturedSection({bool forPreview = false}) {
-    final config = _homeFeaturedSectionConfig;
-    if (config == null || !_asBool(config['enabled'], fallback: false)) {
+  Widget _buildHomeFeaturedSections({bool forPreview = false}) {
+    if (_homeFeaturedSections.isEmpty) {
       return const SizedBox.shrink();
     }
 
+    final visibleSections = _homeFeaturedSections
+        .asMap()
+        .entries
+        .where((entry) {
+          return _asBool(entry.value['enabled'], fallback: false);
+        })
+        .toList(growable: false);
+    if (visibleSections.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final entry in visibleSections)
+          _buildHomeFeaturedSection(
+            entry.value,
+            sectionIndex: entry.key,
+            forPreview: forPreview,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHomeFeaturedSection(
+    Map<String, dynamic> config, {
+    required int sectionIndex,
+    bool forPreview = false,
+  }) {
     final banner = _homeFeaturedMap(config['banner']);
     final layout = _homeFeaturedMap(config['layout']);
     final textStyles = _homeFeaturedMap(config['text_styles']);
@@ -13589,6 +13666,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final cardOldPriceStyleMap = _homeFeaturedMap(textStyles['card_old_price']);
     final cardNameStyleMap = _homeFeaturedMap(textStyles['card_name']);
     final cardButtonStyleMap = _homeFeaturedMap(textStyles['card_button']);
+    final products = config['products'] is List
+        ? List<dynamic>.from(config['products'] as List)
+        : const <dynamic>[];
     final title = _stringValue(config['title'], 'Товары дня');
     final viewAllLabel = _stringValue(config['view_all_label'], 'Все');
     final sectionBackgroundColor = _parseHexColor(
@@ -13688,8 +13768,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 ) ??
                 0.0)
             .toDouble();
-    final showCards =
-        _isHomeFeaturedLoading || _homeFeaturedProducts.isNotEmpty;
+    final showCards = _isHomeFeaturedLoading || products.isNotEmpty;
+    final scrollController =
+        sectionIndex < _homeFeaturedProductsScrollControllers.length
+        ? _homeFeaturedProductsScrollControllers[sectionIndex]
+        : null;
     final sectionTitleStyle = _homeFeaturedTextStyle(
       sectionTitleStyleMap,
       fallbackSize: 22,
@@ -13816,7 +13899,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ),
                 ),
                 GestureDetector(
-                  onTap: _openHomeFeaturedCategory,
+                  onTap: () => _openHomeFeaturedCategory(config),
                   child: Text(
                     viewAllLabel,
                     textAlign: viewAllAlign,
@@ -13845,6 +13928,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       config,
                       bannerHeight: bannerHeight,
                       cardOverlap: cardOverlap,
+                      onTap: () => _openHomeFeaturedCategory(config),
                     ),
                   ),
                   Positioned(
@@ -13853,10 +13937,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     top: bannerHeight - cardOverlap + productsOffsetY,
                     child: _buildHomeFeaturedProductRail(
                       forPreview: forPreview,
+                      products: products,
+                      isLoading: _isHomeFeaturedLoading,
                       cardWidth: cardWidth,
                       cardsHeight: cardsHeight,
                       horizontalPadding: horizontalPadding,
                       cardGap: cardGap,
+                      scrollController: scrollController,
                       cardPriceTextStyle: cardPriceTextStyle,
                       cardOldPriceTextStyle: cardOldPriceTextStyle,
                       cardNameTextStyle: cardNameTextStyle,
@@ -13874,14 +13961,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               config,
               bannerHeight: bannerHeight,
               cardOverlap: 0,
+              onTap: () => _openHomeFeaturedCategory(config),
             )
           else if (showCards)
             _buildHomeFeaturedProductRail(
               forPreview: forPreview,
+              products: products,
+              isLoading: _isHomeFeaturedLoading,
               cardWidth: cardWidth,
               cardsHeight: cardsHeight,
               horizontalPadding: horizontalPadding,
               cardGap: cardGap,
+              scrollController: scrollController,
               cardPriceTextStyle: cardPriceTextStyle,
               cardOldPriceTextStyle: cardOldPriceTextStyle,
               cardNameTextStyle: cardNameTextStyle,
