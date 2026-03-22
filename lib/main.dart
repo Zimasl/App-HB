@@ -79,6 +79,10 @@ const TextStyle _modalHeaderStyle = TextStyle(
   color: Colors.black,
   letterSpacing: 0,
 );
+const Color _catalogControlSurface = Color(0xFFF3F4F6);
+const Color _catalogControlBorder = Color(0xFFE5E7EB);
+const Color _catalogControlText = Color(0xFF111827);
+const Color _catalogControlMuted = Color(0xFF6B7280);
 const Color _starColor = Color(0xFFF4A21D);
 const String _deliveryAddressPinAssetPath = 'assets/images/map_address.png';
 const String _userPinAssetPath = 'assets/images/map_user_pin.png';
@@ -1398,7 +1402,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _scheduleNativePrefetch();
       Timer(const Duration(seconds: 2), () {
         if (!mounted) return;
-        _fetchFilterMetadata();
+        unawaited(() async {
+          await _fetchFilterMetadata();
+          await _warmFilterFeatureValues();
+        }());
       });
     });
     _initDeepLinks();
@@ -2417,6 +2424,59 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  bool get _isFilterFeatureValuesLoading =>
+      _featureValuesLoading.isNotEmpty ||
+      _featureInfoQueue.isNotEmpty ||
+      _featureInfoInFlight > 0;
+
+  bool get _areAllFeatureValuesLoaded {
+    if (_availableFeatures.isEmpty) return true;
+    for (final feat in _availableFeatures) {
+      if (feat is! Map) continue;
+      final fid = feat['id']?.toString() ?? "";
+      if (fid.isEmpty) continue;
+      if (!_featureValueTextById.containsKey(fid)) return false;
+    }
+    return true;
+  }
+
+  Future<void> _warmFilterFeatureValues({StateSetter? modalSetter}) async {
+    if (_availableFeatures.isEmpty) return;
+    if (_areAllFeatureValuesLoaded) return;
+
+    for (final feat in _availableFeatures) {
+      if (feat is! Map) continue;
+      final fid = feat['id']?.toString() ?? "";
+      if (fid.isEmpty || _featureValueTextById.containsKey(fid)) continue;
+      _ensureFeatureValuesLoaded(fid);
+    }
+
+    while (_isFilterFeatureValuesLoading) {
+      await Future<void>.delayed(const Duration(milliseconds: 24));
+    }
+
+    if (modalSetter != null) {
+      try {
+        modalSetter(() {});
+      } catch (_) {}
+    }
+  }
+
+  String _featureOptionLabel(dynamic raw, {String fallback = ""}) {
+    if (raw is Map) {
+      const keys = <String>['value', 'name', 'title', 'label', 'text'];
+      for (final key in keys) {
+        final text = raw[key]?.toString().trim() ?? "";
+        if (text.isNotEmpty) return text;
+      }
+      final id = raw['id']?.toString().trim() ?? "";
+      if (id.isNotEmpty) return id;
+      return fallback;
+    }
+    final text = raw?.toString().trim() ?? "";
+    return text.isNotEmpty ? text : fallback;
+  }
+
   void _ensureFeatureValuesLoaded(String fid, {StateSetter? modalSetter}) {
     if (fid.isEmpty) return;
     if (_featureValueTextById.containsKey(fid)) return;
@@ -2449,7 +2509,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           .whenComplete(() {
             _featureInfoInFlight--;
             _featureValuesLoading.remove(req.fid);
-            if (mounted) setState(() {});
             if (req.modalSetter != null) {
               try {
                 req.modalSetter!(() {});
@@ -2479,12 +2538,26 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         processedValues = Map<String, dynamic>.from(rawValues);
       } else if (rawValues is List) {
         for (int j = 0; j < rawValues.length; j++) {
-          processedValues[j.toString()] = rawValues[j];
+          final item = rawValues[j];
+          if (item is Map) {
+            final map = Map<String, dynamic>.from(item);
+            final key =
+                map['id']?.toString().trim() ??
+                map['value_id']?.toString().trim() ??
+                map['code']?.toString().trim() ??
+                j.toString();
+            processedValues[key.isEmpty ? j.toString() : key] = map;
+            continue;
+          }
+          processedValues[j.toString()] = item;
         }
       }
       final textMap = <String, String>{};
       processedValues.forEach((key, value) {
-        textMap[key.toString()] = value.toString();
+        textMap[key.toString()] = _featureOptionLabel(
+          value,
+          fallback: key.toString(),
+        );
       });
       return {"values": processedValues, "textMap": textMap};
     } catch (_) {
@@ -13923,6 +13996,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final searchHeight = (40 * scale).clamp(36.0, 42.0);
     final searchIconSize = (20 * scale).clamp(18.0, 22.0);
     final activeQuery = _activeSearchQuery.trim();
+    final bool canShowCatalogSort =
+        _isNativeCategoryPage &&
+        _nativeCategory != "compare" &&
+        _nativeCategory != "cart" &&
+        _nativeCategory != "profile";
+    final bool canShowCatalogFilter =
+        canShowCatalogSort && _nativeCategory != "wishlist";
     return Row(
       children: [
         IconButton(
@@ -13993,23 +14073,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   overflow: TextOverflow.ellipsis,
                 ),
         ),
-        if (_isNativeCategoryPage &&
-            _nativeCategory != "wishlist" &&
-            _nativeCategory != "compare" &&
-            _nativeCategory != "cart" &&
-            _nativeCategory != "profile")
-          _navBtnIcon(
-            Icons.filter_list,
-            () => _showFilterMenu(context),
-            hPadding: 10,
+        if (canShowCatalogFilter)
+          _catalogActionIconButton(
+            icon: Icons.tune_rounded,
+            onTap: () => _showFilterMenu(context),
+            isActive: _hasActiveCatalogFilters,
           ),
         if (_isNativeCategoryPage && _nativeCategory == "compare")
           _navBtnIcon(Icons.more_vert, _showCompareSectionsMenu, hPadding: 10),
-        if (_isNativeCategoryPage &&
-            _nativeCategory != "compare" &&
-            _nativeCategory != "cart" &&
-            _nativeCategory != "profile")
-          _navBtnIcon(Icons.sort, () => _showSortMenu(context), hPadding: 10),
+        if (canShowCatalogSort)
+          _catalogActionIconButton(
+            icon: Icons.swap_vert_rounded,
+            onTap: () => _showSortMenu(context),
+            isActive: _currentSort != "default",
+          ),
         if (_isNativeCategoryPage && _nativeCategory == "wishlist")
           _navBtnIcon(Icons.delete_outline, _clearFavorites, hPadding: 10),
         if (_isNativeCategoryPage && _nativeCategory == "cart")
@@ -14858,117 +14935,204 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  bool get _hasActiveCatalogFilters {
+    final hasPriceDelta =
+        (_currentPriceRange.start - 0).abs() > 0.001 ||
+        (_currentPriceRange.end - 30000).abs() > 0.001;
+    final hasFeatureFilters = _selectedFeatures.values.any(
+      (values) => values.isNotEmpty,
+    );
+    return hasPriceDelta || hasFeatureFilters || _selectedStocks.isNotEmpty;
+  }
+
+  Widget _catalogActionIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: isActive ? _catalogControlText : _catalogControlSurface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isActive ? _catalogControlText : _catalogControlBorder,
+                width: 1,
+              ),
+              boxShadow: isActive
+                  ? const []
+                  : const [
+                      BoxShadow(
+                        color: Color(0x12000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+            ),
+            child: Icon(
+              icon,
+              size: 21,
+              color: isActive ? Colors.white : _catalogControlText,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _sortOptionLabel(String criteria) {
+    switch (criteria) {
+      case "newest":
+        return "Новинки";
+      case "discount":
+        return "Выгодные";
+      case "price_asc":
+        return "Сначала дешевле";
+      case "price_desc":
+        return "Сначала дороже";
+      case "default":
+      default:
+        return "По умолчанию";
+    }
+  }
+
+  IconData _sortOptionIcon(String criteria) {
+    switch (criteria) {
+      case "newest":
+        return Icons.auto_awesome_outlined;
+      case "discount":
+        return Icons.local_offer_outlined;
+      case "price_asc":
+        return Icons.south_rounded;
+      case "price_desc":
+        return Icons.north_rounded;
+      case "default":
+      default:
+        return Icons.swap_vert_rounded;
+    }
+  }
+
+  Widget _buildSortOptionTile({
+    required String criteria,
+    required VoidCallback onTap,
+  }) {
+    final bool isActive = _currentSort == criteria;
+    final Color tileColor = isActive ? const Color(0xFFEEF1F5) : Colors.white;
+    final Color borderColor = isActive
+        ? _catalogControlText
+        : _catalogControlBorder;
+    final Color iconColor = isActive
+        ? _catalogControlText
+        : _catalogControlMuted;
+    final Color textColor = isActive ? _catalogControlText : Colors.black87;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      decoration: BoxDecoration(
+        color: tileColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor, width: isActive ? 1.2 : 1),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                Icon(_sortOptionIcon(criteria), size: 21, color: iconColor),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _sortOptionLabel(criteria),
+                    style: _subMenuStyle.copyWith(
+                      fontSize: 15,
+                      color: textColor,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(scale: animation, child: child),
+                  ),
+                  child: isActive
+                      ? const Icon(
+                          Icons.check_circle_rounded,
+                          key: ValueKey<String>('active'),
+                          color: _catalogControlText,
+                          size: 20,
+                        )
+                      : const SizedBox(
+                          key: ValueKey<String>('inactive'),
+                          width: 20,
+                          height: 20,
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showSortMenu(BuildContext context) {
+    const sortOptions = <String>[
+      "default",
+      "newest",
+      "discount",
+      "price_asc",
+      "price_desc",
+    ];
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      clipBehavior: Clip.antiAlias,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 4),
-            _buildBottomSheetHandle(),
             const SizedBox(height: 8),
+            _buildBottomSheetHandle(),
+            const SizedBox(height: 12),
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 15),
+              padding: EdgeInsets.symmetric(vertical: 10),
               child: Center(
                 child: Text("Сортировка", style: _modalHeaderStyle),
               ),
             ),
-            Container(height: 1, color: Colors.grey.shade200),
-            const SizedBox(height: 10),
-            ListTile(
-              leading: Icon(
-                Icons.sort,
-                color: _currentSort == "default" ? Colors.blue : Colors.black,
+            Container(height: 1, color: _catalogControlBorder),
+            const SizedBox(height: 8),
+            ...sortOptions.map(
+              (criteria) => _buildSortOptionTile(
+                criteria: criteria,
+                onTap: () {
+                  _applySort(criteria);
+                  Navigator.pop(context);
+                },
               ),
-              title: Text(
-                "По умолчанию",
-                style: TextStyle(
-                  color: _currentSort == "default" ? Colors.blue : Colors.black,
-                ),
-              ),
-              onTap: () {
-                _applySort("default");
-                Navigator.pop(context);
-              },
             ),
-            ListTile(
-              leading: Icon(
-                Icons.new_releases_outlined,
-                color: _currentSort == "newest" ? Colors.blue : Colors.black,
-              ),
-              title: Text(
-                "Новинки",
-                style: TextStyle(
-                  color: _currentSort == "newest" ? Colors.blue : Colors.black,
-                ),
-              ),
-              onTap: () {
-                _applySort("newest");
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.percent,
-                color: _currentSort == "discount" ? Colors.blue : Colors.black,
-              ),
-              title: Text(
-                "Выгодные",
-                style: TextStyle(
-                  color: _currentSort == "discount"
-                      ? Colors.blue
-                      : Colors.black,
-                ),
-              ),
-              onTap: () {
-                _applySort("discount");
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.trending_up,
-                color: _currentSort == "price_asc" ? Colors.blue : Colors.black,
-              ),
-              title: Text(
-                "Сначала дешевле",
-                style: TextStyle(
-                  color: _currentSort == "price_asc"
-                      ? Colors.blue
-                      : Colors.black,
-                ),
-              ),
-              onTap: () {
-                _applySort("price_asc");
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.trending_down,
-                color: _currentSort == "price_desc"
-                    ? Colors.blue
-                    : Colors.black,
-              ),
-              title: Text(
-                "Сначала дороже",
-                style: TextStyle(
-                  color: _currentSort == "price_desc"
-                      ? Colors.blue
-                      : Colors.black,
-                ),
-              ),
-              onTap: () {
-                _applySort("price_desc");
-                Navigator.pop(context);
-              },
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
           ],
         ),
       ),
@@ -15070,6 +15234,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   void _showFilterMenu(BuildContext context) {
     final bool isWishlist = _nativeCategory == "wishlist";
+    bool filterDataPrepareStarted = false;
     RangeValues localPrice = _currentPriceRange;
     Map<String, List<String>> localFeatures = {};
     _selectedFeatures.forEach((k, v) => localFeatures[k] = List.from(v));
@@ -15083,263 +15248,437 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
+      clipBehavior: Clip.antiAlias,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
-          if (!isWishlist) {
-            _fetchFilterMetadata(modalSetter: setModalState);
+          final bool isFilterDataReady =
+              isWishlist ||
+              (_isFilterMetadataLoaded && _areAllFeatureValuesLoaded);
+          if (!isWishlist && !filterDataPrepareStarted && !isFilterDataReady) {
+            filterDataPrepareStarted = true;
+            unawaited(() async {
+              await _fetchFilterMetadata(modalSetter: setModalState);
+              await _warmFilterFeatureValues(modalSetter: setModalState);
+              if (!mounted) return;
+              try {
+                setModalState(() {});
+              } catch (_) {}
+            }());
           }
+          final bool showFilterDataLoading =
+              !isWishlist &&
+              (_isFilterMetadataLoading ||
+                  _isFilterFeatureValuesLoading ||
+                  !isFilterDataReady);
           return Container(
-            height: MediaQuery.of(context).size.height * 0.85,
-            padding: const EdgeInsets.only(bottom: 20),
+            height: MediaQuery.of(context).size.height * 0.88,
+            padding: EdgeInsets.only(
+              bottom: 12 + MediaQuery.of(context).padding.bottom,
+            ),
             child: Column(
               children: [
                 const SizedBox(height: 8),
                 _buildBottomSheetHandle(),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 // Заголовок
                 const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 15),
+                  padding: EdgeInsets.symmetric(vertical: 10),
                   child: Center(
                     child: Text("Фильтры", style: _modalHeaderStyle),
                   ),
                 ),
-                Container(height: 1, color: Colors.grey.shade200),
+                Container(height: 1, color: _catalogControlBorder),
 
                 Expanded(
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(20),
-                    itemCount: (() {
-                      const int baseCount =
-                          5; // price title, spacing, slider, row, divider
-                      final int featureCount = isWishlist
-                          ? 0
-                          : _availableFeatures.length;
-                      final bool showStocks =
-                          !isWishlist && _availableStocks.isNotEmpty;
-                      final int stockHeaderCount = showStocks
-                          ? 2
-                          : 0; // title + spacing
-                      final int stockCount = showStocks
-                          ? _availableStocks.length
-                          : 0;
-                      return baseCount +
-                          featureCount +
-                          stockHeaderCount +
-                          stockCount;
-                    })(),
-                    itemBuilder: (context, index) {
-                      // Цена
-                      if (index == 0) {
-                        return const Text("Цена", style: _boldSubMenuStyle);
-                      }
-                      if (index == 1) {
-                        return const SizedBox(height: 10);
-                      }
-                      if (index == 2) {
-                        return RangeSlider(
-                          values: localPrice,
-                          min: 0,
-                          max: 30000,
-                          divisions: 30,
-                          activeColor: Colors.black,
-                          inactiveColor: Colors.grey.shade300,
-                          labels: RangeLabels(
-                            "${localPrice.start.round()} ₽",
-                            "${localPrice.end.round()} ₽",
-                          ),
-                          onChanged: (val) =>
-                              setModalState(() => localPrice = val),
-                        );
-                      }
-                      if (index == 3) {
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              "${localPrice.start.round()} ₽",
-                              style: _subMenuStyle,
-                            ),
-                            Text(
-                              "${localPrice.end.round()} ₽",
-                              style: _subMenuStyle,
-                            ),
-                          ],
-                        );
-                      }
-                      if (index == 4) {
-                        final bool showMetadataLoading =
-                            _isFilterMetadataLoading &&
-                            _availableFeatures.isEmpty &&
-                            _availableStocks.isEmpty;
-                        if (showMetadataLoading) {
-                          return const Column(
+                  child: showFilterDataLoading
+                      ? const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Divider(height: 40),
-                              SizedBox(height: 8),
-                              Center(
+                              SizedBox(
+                                width: 24,
+                                height: 24,
                                 child: CircularProgressIndicator(
-                                  color: Colors.black26,
+                                  color: _catalogControlMuted,
+                                  strokeWidth: 2.3,
                                 ),
                               ),
-                              SizedBox(height: 8),
-                            ],
-                          );
-                        }
-                        return const Divider(height: 40);
-                      }
-
-                      const int baseCount = 5;
-                      final int featureCount = isWishlist
-                          ? 0
-                          : _availableFeatures.length;
-                      const int featureStart = baseCount;
-                      if (index >= featureStart &&
-                          index < featureStart + featureCount) {
-                        final feat = _availableFeatures[index - featureStart];
-                        if (feat is! Map) return const SizedBox.shrink();
-                        final String fid = feat['id']?.toString() ?? "";
-                        final String fname = feat['name']?.toString() ?? "";
-                        if (fid.isEmpty || fname.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-                        final dynamic rawValues = feat['values'];
-                        final Map<String, dynamic> values = (rawValues is Map)
-                            ? Map<String, dynamic>.from(rawValues)
-                            : {};
-                        final bool isLoaded =
-                            values.isNotEmpty ||
-                            _featureValueTextById.containsKey(fid);
-                        if (!isLoaded) {
-                          _ensureFeatureValuesLoaded(
-                            fid,
-                            modalSetter: setModalState,
-                          );
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(fname, style: _boldSubMenuStyle),
-                              const SizedBox(height: 8),
-                              const LinearProgressIndicator(
-                                color: Colors.black26,
-                                minHeight: 2,
+                              SizedBox(height: 10),
+                              Text(
+                                "Подготавливаем фильтры...",
+                                style: TextStyle(
+                                  fontFamily: 'Roboto',
+                                  fontSize: 13,
+                                  color: _catalogControlMuted,
+                                ),
                               ),
-                              const Divider(height: 40),
                             ],
-                          );
-                        }
-                        final availableSet =
-                            _availableFeatureValuesInCategory[fid];
-                        final filteredEntries = values.entries.where((e) {
-                          if (availableSet == null || availableSet.isEmpty) {
-                            return true;
-                          }
-                          return availableSet.contains(
-                            _normalizeComparable(e.value.toString()),
-                          );
-                        }).toList();
-                        if (filteredEntries.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(fname, style: _boldSubMenuStyle),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              children: filteredEntries.map((e) {
-                                final String vid = e.key;
-                                final String vname = e.value.toString();
-                                final bool isSelected =
-                                    localFeatures[fid]?.contains(vid) ?? false;
-                                return FilterChip(
-                                  label: Text(
-                                    vname,
-                                    style: TextStyle(
-                                      color: isSelected
-                                          ? Colors.white
-                                          : Colors.black,
-                                      fontSize: 13,
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                          itemCount: (() {
+                            const int baseCount =
+                                5; // price title, spacing, slider, row, divider
+                            final int featureCount = isWishlist
+                                ? 0
+                                : _availableFeatures.length;
+                            final bool showStocks =
+                                !isWishlist && _availableStocks.isNotEmpty;
+                            final int stockHeaderCount = showStocks
+                                ? 2
+                                : 0; // title + spacing
+                            final int stockCount = showStocks
+                                ? _availableStocks.length
+                                : 0;
+                            return baseCount +
+                                featureCount +
+                                stockHeaderCount +
+                                stockCount;
+                          })(),
+                          itemBuilder: (context, index) {
+                            // Цена
+                            if (index == 0) {
+                              return Text(
+                                "Цена",
+                                style: _boldSubMenuStyle.copyWith(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: _catalogControlText,
+                                ),
+                              );
+                            }
+                            if (index == 1) {
+                              return const SizedBox(height: 10);
+                            }
+                            if (index == 2) {
+                              return SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  activeTrackColor: _catalogControlText,
+                                  inactiveTrackColor: _catalogControlBorder,
+                                  thumbColor: _catalogControlText,
+                                  overlayColor: const Color(0x29111827),
+                                  trackHeight: 3,
+                                  rangeThumbShape:
+                                      const RoundRangeSliderThumbShape(
+                                        enabledThumbRadius: 8,
+                                      ),
+                                ),
+                                child: RangeSlider(
+                                  values: localPrice,
+                                  min: 0,
+                                  max: 30000,
+                                  divisions: 30,
+                                  labels: RangeLabels(
+                                    "${localPrice.start.round()} ₽",
+                                    "${localPrice.end.round()} ₽",
+                                  ),
+                                  onChanged: (val) =>
+                                      setModalState(() => localPrice = val),
+                                ),
+                              );
+                            }
+                            if (index == 3) {
+                              return Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 9,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _catalogControlSurface,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: _catalogControlBorder,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      "от ${localPrice.start.round()} ₽",
+                                      style: _subMenuStyle.copyWith(
+                                        color: _catalogControlText,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                   ),
-                                  selected: isSelected,
-                                  onSelected: (selected) {
-                                    setModalState(() {
-                                      if (selected) {
-                                        localFeatures
-                                            .putIfAbsent(fid, () => [])
-                                            .add(vid);
-                                      } else {
-                                        localFeatures[fid]?.remove(vid);
-                                      }
-                                    });
-                                  },
-                                  selectedColor: Colors.black,
-                                  checkmarkColor: Colors.white,
-                                  backgroundColor: Colors.grey.shade100,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 9,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _catalogControlSurface,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: _catalogControlBorder,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      "до ${localPrice.end.round()} ₽",
+                                      style: _subMenuStyle.copyWith(
+                                        color: _catalogControlText,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+                            if (index == 4) {
+                              return const Divider(
+                                height: 34,
+                                color: _catalogControlBorder,
+                              );
+                            }
+
+                            const int baseCount = 5;
+                            final int featureCount = isWishlist
+                                ? 0
+                                : _availableFeatures.length;
+                            const int featureStart = baseCount;
+                            if (index >= featureStart &&
+                                index < featureStart + featureCount) {
+                              final feat =
+                                  _availableFeatures[index - featureStart];
+                              if (feat is! Map) return const SizedBox.shrink();
+                              final String fid = feat['id']?.toString() ?? "";
+                              final String fname =
+                                  feat['name']?.toString() ?? "";
+                              if (fid.isEmpty || fname.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              final dynamic rawValues = feat['values'];
+                              final Map<String, dynamic> values =
+                                  (rawValues is Map)
+                                  ? Map<String, dynamic>.from(rawValues)
+                                  : {};
+                              if (values.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              final textMap =
+                                  _featureValueTextById[fid] ??
+                                  const <String, String>{};
+                              final optionEntries = values.entries
+                                  .map((e) {
+                                    final vid = e.key.toString();
+                                    final fallbackName = _featureOptionLabel(
+                                      e.value,
+                                      fallback: vid,
+                                    );
+                                    final mappedName =
+                                        textMap[vid]?.toString().trim() ?? "";
+                                    final vname = mappedName.isNotEmpty
+                                        ? mappedName
+                                        : fallbackName;
+                                    return MapEntry<String, String>(vid, vname);
+                                  })
+                                  .where((e) => e.value.trim().isNotEmpty)
+                                  .toList(growable: false);
+                              final availableSet =
+                                  _availableFeatureValuesInCategory[fid];
+                              final filteredEntries = optionEntries.where((e) {
+                                if (availableSet == null ||
+                                    availableSet.isEmpty) {
+                                  return true;
+                                }
+                                return availableSet.contains(
+                                  _normalizeComparable(e.value),
+                                );
+                              }).toList();
+                              if (filteredEntries.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    fname,
+                                    style: _boldSubMenuStyle.copyWith(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: _catalogControlText,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: filteredEntries.map((e) {
+                                      final String vid = e.key;
+                                      final String vname = e.value;
+                                      final bool isSelected =
+                                          localFeatures[fid]?.contains(vid) ??
+                                          false;
+                                      return FilterChip(
+                                        label: Text(
+                                          vname,
+                                          style: TextStyle(
+                                            color: isSelected
+                                                ? Colors.white
+                                                : _catalogControlText,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        selected: isSelected,
+                                        showCheckmark: false,
+                                        onSelected: (selected) {
+                                          setModalState(() {
+                                            if (selected) {
+                                              localFeatures
+                                                  .putIfAbsent(fid, () => [])
+                                                  .add(vid);
+                                            } else {
+                                              localFeatures[fid]?.remove(vid);
+                                            }
+                                          });
+                                        },
+                                        selectedColor: _catalogControlText,
+                                        checkmarkColor: Colors.white,
+                                        backgroundColor: _catalogControlSurface,
+                                        side: BorderSide(
+                                          color: isSelected
+                                              ? _catalogControlText
+                                              : _catalogControlBorder,
+                                        ),
+                                        shape: const StadiumBorder(),
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                  const Divider(
+                                    height: 30,
+                                    color: _catalogControlBorder,
+                                  ),
+                                ],
+                              );
+                            }
+
+                            final bool showStocks =
+                                !isWishlist && _availableStocks.isNotEmpty;
+                            final int stockHeaderStart =
+                                featureStart + featureCount;
+                            if (showStocks && index == stockHeaderStart) {
+                              return Text(
+                                "Наличие в магазинах",
+                                style: _boldSubMenuStyle.copyWith(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: _catalogControlText,
+                                ),
+                              );
+                            }
+                            if (showStocks && index == stockHeaderStart + 1) {
+                              return const SizedBox(height: 10);
+                            }
+                            if (showStocks) {
+                              final int stockStart = stockHeaderStart + 2;
+                              final int stockIndex = index - stockStart;
+                              if (stockIndex >= 0 &&
+                                  stockIndex < _availableStocks.length) {
+                                final stock = _availableStocks[stockIndex];
+                                final String sid = stock['id'].toString();
+                                final String sname = stock['name'] ?? "";
+                                final bool isSelected = localStocks.contains(
+                                  sid,
+                                );
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(12),
+                                      onTap: () {
+                                        setModalState(() {
+                                          if (isSelected) {
+                                            localStocks.remove(sid);
+                                          } else {
+                                            localStocks.add(sid);
+                                          }
+                                        });
+                                      },
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        curve: Curves.easeOutCubic,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? const Color(0xFFEEF1F5)
+                                              : Colors.white,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? _catalogControlText
+                                                : _catalogControlBorder,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                sname,
+                                                style: _subMenuStyle.copyWith(
+                                                  color: _catalogControlText,
+                                                  fontSize: 14,
+                                                  fontWeight: isSelected
+                                                      ? FontWeight.w500
+                                                      : FontWeight.w400,
+                                                ),
+                                              ),
+                                            ),
+                                            Checkbox(
+                                              value: isSelected,
+                                              activeColor: _catalogControlText,
+                                              side: const BorderSide(
+                                                color: _catalogControlBorder,
+                                                width: 1.2,
+                                              ),
+                                              onChanged: (val) {
+                                                setModalState(() {
+                                                  if (val == true) {
+                                                    localStocks.add(sid);
+                                                  } else {
+                                                    localStocks.remove(sid);
+                                                  }
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 );
-                              }).toList(),
-                            ),
-                            const Divider(height: 40),
-                          ],
-                        );
-                      }
+                              }
+                            }
 
-                      final bool showStocks =
-                          !isWishlist && _availableStocks.isNotEmpty;
-                      final int stockHeaderStart = featureStart + featureCount;
-                      if (showStocks && index == stockHeaderStart) {
-                        return const Text(
-                          "Наличие в магазинах",
-                          style: _boldSubMenuStyle,
-                        );
-                      }
-                      if (showStocks && index == stockHeaderStart + 1) {
-                        return const SizedBox(height: 10);
-                      }
-                      if (showStocks) {
-                        final int stockStart = stockHeaderStart + 2;
-                        final int stockIndex = index - stockStart;
-                        if (stockIndex >= 0 &&
-                            stockIndex < _availableStocks.length) {
-                          final stock = _availableStocks[stockIndex];
-                          final String sid = stock['id'].toString();
-                          final String sname = stock['name'] ?? "";
-                          final bool isSelected = localStocks.contains(sid);
-                          return CheckboxListTile(
-                            title: Text(sname, style: _subMenuStyle),
-                            value: isSelected,
-                            activeColor: Colors.black,
-                            contentPadding: EdgeInsets.zero,
-                            onChanged: (val) {
-                              setModalState(() {
-                                if (val == true) {
-                                  localStocks.add(sid);
-                                } else {
-                                  localStocks.remove(sid);
-                                }
-                              });
-                            },
-                          );
-                        }
-                      }
-
-                      return const SizedBox.shrink();
-                    },
-                  ),
+                            return const SizedBox.shrink();
+                          },
+                        ),
                 ),
 
                 // Кнопки
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
+                    horizontal: 16,
                     vertical: 10,
                   ),
                   child: Row(
@@ -15354,16 +15693,27 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             });
                           },
                           style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.black),
-                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            side: const BorderSide(
+                              color: _catalogControlBorder,
+                              width: 1.2,
+                            ),
+                            backgroundColor: Colors.white,
+                            foregroundColor: _catalogControlText,
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
-                          child: const Text(
+                          child: Text(
                             "Сбросить",
-                            style: TextStyle(color: Colors.black),
+                            style: _subMenuStyle.copyWith(
+                              color: _catalogControlText,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 15),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
@@ -15382,12 +15732,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             Navigator.pop(context);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            backgroundColor: _catalogControlText,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(52),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
-                          child: const Text(
+                          child: Text(
                             "Показать результаты",
-                            style: TextStyle(color: Colors.white),
+                            style: _subMenuStyle.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
@@ -20285,6 +20643,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
   int _galleryCarouselIndex = 0;
   final Map<String, double> _documentImageIntrinsicAspectRatios = {};
   final Set<String> _documentImageAspectRatioInFlight = <String>{};
+  final Map<String, bool> _accordionExpandedState = <String, bool>{};
 
   @override
   void initState() {
@@ -20607,6 +20966,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       _structuredDocument = useStructuredRenderer ? documentMap : null;
       _htmlBody = useStructuredRenderer ? '' : _normalizeHtml(bodyText);
       _galleryCarouselIndex = 0;
+      _accordionExpandedState.clear();
     }
 
     if (!shouldNotify) {
@@ -21826,6 +22186,89 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       if (text.isNotEmpty) items.add(text);
     }
     return items;
+  }
+
+  List<Map<String, dynamic>> _extractAccordionItems(
+    Map<String, dynamic> section,
+  ) {
+    final candidates = <dynamic>[
+      section['items'],
+      section['faq_items'],
+      section['entries'],
+      section['questions'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate is! List) continue;
+      final parsed = <Map<String, dynamic>>[];
+      for (var index = 0; index < candidate.length; index++) {
+        final rawItem = candidate[index];
+        final item = _asMap(rawItem);
+        if (item != null) {
+          final question = _stringValue(
+            item['question'],
+            _stringValue(item['title'], _stringValue(item['label'])),
+          );
+          final answer = _stringValue(
+            item['answer'],
+            _stringValue(
+              item['content'],
+              _stringValue(item['text'], _stringValue(item['description'])),
+            ),
+          );
+          if (question.isEmpty && answer.isEmpty) continue;
+          parsed.add({
+            ...item,
+            if (question.isNotEmpty) 'question': question,
+            if (answer.isNotEmpty) 'answer': answer,
+          });
+          continue;
+        }
+
+        final text = rawItem?.toString().trim() ?? '';
+        if (text.isEmpty) continue;
+        parsed.add({'id': 'item_$index', 'question': text});
+      }
+      if (parsed.isNotEmpty) return parsed;
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  String _accordionItemStateKey(
+    Map<String, dynamic> section,
+    Map<String, dynamic> item,
+    int index,
+  ) {
+    final sectionId = _stringValue(
+      section['id'],
+      _stringValue(section['type'], 'accordion'),
+    );
+    final itemId = _stringValue(
+      item['id'],
+      _stringValue(item['key'], _stringValue(item['question'], '$index')),
+    );
+    return '$sectionId::$index::$itemId';
+  }
+
+  bool _accordionDefaultExpanded(Map<String, dynamic> style, int index) {
+    final expandAll = _asBool(
+      _firstDefinedStyleValue(style, [
+        'expand_all',
+        'expanded_all',
+        'initially_expanded_all',
+      ]),
+      fallback: false,
+    );
+    if (expandAll) return true;
+    if (index != 0) return false;
+    return _asBool(
+      _firstDefinedStyleValue(style, [
+        'expand_first_item',
+        'expand_first',
+        'initially_expanded',
+      ]),
+      fallback: false,
+    );
   }
 
   Widget _buildImageBackgroundCard({
@@ -23268,6 +23711,293 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
     );
   }
 
+  Widget _buildAccordionSection(
+    Map<String, dynamic> section, {
+    List<Map<String, dynamic>>? parsedItems,
+  }) {
+    final title = _stringValue(section['title']);
+    final items = parsedItems ?? _extractAccordionItems(section);
+    if (title.isEmpty && items.isEmpty) return const SizedBox.shrink();
+
+    final sectionSurfaceStyle = _composeSurfaceStyle([section]);
+    final layoutStyle = _composeLayoutStyle([section]);
+    final accordionStyle = _composeNamedStyle(
+      'accordion',
+      [section],
+      aliases: const ['faq', 'expander'],
+    );
+    final titleStyle = _composeTextStyleFor(
+      'title',
+      [section],
+      aliases: const ['heading'],
+    );
+    final headingSpacing = _styleDouble(layoutStyle, [
+      'title_spacing',
+      'content_spacing',
+    ], 14.0);
+    final itemSpacing = _styleDouble(accordionStyle, [
+      'item_spacing',
+      'row_gap',
+      'items_gap',
+    ], 10.0);
+    final showDivider = _asBool(
+      _firstDefinedStyleValue(accordionStyle, [
+        'show_divider',
+        'show_dividers',
+      ]),
+      fallback: true,
+    );
+    final dividerColor = _parseDocumentColor(
+      _firstDefinedStyleValue(accordionStyle, [
+        'divider_color',
+        'border_color',
+      ]),
+      _colorWithOpacity(_documentBorderColor, 0.82),
+    );
+    final dividerWidth = _styleDouble(accordionStyle, [
+      'divider_width',
+    ], 1.0).clamp(0.0, 4.0).toDouble();
+
+    return _buildStyledSurface(
+      style: sectionSurfaceStyle,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      showShadow: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: _documentTextStyle(
+                size: 22,
+                weight: FontWeight.w700,
+                color: _documentAccentColor,
+                style: titleStyle,
+              ),
+            ),
+          if (title.isNotEmpty && items.isNotEmpty)
+            SizedBox(height: headingSpacing),
+          ...items.asMap().entries.map((entry) {
+            final index = entry.key;
+            final item = entry.value;
+            final question = _stringValue(
+              item['question'],
+              _stringValue(item['title'], _stringValue(item['label'])),
+            );
+            final answer = _stringValue(
+              item['answer'],
+              _stringValue(
+                item['content'],
+                _stringValue(item['text'], _stringValue(item['description'])),
+              ),
+            );
+            if (question.isEmpty && answer.isEmpty) {
+              return const SizedBox.shrink();
+            }
+
+            final itemSurfaceStyle = _mergeStyleMaps([
+              _composeNamedStyle(
+                'accordion_item',
+                [section],
+                aliases: const ['faq_item'],
+              ),
+              _composeNamedStyle(
+                'accordion_item',
+                [item],
+                aliases: const ['faq_item'],
+                includeGenericSourceStyle: true,
+              ),
+              _composeSurfaceStyle([item]),
+            ]);
+            final headerStyle = _mergeStyleMaps([
+              _composeNamedStyle(
+                'accordion_header',
+                [section],
+                aliases: const ['faq_header'],
+              ),
+              _composeNamedStyle(
+                'accordion_header',
+                [item],
+                aliases: const ['faq_header'],
+                includeGenericSourceStyle: true,
+              ),
+            ]);
+            final contentStyle = _mergeStyleMaps([
+              _composeNamedStyle(
+                'accordion_content',
+                [section],
+                aliases: const ['faq_content'],
+              ),
+              _composeNamedStyle(
+                'accordion_content',
+                [item],
+                aliases: const ['faq_content'],
+                includeGenericSourceStyle: true,
+              ),
+            ]);
+            final iconStyle = _mergeStyleMaps([
+              _composeNamedStyle(
+                'accordion_icon',
+                [section],
+                aliases: const ['faq_icon'],
+              ),
+              _composeNamedStyle(
+                'accordion_icon',
+                [item],
+                aliases: const ['faq_icon'],
+                includeGenericSourceStyle: true,
+              ),
+            ]);
+            final questionStyle = _composeTextStyleFor(
+              'accordion_title',
+              [section, item],
+              aliases: const ['question', 'faq_question', 'item_title'],
+            );
+            final answerStyle = _mergeStyleMaps([
+              _composeTextStyleFor('text', [section], aliases: const ['body']),
+              _composeTextStyleFor(
+                'accordion_text',
+                [section, item],
+                aliases: const ['answer', 'faq_answer', 'item_text'],
+              ),
+            ]);
+
+            final itemKey = _accordionItemStateKey(section, item, index);
+            final canExpand = answer.isNotEmpty;
+            final expanded =
+                canExpand &&
+                (_accordionExpandedState[itemKey] ??
+                    _accordionDefaultExpanded(accordionStyle, index));
+
+            final headerPadding = _resolveEdgeInsets(
+              headerStyle,
+              'padding',
+              fallback: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            );
+            final contentPadding = _resolveEdgeInsets(
+              contentStyle,
+              'padding',
+              fallback: const EdgeInsets.fromLTRB(16, 2, 16, 14),
+            );
+            final headerMinHeight = _styleDouble(headerStyle, [
+              'min_height',
+              'header_min_height',
+            ], 52.0).clamp(0.0, 220.0).toDouble();
+            final iconColor = _parseDocumentColor(
+              _firstDefinedStyleValue(iconStyle, ['color', 'icon_color']),
+              _documentAccentColor,
+            );
+            final iconSize = _styleDouble(iconStyle, [
+              'size',
+              'icon_size',
+            ], 22.0).clamp(12.0, 40.0).toDouble();
+            final questionAlign = _styleTextAlign(
+              questionStyle,
+              fallback: TextAlign.left,
+            );
+            final answerAlign = _styleTextAlign(
+              answerStyle,
+              fallback: TextAlign.left,
+            );
+            final itemRadius = _styleDouble(itemSurfaceStyle, [
+              'border_radius',
+            ], _documentRadius).clamp(0.0, 48.0).toDouble();
+
+            Widget headerChild = ConstrainedBox(
+              constraints: BoxConstraints(minHeight: headerMinHeight),
+              child: Padding(
+                padding: headerPadding,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        question,
+                        textAlign: questionAlign,
+                        style: _documentTextStyle(
+                          size: 16,
+                          weight: FontWeight.w700,
+                          color: _documentAccentColor,
+                          style: questionStyle,
+                        ),
+                      ),
+                    ),
+                    if (canExpand) ...[
+                      const SizedBox(width: 12),
+                      AnimatedRotation(
+                        turns: expanded ? 0.5 : 0.0,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeInOut,
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: iconSize,
+                          color: iconColor,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+
+            if (canExpand) {
+              headerChild = Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(itemRadius),
+                  onTap: () {
+                    setState(() {
+                      _accordionExpandedState[itemKey] = !expanded;
+                    });
+                  },
+                  child: headerChild,
+                ),
+              );
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: index == items.length - 1 ? 0 : itemSpacing,
+              ),
+              child: _buildStyledSurface(
+                style: itemSurfaceStyle,
+                padding: EdgeInsets.zero,
+                showShadow: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    headerChild,
+                    if (canExpand && expanded) ...[
+                      if (showDivider && dividerWidth > 0)
+                        Divider(
+                          height: 0,
+                          thickness: dividerWidth,
+                          color: dividerColor,
+                        ),
+                      Padding(
+                        padding: contentPadding,
+                        child: Text(
+                          answer,
+                          textAlign: answerAlign,
+                          style: _documentTextStyle(
+                            size: 15,
+                            height: 1.55,
+                            color: _documentTextColor,
+                            style: answerStyle,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFaqPlaceholderSection(Map<String, dynamic> section) {
     final text = _stringValue(section['placeholder_text']);
     if (text.isEmpty) return const SizedBox.shrink();
@@ -23326,9 +24056,17 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
       case 'image':
       case 'wallet_banner':
         return _buildImageBlockSection(section);
+      case 'accordion':
+      case 'accordion_list':
+      case 'faq_accordion':
+        return _buildAccordionSection(section);
       case 'faq_dynamic':
       case 'dynamic_faq':
       case 'faq':
+        final items = _extractAccordionItems(section);
+        if (items.isNotEmpty) {
+          return _buildAccordionSection(section, parsedItems: items);
+        }
         return _buildFaqPlaceholderSection(section);
       default:
         final fallbackText = _extractTextFromJson(section).trim();
