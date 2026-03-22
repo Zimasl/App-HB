@@ -1,118 +1,8 @@
 {
   "version": "1.1",
-  "enabled": true,
-  "title": "Товары дня",
-  "background_color": "#FFFFFF",
-  "view_all_label": "Все",
-  "category_id": "159",
-  "category_title": "Товары дня",
-  "product_limit": 8,
-  "layout": {
-    "banner_height": 242,
-    "card_overlap": 96,
-    "card_visible_slots": 2.1,
-    "card_gap": 8,
-    "horizontal_padding": 16
-  },
-  "positions": {
-    "section_padding_top": 20,
-    "section_padding_bottom": 16,
-    "header_padding_left": 10,
-    "header_padding_top": 4,
-    "header_padding_right": 10,
-    "header_padding_bottom": 10,
-    "banner_text_left": 16,
-    "banner_text_top": 24,
-    "banner_text_right": 16,
-    "banner_title_bottom_gap": 18,
-    "bottom_row_left": 16,
-    "bottom_row_right": 16,
-    "bottom_row_bottom": 112,
-    "bottom_row_gap": 12,
-    "banner_title_max_width": 190,
-    "products_offset_y": 0
-  },
-  "text_styles": {
-    "section_title": {
-      "font_size": 22,
-      "font_weight": 400,
-      "color": "#000000",
-      "letter_spacing": 0,
-      "text_align": "left"
-    },
-    "view_all": {
-      "font_size": 16,
-      "font_weight": 500,
-      "color": "#4B5563",
-      "letter_spacing": 0,
-      "text_align": "right"
-    },
-    "banner_title": {
-      "font_size": 24,
-      "font_weight": 900,
-      "color": "#FFFFFF",
-      "line_height": 1.0,
-      "italic": true,
-      "letter_spacing": 0,
-      "text_align": "left"
-    },
-    "banner_subtitle": {
-      "font_size": 14,
-      "font_weight": 700,
-      "color": "#FFFFFF",
-      "line_height": 1.05,
-      "letter_spacing": 0,
-      "text_align": "left"
-    },
-    "timer": {
-      "font_size": 16,
-      "font_weight": 700,
-      "color": "#FFFFFF",
-      "icon_color": "#FF6B3D",
-      "icon_size": 18,
-      "icon_spacing": 4
-    },
-    "timer_expired": {
-      "font_size": 13,
-      "font_weight": 700,
-      "color": "#FFFFFF",
-      "letter_spacing": 0
-    },
-    "card_price": {
-      "font_size": 17,
-      "font_weight": 700,
-      "color": "#000000",
-      "letter_spacing": 0
-    },
-    "card_old_price": {
-      "font_size": 12,
-      "font_weight": 400,
-      "color": "#BDBDBD",
-      "letter_spacing": 0
-    },
-    "card_name": {
-      "font_size": 13,
-      "font_weight": 400,
-      "color": "#000000",
-      "line_height": 1.2,
-      "letter_spacing": 0.1
-    },
-    "card_button": {
-      "font_size": 12,
-      "font_weight": 400,
-      "letter_spacing": 0
-    }
-  },
-  "card_layout": {
-    "content_padding_horizontal": 12,
-    "content_padding_top": 6,
-    "content_padding_bottom": 15,
-    "price_name_gap": 10,
-    "name_actions_gap": 15
-  },
   "notes": [
-    "enabled=false полностью скрывает секцию на главной.",
-    "background_color управляет фоном всей секции; для прозрачного фона используйте #00000000.",
+    "sections содержит до 3 блоков на главной.",
+    "enabled=false внутри конкретной секции скрывает только ее на главной.",
     "category_id управляет подборкой товаров.",
     "banner.image можно указывать абсолютным или относительным URL.",
     "positions.products_offset_y двигает карточки товара вверх или вниз относительно баннера.",
@@ -123,24 +13,405 @@
     "positions управляет отступами и размещением текста в секции и на баннере.",
     "card_layout управляет внутренними отступами и расстояниями между текстами в карточке."
   ],
-  "banner": {
-    "enabled": true,
-    "title": "СКИДКА ТОЛЬКО\nСЕГОДНЯ",
-    "subtitle": "До окончания акции",
-    "image": "https://hozyain-barin.ru/wa-data/public/site/native/banners/promo_01.webp",
-    "background_color": "#3B1A78",
-    "image_fit": "cover",
-    "overlay": {
+  "sections": [
+    {
+      "id": "featured_1",
       "enabled": true,
-      "color": "#0F0A1F",
-      "start_opacity": 0.75,
-      "middle_opacity": 0.45,
-      "end_opacity": 0.0
+      "title": "Товары дня",
+      "background_color": "#00000000",
+      "view_all_label": "Все",
+      "category_id": "159",
+      "category_title": "Товары дня",
+      "product_limit": 8,
+      "layout": {
+        "banner_height": 270,
+        "card_overlap": 96,
+        "card_visible_slots": 2.1,
+        "card_gap": 8,
+        "horizontal_padding": 16
+      },
+      "positions": {
+        "section_padding_top": 5,
+        "section_padding_bottom": 16,
+        "header_padding_left": 10,
+        "header_padding_top": 4,
+        "header_padding_right": 10,
+        "header_padding_bottom": 10,
+        "banner_text_left": 16,
+        "banner_text_top": 50,
+        "banner_text_right": 16,
+        "banner_title_bottom_gap": 18,
+        "bottom_row_left": 16,
+        "bottom_row_right": 16,
+        "bottom_row_bottom": 95,
+        "bottom_row_gap": 12,
+        "banner_title_max_width": 190,
+        "products_offset_y": 10
+      },
+      "text_styles": {
+        "section_title": {
+          "font_size": 22,
+          "font_weight": 400,
+          "color": "#000000",
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "view_all": {
+          "font_size": 16,
+          "font_weight": 500,
+          "color": "#4B5563",
+          "letter_spacing": 0,
+          "text_align": "right"
+        },
+        "banner_title": {
+          "font_size": 22,
+          "font_weight": 900,
+          "color": "#FFFFFF",
+          "line_height": 1.3,
+          "italic": true,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "banner_subtitle": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "line_height": 1.05,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "timer": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "icon_color": "#FF6B3D",
+          "icon_size": 18,
+          "icon_spacing": 4
+        },
+        "timer_expired": {
+          "font_size": 13,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "letter_spacing": 0
+        },
+        "card_price": {
+          "font_size": 17,
+          "font_weight": 700,
+          "color": "#000000",
+          "letter_spacing": 0
+        },
+        "card_old_price": {
+          "font_size": 12,
+          "font_weight": 400,
+          "color": "#BDBDBD",
+          "letter_spacing": 0
+        },
+        "card_name": {
+          "font_size": 13,
+          "font_weight": 400,
+          "color": "#000000",
+          "line_height": 1.2,
+          "letter_spacing": 0.1
+        },
+        "card_button": {
+          "font_size": 12,
+          "font_weight": 400,
+          "letter_spacing": 0
+        }
+      },
+      "card_layout": {
+        "content_padding_horizontal": 12,
+        "content_padding_top": 6,
+        "content_padding_bottom": 15,
+        "price_name_gap": 10,
+        "name_actions_gap": 15
+      },
+      "banner": {
+        "enabled": true,
+        "title": "СКИДКА ТОЛЬКО\nСЕГОДНЯ",
+        "subtitle": "До окончания акции",
+        "image": "https://hozyain-barin.ru/wa-data/public/site/native/home-actions/skdka-only.jpg",
+        "background_color": "#3B1A78",
+        "image_fit": "cover",
+        "overlay": {
+          "enabled": true,
+          "color": "#0F0A1F",
+          "start_opacity": 0,
+          "middle_opacity": 0,
+          "end_opacity": 0.0
+        },
+        "timer": {
+          "enabled": true,
+          "end_at": "2026-03-22T23:59:59+03:00",
+          "expired_text": "Акция завершена"
+        }
+      }
     },
-    "timer": {
-      "enabled": true,
-      "end_at": "2026-12-31T23:59:59+03:00",
-      "expired_text": "Акция завершена"
+    {
+      "id": "featured_2",
+      "enabled": false,
+      "title": "Товары дня",
+      "background_color": "#00000000",
+      "view_all_label": "Все",
+      "category_id": "159",
+      "category_title": "Товары дня",
+      "product_limit": 8,
+      "layout": {
+        "banner_height": 270,
+        "card_overlap": 96,
+        "card_visible_slots": 2.1,
+        "card_gap": 8,
+        "horizontal_padding": 16
+      },
+      "positions": {
+        "section_padding_top": 5,
+        "section_padding_bottom": 16,
+        "header_padding_left": 10,
+        "header_padding_top": 4,
+        "header_padding_right": 10,
+        "header_padding_bottom": 10,
+        "banner_text_left": 16,
+        "banner_text_top": 50,
+        "banner_text_right": 16,
+        "banner_title_bottom_gap": 18,
+        "bottom_row_left": 16,
+        "bottom_row_right": 16,
+        "bottom_row_bottom": 95,
+        "bottom_row_gap": 12,
+        "banner_title_max_width": 190,
+        "products_offset_y": 10
+      },
+      "text_styles": {
+        "section_title": {
+          "font_size": 22,
+          "font_weight": 400,
+          "color": "#000000",
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "view_all": {
+          "font_size": 16,
+          "font_weight": 500,
+          "color": "#4B5563",
+          "letter_spacing": 0,
+          "text_align": "right"
+        },
+        "banner_title": {
+          "font_size": 22,
+          "font_weight": 900,
+          "color": "#FFFFFF",
+          "line_height": 1.3,
+          "italic": true,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "banner_subtitle": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "line_height": 1.05,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "timer": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "icon_color": "#FF6B3D",
+          "icon_size": 18,
+          "icon_spacing": 4
+        },
+        "timer_expired": {
+          "font_size": 13,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "letter_spacing": 0
+        },
+        "card_price": {
+          "font_size": 17,
+          "font_weight": 700,
+          "color": "#000000",
+          "letter_spacing": 0
+        },
+        "card_old_price": {
+          "font_size": 12,
+          "font_weight": 400,
+          "color": "#BDBDBD",
+          "letter_spacing": 0
+        },
+        "card_name": {
+          "font_size": 13,
+          "font_weight": 400,
+          "color": "#000000",
+          "line_height": 1.2,
+          "letter_spacing": 0.1
+        },
+        "card_button": {
+          "font_size": 12,
+          "font_weight": 400,
+          "letter_spacing": 0
+        }
+      },
+      "card_layout": {
+        "content_padding_horizontal": 12,
+        "content_padding_top": 6,
+        "content_padding_bottom": 15,
+        "price_name_gap": 10,
+        "name_actions_gap": 15
+      },
+      "banner": {
+        "enabled": true,
+        "title": "СКИДКА ТОЛЬКО\nСЕГОДНЯ",
+        "subtitle": "До окончания акции",
+        "image": "https://hozyain-barin.ru/wa-data/public/site/native/home-actions/skdka-only.jpg",
+        "background_color": "#3B1A78",
+        "image_fit": "cover",
+        "overlay": {
+          "enabled": true,
+          "color": "#0F0A1F",
+          "start_opacity": 0,
+          "middle_opacity": 0,
+          "end_opacity": 0.0
+        },
+        "timer": {
+          "enabled": true,
+          "end_at": "2026-03-22T23:59:59+03:00",
+          "expired_text": "Акция завершена"
+        }
+      }
+    },
+    {
+      "id": "featured_3",
+      "enabled": false,
+      "title": "Товары дня",
+      "background_color": "#00000000",
+      "view_all_label": "Все",
+      "category_id": "159",
+      "category_title": "Товары дня",
+      "product_limit": 8,
+      "layout": {
+        "banner_height": 270,
+        "card_overlap": 96,
+        "card_visible_slots": 2.1,
+        "card_gap": 8,
+        "horizontal_padding": 16
+      },
+      "positions": {
+        "section_padding_top": 5,
+        "section_padding_bottom": 16,
+        "header_padding_left": 10,
+        "header_padding_top": 4,
+        "header_padding_right": 10,
+        "header_padding_bottom": 10,
+        "banner_text_left": 16,
+        "banner_text_top": 50,
+        "banner_text_right": 16,
+        "banner_title_bottom_gap": 18,
+        "bottom_row_left": 16,
+        "bottom_row_right": 16,
+        "bottom_row_bottom": 95,
+        "bottom_row_gap": 12,
+        "banner_title_max_width": 190,
+        "products_offset_y": 10
+      },
+      "text_styles": {
+        "section_title": {
+          "font_size": 22,
+          "font_weight": 400,
+          "color": "#000000",
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "view_all": {
+          "font_size": 16,
+          "font_weight": 500,
+          "color": "#4B5563",
+          "letter_spacing": 0,
+          "text_align": "right"
+        },
+        "banner_title": {
+          "font_size": 22,
+          "font_weight": 900,
+          "color": "#FFFFFF",
+          "line_height": 1.3,
+          "italic": true,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "banner_subtitle": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "line_height": 1.05,
+          "letter_spacing": 0,
+          "text_align": "left"
+        },
+        "timer": {
+          "font_size": 16,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "icon_color": "#FF6B3D",
+          "icon_size": 18,
+          "icon_spacing": 4
+        },
+        "timer_expired": {
+          "font_size": 13,
+          "font_weight": 700,
+          "color": "#FFFFFF",
+          "letter_spacing": 0
+        },
+        "card_price": {
+          "font_size": 17,
+          "font_weight": 700,
+          "color": "#000000",
+          "letter_spacing": 0
+        },
+        "card_old_price": {
+          "font_size": 12,
+          "font_weight": 400,
+          "color": "#BDBDBD",
+          "letter_spacing": 0
+        },
+        "card_name": {
+          "font_size": 13,
+          "font_weight": 400,
+          "color": "#000000",
+          "line_height": 1.2,
+          "letter_spacing": 0.1
+        },
+        "card_button": {
+          "font_size": 12,
+          "font_weight": 400,
+          "letter_spacing": 0
+        }
+      },
+      "card_layout": {
+        "content_padding_horizontal": 12,
+        "content_padding_top": 6,
+        "content_padding_bottom": 15,
+        "price_name_gap": 10,
+        "name_actions_gap": 15
+      },
+      "banner": {
+        "enabled": true,
+        "title": "СКИДКА ТОЛЬКО\nСЕГОДНЯ",
+        "subtitle": "До окончания акции",
+        "image": "https://hozyain-barin.ru/wa-data/public/site/native/home-actions/skdka-only.jpg",
+        "background_color": "#3B1A78",
+        "image_fit": "cover",
+        "overlay": {
+          "enabled": true,
+          "color": "#0F0A1F",
+          "start_opacity": 0,
+          "middle_opacity": 0,
+          "end_opacity": 0.0
+        },
+        "timer": {
+          "enabled": true,
+          "end_at": "2026-03-22T23:59:59+03:00",
+          "expired_text": "Акция завершена"
+        }
+      }
     }
-  }
+  ]
 }
