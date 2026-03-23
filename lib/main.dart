@@ -6629,7 +6629,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (raw is! Map) return null;
 
     final map = Map<String, dynamic>.from(raw);
-    final title = _stringValue(map['title'], 'Товары дня');
+    final hasExplicitTitle = map.containsKey('title');
+    final rawTitle = map['title']?.toString().trim() ?? '';
+    final title = rawTitle.isNotEmpty ? rawTitle : 'Товары дня';
+    final hasExplicitViewAllLabel =
+        map.containsKey('view_all_label') || map.containsKey('viewAllLabel');
+    final rawViewAllLabel =
+        (map['view_all_label'] ?? map['viewAllLabel'])?.toString().trim() ?? '';
+    final viewAllLabel = rawViewAllLabel.isNotEmpty ? rawViewAllLabel : 'Все';
     final categoryId = _stringValue(map['category_id'] ?? map['categoryId']);
     final rawSectionId = _stringValue(
       map['id'] ?? map['section_id'] ?? map['sectionId'],
@@ -6664,11 +6671,21 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       'section_key': sectionKey,
       'enabled':
           _asBool(map['enabled'], fallback: true) && categoryId.isNotEmpty,
+      'show_title': _asBool(
+        map['show_title'] ?? map['title_enabled'] ?? map['show_section_title'],
+        fallback: hasExplicitTitle ? rawTitle.isNotEmpty : true,
+      ),
       'title': title,
       'background_color': _stringValue(map['background_color'], '#FFFFFF'),
       'category_id': categoryId,
       'category_title': _stringValue(map['category_title'], title),
-      'view_all_label': _stringValue(map['view_all_label'], 'Все'),
+      'show_view_all_label': _asBool(
+        map['show_view_all_label'] ??
+            map['view_all_enabled'] ??
+            map['show_view_all'],
+        fallback: hasExplicitViewAllLabel ? rawViewAllLabel.isNotEmpty : true,
+      ),
+      'view_all_label': viewAllLabel,
       'product_limit': _homeFeaturedLimitFromRaw(
         map['product_limit'] ?? map['limit'],
         fallback: 8,
@@ -6717,48 +6734,75 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required int limit,
   }) async {
     final safeLimit = limit.clamp(1, 20).toInt();
-    final queryParts = <String>[
-      'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-      'limit=$safeLimit',
-      'offset=0',
-      'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-      'sort=create_datetime',
-      'order=desc',
-      'status=1',
-      'in_stock=1',
-    ];
-    final url =
-        'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-    final response = await _httpGet(Uri.parse(url));
-    if (response.statusCode != 200) return const <dynamic>[];
+    final pageSize = math.max(safeLimit, 10).clamp(10, 20).toInt();
+    final collected = <dynamic>[];
+    final seenIds = <String>{};
 
-    final parsed = await compute(_parseNativeCategoryPayload, response.body);
-    final rawItems = parsed['items'];
-    final products = (rawItems is List)
-        ? List<dynamic>.from(rawItems)
-        : <dynamic>[];
-
-    if (_hasDiscountConfig) {
-      _applyDiscountConfigToProducts(products);
-    }
-
-    for (final product in products) {
-      if (product is! Map) continue;
+    void decorateProduct(Map product) {
       product['source_category_id'] = categoryId;
       if (_newCategoryIds.contains(categoryId)) {
         product['is_new'] = true;
-      } else {
-        final ids = product['category_ids'];
-        if (ids is List &&
-            ids.any(
-              (id) => id != null && _newCategoryIds.contains(id.toString()),
-            )) {
-          product['is_new'] = true;
-        }
+        return;
+      }
+      final ids = product['category_ids'];
+      if (ids is List &&
+          ids.any(
+            (id) => id != null && _newCategoryIds.contains(id.toString()),
+          )) {
+        product['is_new'] = true;
       }
     }
 
-    return products.take(safeLimit).toList(growable: false);
+    int offset = 0;
+    for (int page = 0; page < 6 && collected.length < safeLimit; page++) {
+      final queryParts = <String>[
+        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+        'limit=$pageSize',
+        'offset=$offset',
+        'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
+        'sort=create_datetime',
+        'order=desc',
+        'status=1',
+        'in_stock=1',
+      ];
+      final url =
+          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
+      final response = await _httpGet(Uri.parse(url));
+      if (response.statusCode != 200) break;
+
+      final parsed = await compute(_parseNativeCategoryPayload, response.body);
+      final rawItems = parsed['items'];
+      final batch = (rawItems is List)
+          ? List<dynamic>.from(rawItems)
+          : <dynamic>[];
+
+      if (_hasDiscountConfig) {
+        _applyDiscountConfigToProducts(batch);
+      }
+
+      for (final product in batch) {
+        if (product is! Map) continue;
+        final productId = _stringValue(product['id']);
+        if (productId.isEmpty || !seenIds.add(productId)) continue;
+        decorateProduct(product);
+        collected.add(product);
+        if (collected.length >= safeLimit) break;
+      }
+
+      final fetchedCount = (parsed['fetchedCount'] is num)
+          ? (parsed['fetchedCount'] as num).toInt()
+          : int.tryParse(parsed['fetchedCount']?.toString() ?? '') ??
+                batch.length;
+      if (fetchedCount < pageSize) break;
+      offset += pageSize;
+    }
+
+    for (final product in collected) {
+      if (product is! Map) continue;
+      decorateProduct(product);
+    }
+
+    return collected.take(safeLimit).toList(growable: false);
   }
 
   Future<void> _prefetchHomeFeaturedGalleries(
@@ -12601,7 +12645,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
     return SliverToBoxAdapter(
       child: SizedBox(
-        height: 136,
+        height: 120,
         child: ListView.builder(
           key: ValueKey(
             forPreview
@@ -13744,6 +13788,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         : const <dynamic>[];
     final title = _stringValue(config['title'], 'Товары дня');
     final viewAllLabel = _stringValue(config['view_all_label'], 'Все');
+    final showTitle = _asBool(config['show_title'], fallback: title.isNotEmpty);
+    final showViewAllLabel = _asBool(
+      config['show_view_all_label'],
+      fallback: viewAllLabel.isNotEmpty,
+    );
+    final showHeader = showTitle || showViewAllLabel;
     final sectionBackgroundColor = _parseHexColor(
       _stringValue(config['background_color'], '#FFFFFF'),
       Colors.white,
@@ -13955,33 +14005,37 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              headerPaddingLeft,
-              headerPaddingTop,
-              headerPaddingRight,
-              headerPaddingBottom,
+          if (showHeader)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                headerPaddingLeft,
+                headerPaddingTop,
+                headerPaddingRight,
+                headerPaddingBottom,
+              ),
+              child: Row(
+                children: [
+                  if (showTitle)
+                    Expanded(
+                      child: Text(
+                        title,
+                        textAlign: sectionTitleAlign,
+                        style: sectionTitleStyle,
+                      ),
+                    ),
+                  if (!showTitle && showViewAllLabel) const Spacer(),
+                  if (showViewAllLabel)
+                    GestureDetector(
+                      onTap: () => _openHomeFeaturedCategory(config),
+                      child: Text(
+                        viewAllLabel,
+                        textAlign: viewAllAlign,
+                        style: viewAllStyle,
+                      ),
+                    ),
+                ],
+              ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    textAlign: sectionTitleAlign,
-                    style: sectionTitleStyle,
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => _openHomeFeaturedCategory(config),
-                  child: Text(
-                    viewAllLabel,
-                    textAlign: viewAllAlign,
-                    style: viewAllStyle,
-                  ),
-                ),
-              ],
-            ),
-          ),
           if (showBanner && showCards)
             SizedBox(
               height:
@@ -16061,42 +16115,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required VoidCallback onTap,
     bool isActive = false,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(18),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: isActive ? _catalogControlText : _catalogControlSurface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: isActive ? _catalogControlText : _catalogControlBorder,
-                width: 1,
-              ),
-              boxShadow: isActive
-                  ? const []
-                  : const [
-                      BoxShadow(
-                        color: Color(0x12000000),
-                        blurRadius: 6,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-            ),
-            child: Icon(
-              icon,
-              size: 21,
-              color: isActive ? Colors.white : _catalogControlText,
-            ),
-          ),
-        ),
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        child: Icon(icon, size: 22, color: Colors.black),
       ),
     );
   }
