@@ -3,6 +3,8 @@
   "notes": [
     "sections содержит до 3 блоков на главной.",
     "enabled=false внутри конкретной секции скрывает только ее на главной.",
+    "show_title=false скрывает название раздела.",
+    "show_view_all_label=false скрывает ссылку Все.",
     "category_id управляет подборкой товаров.",
     "banner.image можно указывать абсолютным или относительным URL.",
     "positions.products_offset_y двигает карточки товара вверх или вниз относительно баннера.",
@@ -17,6 +19,8 @@
     {
       "id": "featured_1",
       "enabled": true,
+      "show_title": true,
+      "show_view_all_label": true,
       "title": "Товары дня",
       "background_color": "#00000000",
       "view_all_label": "Все",
@@ -150,6 +154,8 @@
     {
       "id": "featured_2",
       "enabled": false,
+      "show_title": true,
+      "show_view_all_label": true,
       "title": "Товары дня",
       "background_color": "#00000000",
       "view_all_label": "Все",
@@ -283,6 +289,8 @@
     {
       "id": "featured_3",
       "enabled": false,
+      "show_title": true,
+      "show_view_all_label": true,
       "title": "Товары дня",
       "background_color": "#00000000",
       "view_all_label": "Все",
