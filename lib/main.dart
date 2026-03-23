@@ -2602,6 +2602,93 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return text.isNotEmpty ? text : fallback;
   }
 
+  bool _isColorFeatureName(String rawName) {
+    final name = _normalizeComparable(rawName).replaceAll('ё', 'е');
+    return name.contains("цвет") ||
+        name.contains("color") ||
+        name.contains("расцвет");
+  }
+
+  Color? _resolveFilterColorSwatch(String rawLabel) {
+    final label = rawLabel.trim();
+    if (label.isEmpty) return null;
+    final hexMatch = RegExp(r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})').firstMatch(
+      label,
+    );
+    if (hexMatch != null) {
+      final source = hexMatch.group(1)!;
+      final expanded = source.length == 3
+          ? '${source[0]}${source[0]}${source[1]}${source[1]}${source[2]}${source[2]}'
+          : source;
+      final parsed = int.tryParse(expanded, radix: 16);
+      if (parsed != null) {
+        return Color(0xFF000000 | parsed);
+      }
+    }
+
+    final n = _normalizeComparable(label).replaceAll('ё', 'е');
+    if (n.contains('черн')) return const Color(0xFF222222);
+    if (n.contains('бел') || n.contains('молоч') || n.contains('айвори')) {
+      return const Color(0xFFF5F5F0);
+    }
+    if (n.contains('серебр')) return const Color(0xFFBFC5CE);
+    if (n.contains('сер') || n.contains('графит')) return const Color(0xFF7C7C7C);
+    if (n.contains('красн') || n.contains('бордо')) return const Color(0xFFB3261E);
+    if (n.contains('оранж')) return const Color(0xFFE17824);
+    if (n.contains('желт') || n.contains('горч')) return const Color(0xFFE0B020);
+    if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
+      return const Color(0xFF5E7B2D);
+    }
+    if (n.contains('голуб') || n.contains('бирюз')) return const Color(0xFF45A4D8);
+    if (n.contains('син')) return const Color(0xFF254B9A);
+    if (n.contains('фиолет') || n.contains('лилов')) return const Color(0xFF7E57C2);
+    if (n.contains('розов')) return const Color(0xFFE891B8);
+    if (n.contains('беж') || n.contains('крем')) return const Color(0xFFD8C2A3);
+    if (n.contains('корич') || n.contains('шоколад')) return const Color(0xFF6D4C41);
+    if (n.contains('золот')) return const Color(0xFFD4AF37);
+    return null;
+  }
+
+  Widget _buildFilterColorSwatch(
+    String label, {
+    required bool isSelected,
+  }) {
+    final swatchColor = _resolveFilterColorSwatch(label);
+    final defaultBorder = isSelected
+        ? Colors.white.withValues(alpha: 0.86)
+        : _catalogControlBorder;
+    if (swatchColor == null) {
+      return Container(
+        width: 14,
+        height: 14,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white.withValues(alpha: 0.1) : Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: defaultBorder, width: 1),
+        ),
+        child: Icon(
+          Icons.palette_outlined,
+          size: 9,
+          color: isSelected ? Colors.white : _catalogControlMuted,
+        ),
+      );
+    }
+    final bool isVeryLight = swatchColor.computeLuminance() > 0.86;
+    final borderColor = isVeryLight
+        ? (isSelected ? Colors.white : const Color(0xFFBFC4CC))
+        : defaultBorder;
+    return Container(
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        color: swatchColor,
+        shape: BoxShape.circle,
+        border: Border.all(color: borderColor, width: 1),
+      ),
+    );
+  }
+
   void _ensureFeatureValuesLoaded(String fid, {StateSetter? modalSetter}) {
     if (fid.isEmpty) return;
     if (_featureValueTextById.containsKey(fid)) return;
@@ -8096,16 +8183,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  Future<void> _handleProfileNavTap() async {
-    if (!_isAuthorized) {
-      final ok = await Navigator.push<bool>(
-        context,
-        _adaptivePageRoute(builder: (_) => const AuthPage()),
-      );
-      if (ok != true || !_isAuthorized) return;
-      _reloadProfileData();
-      if (mounted) setState(() {});
-    }
+  void _handleProfileNavTap() {
     _reloadProfileData();
     _navigateToSimple("Профиль", "/my/");
   }
@@ -15558,55 +15636,40 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildViewedProductCard(Map<String, dynamic> product) {
-    final imageUrl = _resolveProductImages(product).isNotEmpty
-        ? _resolveProductImages(product).first
-        : '';
-    final price = product['price']?.toString() ?? '';
-    final name = product['name']?.toString() ?? '';
-    return InkWell(
-      onTap: () => _openProductPage(product),
-      child: Container(
-        width: 132,
-        margin: const EdgeInsets.only(right: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  height: 98,
-                  width: double.infinity,
-                  child: imageUrl.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: imageUrl,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              Container(color: Colors.grey.shade100),
-                        )
-                      : Container(color: Colors.grey.shade100),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, color: Colors.black87),
-              ),
-              const Spacer(),
-              Text(price, style: _cardPriceStyle),
-            ],
-          ),
-        ),
-      ),
+  Widget _buildViewedProductCard(
+    Map<String, dynamic> product, {
+    double? horizontalCardWidth,
+  }) {
+    final normalized = Map<String, dynamic>.from(product);
+    final images = _resolveProductImages(normalized);
+    if (images.isNotEmpty) {
+      normalized['images'] = images;
+      normalized['image'] = images.first;
+    }
+
+    final rawPrice = _parsePriceValue(
+      normalized['raw_price'] ?? normalized['price'],
+    );
+    if (rawPrice > 0) {
+      normalized['raw_price'] = rawPrice;
+      normalized['price'] = "${_formatPrice(rawPrice)} ₽";
+    }
+
+    final rawCompare = _parsePriceValue(
+      normalized['raw_compare_price'] ??
+          normalized['compare_price'] ??
+          normalized['old_price'],
+    );
+    if (rawCompare > rawPrice && rawCompare > 0) {
+      normalized['raw_compare_price'] = rawCompare;
+      normalized['old_price'] = "${_formatPrice(rawCompare)} ₽";
+    }
+
+    return _discountedProductCard(
+      normalized,
+      horizontalCardWidth: horizontalCardWidth,
+      priceNameGap: 8,
+      nameActionsGap: 12,
     );
   }
 
@@ -15630,6 +15693,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     '')
               : '';
           final viewedItems = _viewedProducts.take(8).toList();
+          final profileName = (_authUserName ?? '').trim();
+          const viewedCardGap = 10.0;
+          final viewedCardWidth =
+              ((MediaQuery.of(context).size.width - 20 - viewedCardGap) / 2)
+                  .clamp(150.0, 190.0)
+                  .toDouble();
+          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 152;
           return Padding(
             padding: const EdgeInsets.fromLTRB(10, 12, 10, 22),
             child: Column(
@@ -15692,11 +15762,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               children: [
                                 Expanded(
                                   child: Text(
-                                    (_authUserName ?? 'Пользователь')
-                                            .trim()
-                                            .isEmpty
+                                    profileName.isEmpty
                                         ? 'Пользователь'
-                                        : _authUserName!.trim(),
+                                        : profileName,
                                     style: const TextStyle(
                                       fontSize: 22,
                                       fontWeight: FontWeight.w500,
@@ -15844,13 +15912,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         ),
                       ),
                       Divider(height: 1, color: Colors.grey.shade200),
-                      _buildSimpleContacts(),
-                      Divider(height: 1, color: Colors.grey.shade200),
                       _profileMenuTile(
-                        icon: Icons.logout,
-                        title: "Выйти",
-                        onTap: _logoutProfile,
+                        icon: _isAuthorized ? Icons.logout : Icons.login,
+                        title: _isAuthorized ? "Выйти" : "Войти",
+                        onTap: _isAuthorized
+                            ? _logoutProfile
+                            : _openProfileAuthPage,
                       ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _buildSimpleContacts(),
                     ],
                   ),
                 ),
@@ -15887,12 +15957,21 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         )
                       else
                         SizedBox(
-                          height: 214,
+                          height: viewedCardsHeight,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
                             itemCount: viewedItems.length,
-                            itemBuilder: (context, index) =>
-                                _buildViewedProductCard(viewedItems[index]),
+                            itemBuilder: (context, index) => Padding(
+                              padding: EdgeInsets.only(
+                                right: index == viewedItems.length - 1
+                                    ? 0
+                                    : viewedCardGap,
+                              ),
+                              child: _buildViewedProductCard(
+                                viewedItems[index],
+                                horizontalCardWidth: viewedCardWidth,
+                              ),
+                            ),
                           ),
                         ),
                     ],
@@ -15962,7 +16041,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ),
           _navItem(
             'assets/images/nav_profile.svg',
-            _isAuthorized ? 'Профиль' : 'Войти',
+            'Профиль',
             _handleProfileNavTap,
           ),
         ],
@@ -16604,6 +16683,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               if (filteredEntries.isEmpty) {
                                 return const SizedBox.shrink();
                               }
+                              final bool showColorPreview =
+                                  _isColorFeatureName(fname);
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -16627,15 +16708,27 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                           localFeatures[fid]?.contains(vid) ??
                                           false;
                                       return FilterChip(
-                                        label: Text(
-                                          vname,
-                                          style: TextStyle(
-                                            color: isSelected
-                                                ? Colors.white
-                                                : _catalogControlText,
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w500,
-                                          ),
+                                        label: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (showColorPreview) ...[
+                                              _buildFilterColorSwatch(
+                                                vname,
+                                                isSelected: isSelected,
+                                              ),
+                                              const SizedBox(width: 6),
+                                            ],
+                                            Text(
+                                              vname,
+                                              style: TextStyle(
+                                                color: isSelected
+                                                    ? Colors.white
+                                                    : _catalogControlText,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                         selected: isSelected,
                                         showCheckmark: false,
@@ -16853,6 +16946,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           ),
                           child: Text(
                             "Показать результаты",
+                            textAlign: TextAlign.center,
                             style: _subMenuStyle.copyWith(
                               color: Colors.white,
                               fontWeight: FontWeight.w600,
