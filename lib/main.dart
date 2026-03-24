@@ -1362,7 +1362,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       {}; // feature_id -> index in _availableFeatures
   Map<String, Set<String>> _availableFeatureValuesInCategory =
       {}; // feature_id -> normalized values
-  final Map<String, Map<String, Set<String>>> _availableFeatureValuesByCategoryKey =
+  final Map<String, Map<String, Set<String>>>
+  _availableFeatureValuesByCategoryKey =
       {}; // category_key -> feature_id -> normalized values
   bool _isFilterMetadataLoading = false;
   bool _isFilterMetadataLoaded = false;
@@ -1927,8 +1928,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   setDialogState(() {
                     suggestions = next;
                     suggestionsLoading = false;
-                    suggestionsMessage =
-                        next.isEmpty ? 'Ничего не найдено' : null;
+                    suggestionsMessage = next.isEmpty
+                        ? 'Ничего не найдено'
+                        : null;
                   });
                 }());
               });
@@ -3160,9 +3162,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Color? _resolveFilterColorSwatch(String rawLabel) {
     final label = rawLabel.trim();
     if (label.isEmpty) return null;
-    final hexMatch = RegExp(r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})').firstMatch(
-      label,
-    );
+    final hexMatch = RegExp(
+      r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})',
+    ).firstMatch(label);
     if (hexMatch != null) {
       final source = hexMatch.group(1)!;
       final expanded = source.length == 3
@@ -3175,34 +3177,55 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     final n = _normalizeComparable(label).replaceAll('ё', 'е');
-    if (n.contains('черн')) return const Color(0xFF222222);
+    if (n.contains('черн')) {
+      return const Color(0xFF222222);
+    }
     if (n.contains('бел') || n.contains('молоч') || n.contains('айвори')) {
       return const Color(0xFFF5F5F0);
     }
-    if (n.contains('серебр')) return const Color(0xFFBFC5CE);
-    if (n.contains('сер') || n.contains('графит')) return const Color(0xFF7C7C7C);
-    if (n.contains('красн') || n.contains('бордо')) return const Color(0xFFB3261E);
+    if (n.contains('серебр')) {
+      return const Color(0xFFBFC5CE);
+    }
+    if (n.contains('сер') || n.contains('графит')) {
+      return const Color(0xFF7C7C7C);
+    }
+    if (n.contains('красн') || n.contains('бордо')) {
+      return const Color(0xFFB3261E);
+    }
     if (n.contains('оранж') || n.contains('рыж') || n.contains('коньяк')) {
       return const Color(0xFFE17824);
     }
-    if (n.contains('желт') || n.contains('горч')) return const Color(0xFFE0B020);
+    if (n.contains('желт') || n.contains('горч')) {
+      return const Color(0xFFE0B020);
+    }
     if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
       return const Color(0xFF5E7B2D);
     }
-    if (n.contains('голуб') || n.contains('бирюз')) return const Color(0xFF45A4D8);
-    if (n.contains('син')) return const Color(0xFF254B9A);
-    if (n.contains('фиолет') || n.contains('лилов')) return const Color(0xFF7E57C2);
-    if (n.contains('розов')) return const Color(0xFFE891B8);
-    if (n.contains('беж') || n.contains('крем')) return const Color(0xFFD8C2A3);
-    if (n.contains('корич') || n.contains('шоколад')) return const Color(0xFF6D4C41);
-    if (n.contains('золот')) return const Color(0xFFD4AF37);
+    if (n.contains('голуб') || n.contains('бирюз')) {
+      return const Color(0xFF45A4D8);
+    }
+    if (n.contains('син')) {
+      return const Color(0xFF254B9A);
+    }
+    if (n.contains('фиолет') || n.contains('лилов')) {
+      return const Color(0xFF7E57C2);
+    }
+    if (n.contains('розов')) {
+      return const Color(0xFFE891B8);
+    }
+    if (n.contains('беж') || n.contains('крем')) {
+      return const Color(0xFFD8C2A3);
+    }
+    if (n.contains('корич') || n.contains('шоколад')) {
+      return const Color(0xFF6D4C41);
+    }
+    if (n.contains('золот')) {
+      return const Color(0xFFD4AF37);
+    }
     return null;
   }
 
-  Widget _buildFilterColorSwatch(
-    String label, {
-    required bool isSelected,
-  }) {
+  Widget _buildFilterColorSwatch(String label, {required bool isSelected}) {
     final swatchColor = _resolveFilterColorSwatch(label);
     final defaultBorder = isSelected
         ? Colors.white.withValues(alpha: 0.86)
@@ -3213,7 +3236,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         height: 14,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white.withValues(alpha: 0.1) : Colors.white,
+          color: isSelected
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.white,
           shape: BoxShape.circle,
           border: Border.all(color: defaultBorder, width: 1),
         ),
@@ -3320,10 +3345,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final textMap = <String, String>{};
       final sortTextMap = <String, String>{};
       processedValues.forEach((key, value) {
-        final label = _featureOptionLabel(
-          value,
-          fallback: key.toString(),
-        );
+        final label = _featureOptionLabel(value, fallback: key.toString());
         textMap[key.toString()] = label;
         if (value is Map) {
           final sort = value['sort']?.toString().trim() ?? '';
@@ -4219,12 +4241,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     bool rebuildFromScratch = false,
   }) async {
     try {
-      final Map<String, Set<String>> valuesByFeature = _cloneAvailableFeatureValuesMap(
-        rebuildFromScratch
-            ? const <String, Set<String>>{}
-            : (_availableFeatureValuesByCategoryKey[categoryKey] ??
-                  const <String, Set<String>>{}),
-      );
+      final Map<String, Set<String>> valuesByFeature =
+          _cloneAvailableFeatureValuesMap(
+            rebuildFromScratch
+                ? const <String, Set<String>>{}
+                : (_availableFeatureValuesByCategoryKey[categoryKey] ??
+                      const <String, Set<String>>{}),
+          );
       for (final product in products) {
         if (product is! Map) continue;
         final id = product['id']?.toString() ?? "";
@@ -4250,16 +4273,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               .where((v) => v.isNotEmpty)
               .toSet();
           if (normalizedValues.isEmpty) continue;
-          valuesByFeature.putIfAbsent(fid, () => <String>{}).addAll(
-            normalizedValues,
-          );
+          valuesByFeature
+              .putIfAbsent(fid, () => <String>{})
+              .addAll(normalizedValues);
         }
       }
       _availableFeatureValuesByCategoryKey[categoryKey] =
           _cloneAvailableFeatureValuesMap(valuesByFeature);
       if (categoryKey == _nativeCategory) {
-        _availableFeatureValuesInCategory =
-            _cloneAvailableFeatureValuesMap(valuesByFeature);
+        _availableFeatureValuesInCategory = _cloneAvailableFeatureValuesMap(
+          valuesByFeature,
+        );
         if (mounted) setState(() {});
       }
     } catch (e, st) {
@@ -4791,10 +4815,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             if (rawVid.isNotEmpty) {
               yield rawVid;
             }
-            final mappedText = _featureValueTextById[fid]?[vid]
-                    ?.toString()
-                    .trim() ??
-                "";
+            final mappedText =
+                _featureValueTextById[fid]?[vid]?.toString().trim() ?? "";
             if (mappedText.isNotEmpty) {
               yield mappedText;
             }
@@ -10312,8 +10334,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   controller: _nativeScrollController,
                   key: const PageStorageKey('native_category_scroll'),
                   cacheExtent: MediaQuery.of(context).size.height * 0.9,
-                  physics: _catalogBackSwipeScrollLocked
-                          || _isNativeEmptyStateVisible()
+                  physics:
+                      _catalogBackSwipeScrollLocked ||
+                          _isNativeEmptyStateVisible()
                       ? const NeverScrollableScrollPhysics()
                       : const AlwaysScrollableScrollPhysics(
                           parent: BouncingScrollPhysics(),
@@ -16529,7 +16552,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             CircleAvatar(
                               radius: 30,
                               backgroundColor: Colors.grey.shade100,
-                              backgroundImage: _authAvatarProvider(_authPhotoUrl),
+                              backgroundImage: _authAvatarProvider(
+                                _authPhotoUrl,
+                              ),
                               child:
                                   (_authPhotoUrl == null ||
                                       _authPhotoUrl!.isEmpty ||
@@ -17555,8 +17580,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                   })
                                   .where((e) => e.value.trim().isNotEmpty)
                                   .toList(growable: false);
-                              final bool showColorPreview =
-                                  _isColorFeatureName(fname);
+                              final bool showColorPreview = _isColorFeatureName(
+                                fname,
+                              );
                               final availableSet =
                                   _availableFeatureValuesInCategory[fid];
                               if (showColorPreview &&
@@ -17564,20 +17590,24 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                       availableSet.isEmpty)) {
                                 return const SizedBox.shrink();
                               }
-                              final filteredEntries = optionEntries.where((e) {
-                                if (availableSet == null ||
-                                    availableSet.isEmpty) {
-                                  return true;
-                                }
-                                final normalizedName = _normalizeComparable(
-                                  e.value,
-                                );
-                                final normalizedId = _normalizeComparable(
-                                  e.key,
-                                );
-                                return availableSet.contains(normalizedName) ||
-                                    availableSet.contains(normalizedId);
-                              }).toList(growable: false);
+                              final filteredEntries = optionEntries
+                                  .where((e) {
+                                    if (availableSet == null ||
+                                        availableSet.isEmpty) {
+                                      return true;
+                                    }
+                                    final normalizedName = _normalizeComparable(
+                                      e.value,
+                                    );
+                                    final normalizedId = _normalizeComparable(
+                                      e.key,
+                                    );
+                                    return availableSet.contains(
+                                          normalizedName,
+                                        ) ||
+                                        availableSet.contains(normalizedId);
+                                  })
+                                  .toList(growable: false);
                               if (filteredEntries.length <= 1) {
                                 return const SizedBox.shrink();
                               }
@@ -17918,7 +17948,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final previewSource = List<dynamic>.from(
         _nativePreviewBaseLists[_nativeCategory] ?? _getOriginalNativeList(),
       );
-      final previewItems = await _applyLocalFilters(previewSource).catchError((_) {
+      final previewItems = await _applyLocalFilters(previewSource).catchError((
+        _,
+      ) {
         return <dynamic>[];
       });
       if (mounted && previewSeq == _catalogLocalFilterSeq) {
@@ -17964,8 +17996,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     final customId = _nativeCustomCategoryIdByKey[_nativeCategory];
-    final categoryId =
-        (customId != null && customId.isNotEmpty)
+    final categoryId = (customId != null && customId.isNotEmpty)
         ? customId
         : _nativeCategoryIdForSubcategories(_nativeCategory);
     if (categoryId != null && categoryId.isNotEmpty) {
@@ -36769,7 +36800,8 @@ class _NativeProductCardState extends State<NativeProductCard>
                                       color: Colors.black26,
                                     )
                                   : ValueListenableBuilder<int>(
-                                      valueListenable: widget.compareListenable!,
+                                      valueListenable:
+                                          widget.compareListenable!,
                                       builder: (context, _, __) {
                                         final isCompared =
                                             widget.isCompareResolver?.call(
