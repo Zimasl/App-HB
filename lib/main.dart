@@ -2647,7 +2647,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return const Color(0xFF7C7C7C);
     if (n.contains('красн') || n.contains('бордо'))
       return const Color(0xFFB3261E);
-    if (n.contains('оранж')) return const Color(0xFFE17824);
+    if (n.contains('оранж') || n.contains('рыж') || n.contains('коньяк')) {
+      return const Color(0xFFE17824);
+    }
     if (n.contains('желт') || n.contains('горч'))
       return const Color(0xFFE0B020);
     if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
@@ -9664,7 +9666,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     controller: _nativeScrollController,
                     key: const PageStorageKey('native_category_scroll'),
                     cacheExtent: MediaQuery.of(context).size.height * 0.9,
-                    physics: _catalogBackSwipeScrollLocked
+                    physics:
+                        _catalogBackSwipeScrollLocked ||
+                            _isNativeEmptyStateVisible()
                         ? const NeverScrollableScrollPhysics()
                         : const AlwaysScrollableScrollPhysics(
                             parent: BouncingScrollPhysics(),
@@ -9706,7 +9710,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           _nativeCategory != "cart" &&
                           _nativeCategory != "profile")
                         _buildNativeLoadMoreSliver(),
-                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                      if (!_isNativeEmptyStateVisible())
+                        const SliverToBoxAdapter(child: SizedBox(height: 12)),
                     ],
                   ),
                 ),
@@ -11868,42 +11873,85 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  bool _isNativeEmptyStateVisible() {
+    if (_nativeCategory == "wishlist") {
+      return _getActiveNativeList().isEmpty;
+    }
+    if (_nativeCategory == "cart") {
+      return _getCartItems().isEmpty;
+    }
+    if (_nativeCategory == "compare") {
+      final products = _getActiveNativeList().whereType<Map>().toList();
+      if (products.isEmpty) return true;
+      return _groupCompareProducts(products).isEmpty;
+    }
+    return false;
+  }
+
   Widget _buildEmptyState({
     required String imageAsset,
     required String actionLabel,
   }) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return SliverFillRemaining(
       hasScrollBody: false,
+      fillOverscroll: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
           const buttonHeight = 46.0;
-          const verticalGaps = 22.0;
-          final maxImageHeight =
-              (constraints.maxHeight - buttonHeight - verticalGaps)
-                  .clamp(220.0, 620.0)
-                  .toDouble();
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
-            child: Column(
-              children: [
-                SizedBox(
-                  height: maxImageHeight,
-                  child: Center(
-                    child: Image.asset(
-                      imageAsset,
-                      fit: BoxFit.contain,
+          const buttonBottomOffset = 12.0;
+          const imageToButtonGap = 8.0;
+          final maxReservation = math.max(0.0, constraints.maxHeight - 1);
+          final imageBottomInset = math.min(
+            buttonHeight + buttonBottomOffset + bottomInset + imageToButtonGap,
+            maxReservation,
+          );
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              const ColoredBox(color: Colors.white),
+              Positioned.fill(
+                bottom: imageBottomInset,
+                child: ClipRect(
+                  child: Image.asset(
+                    imageAsset,
+                    fit: BoxFit.fitWidth,
+                    alignment: Alignment.topCenter,
+                    filterQuality: FilterQuality.high,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.white,
                       alignment: Alignment.center,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey.shade100,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_not_supported_outlined),
+                      child: const Icon(Icons.image_not_supported_outlined),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: imageBottomInset + 44,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x00FFFFFF),
+                          Color(0xCCFFFFFF),
+                          Colors.white,
+                        ],
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
+              ),
+              Positioned(
+                left: 14,
+                right: 14,
+                bottom: buttonBottomOffset + bottomInset,
+                child: SizedBox(
                   height: buttonHeight,
                   child: ElevatedButton(
                     onPressed: _openCustomMenu,
@@ -11925,8 +11973,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
