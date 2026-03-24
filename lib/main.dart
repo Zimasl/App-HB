@@ -297,6 +297,10 @@ const String _prefsHeroBannerTsKey = 'hb.hero.banner.ts';
 const String _prefsHomeHeroCacheKey = 'hb.home.hero.cache';
 const String _prefsHomeSliderCacheKey = 'hb.home.slider.cache';
 const String _prefsHomePromoCacheKey = 'hb.home.promo.cache';
+const String _prefsNotificationsPermissionRequestedKey =
+    'hb.notifications.permission.requested';
+const String _prefsNotificationsReminderShownAtKey =
+    'hb.notifications.reminder.shown_at_ms';
 const double _heroBannerContentHeightRatio = 850 / 1400;
 const Duration _nativeSplashMaxHoldDuration = Duration(milliseconds: 2200);
 
@@ -711,6 +715,30 @@ List<String> _extractCategoryIdsForIsolate(Map<dynamic, dynamic> product) {
   return ids.toList(growable: false);
 }
 
+Map<String, dynamic> _extractProductFeaturesForIsolate(dynamic rawFeatures) {
+  if (rawFeatures is! Map || rawFeatures.isEmpty) {
+    return <String, dynamic>{};
+  }
+  final normalized = <String, dynamic>{};
+  for (final entry in rawFeatures.entries) {
+    final rawFeature = entry.value;
+    if (rawFeature is! Map) continue;
+    final feature = Map<String, dynamic>.from(rawFeature);
+    final fid = (feature['id'] ?? entry.key).toString().trim();
+    final code = feature['code']?.toString().trim() ?? '';
+    if (!feature.containsKey('value')) continue;
+    final dynamic value = feature['value'];
+    if (value == null) continue;
+    if (fid.isNotEmpty) {
+      normalized[fid] = value;
+    }
+    if (code.isNotEmpty) {
+      normalized[code] = value;
+    }
+  }
+  return normalized;
+}
+
 Map<String, dynamic> _parseNativeCategoryPayload(String body) {
   final decoded = json.decode(body);
   final data = (decoded is Map && decoded.containsKey('data'))
@@ -747,6 +775,7 @@ Map<String, dynamic> _parseNativeCategoryPayload(String body) {
     }
     final categoryIds = _extractCategoryIdsForIsolate(p);
     final String categoryId = p['category_id']?.toString() ?? "";
+    final features = _extractProductFeaturesForIsolate(p['features']);
 
     String? discountText;
     String? benefitText;
@@ -778,6 +807,7 @@ Map<String, dynamic> _parseNativeCategoryPayload(String body) {
       "link": "/product/${p['url']}/",
       "category_ids": categoryIds,
       if (categoryId.isNotEmpty) "category_id": categoryId,
+      if (features.isNotEmpty) "features": features,
     });
   }
 
@@ -920,7 +950,6 @@ void main() async {
     ),
   );
   OneSignal.initialize("0f2f4f43-c8b4-475c-be74-9ed6045bae52");
-  OneSignal.Notifications.requestPermission(true);
 
   scheduleMicrotask(() {
     _ProductDetailPageState.prefetchGroupsCache();
@@ -1175,6 +1204,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "compare": [],
     "profile": [],
   };
+  final Map<String, List<dynamic>> _nativePreviewBaseLists = {};
   String _currentSort = "default";
   int _sortSeq = 0;
   int _wishlistFilterSeq = 0;
@@ -1198,6 +1228,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   static const int _nativeSearchPageSize = 60;
   static const int _searchMinQueryLength = 3;
   static const String _nativeSearchProxyPath = '/native/search_products.php';
+  static const String _nativeCategoryFieldsParamValue =
+      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   static const String _nativeSearchFieldsParamValue =
       'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids';
   String _activeSearchQuery = "";
@@ -1319,6 +1351,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final Map<String, String> _featureCodeById = {}; // feature_id -> feature_code
   final Map<String, Map<String, String>> _featureValueTextById =
       {}; // feature_id -> value_id -> text
+  final Map<String, Map<String, String>> _featureValueTextBySortById =
+      {}; // feature_id -> sort -> text
   final Map<String, Map<String, dynamic>> _productFeaturesById =
       {}; // product_id -> features map
   final Map<String, Map<String, int>> _productStockById =
@@ -1328,12 +1362,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       {}; // feature_id -> index in _availableFeatures
   Map<String, Set<String>> _availableFeatureValuesInCategory =
       {}; // feature_id -> normalized values
+  final Map<String, Map<String, Set<String>>>
+  _availableFeatureValuesByCategoryKey =
+      {}; // category_key -> feature_id -> normalized values
   bool _isFilterMetadataLoading = false;
   bool _isFilterMetadataLoaded = false;
   final Set<String> _featureValuesLoading = <String>{};
   final List<_FeatureInfoRequest> _featureInfoQueue = [];
   int _featureInfoInFlight = 0;
   static const int _featureInfoMaxConcurrent = 3;
+  final Set<String> _colorAvailabilityLoadingKeys = <String>{};
+  int _catalogLocalFilterSeq = 0;
   final Map<String, Completer<void>> _productDetailsCompleters = {};
   final List<String> _productDetailsQueue = [];
   final Set<String> _productDetailsInFlight = <String>{};
@@ -1347,6 +1386,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
+  bool _isCheckingNotificationsPermission = false;
+  bool _isNotificationReminderDialogOpen = false;
+  bool _requestedNotificationsThisSession = false;
 
   @override
   void initState() {
@@ -1399,6 +1441,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         }),
       );
       unawaited(_bootstrapHeaderGeoCity());
+      unawaited(_ensureNotificationsPermissionFlow());
       _scheduleNativePrefetch();
       Timer(const Duration(seconds: 2), () {
         if (!mounted) return;
@@ -1735,6 +1778,108 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return null;
   }
 
+  Future<List<String>> _fetchHeaderCitySuggestions(String query) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.runes.length < 2 || _yandexSuggestApiKey.isEmpty) {
+      return const <String>[];
+    }
+    try {
+      const headers = {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+      };
+      var response = await _httpGet(
+        Uri.parse(
+          'https://suggest-maps.yandex.ru/v1/suggest'
+          '?apikey=$_yandexSuggestApiKey'
+          '&lang=ru_RU'
+          '&types=locality'
+          '&print_address=1'
+          '&results=8'
+          '&text=${Uri.encodeQueryComponent(normalizedQuery)}',
+        ),
+        headers: headers,
+      );
+      if (response.statusCode == 403) {
+        response = await _httpGet(
+          Uri.parse(
+            'https://suggest-maps.yandex.ru/suggest-geo'
+            '?lang=ru_RU'
+            '&types=locality'
+            '&results=8'
+            '&part=${Uri.encodeQueryComponent(normalizedQuery)}'
+            '&apikey=$_yandexSuggestApiKey',
+          ),
+          headers: headers,
+        );
+      }
+      if (response.statusCode != 200) return const <String>[];
+      final parsed = _parseHeaderSuggestTitles(response.body);
+      final seen = <String>{};
+      final result = <String>[];
+      for (final rawTitle in parsed) {
+        final title = _normalizeCityName(rawTitle.split(',').first);
+        if (title.isEmpty) continue;
+        final dedupeKey = title.toLowerCase();
+        if (!seen.add(dedupeKey)) continue;
+        result.add(title);
+        if (result.length >= 8) break;
+      }
+      return result;
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  List<String> _parseHeaderSuggestTitles(String body) {
+    try {
+      final decoded = json.decode(body);
+      final result = <String>[];
+
+      void pushTitle(dynamic raw) {
+        final text = raw?.toString().trim() ?? '';
+        if (text.isNotEmpty) result.add(text);
+      }
+
+      void parseMapItem(Map item) {
+        final titleMap = item['title'];
+        if (titleMap is Map) {
+          pushTitle(titleMap['text']);
+        }
+        pushTitle(item['displayName']);
+        pushTitle(item['value']);
+      }
+
+      if (decoded is Map) {
+        final results = decoded['results'];
+        if (results is List) {
+          for (final item in results) {
+            if (item is Map) parseMapItem(item);
+          }
+        }
+        return result;
+      }
+
+      if (decoded is List) {
+        final dynamic rawItems = (decoded.length > 1 && decoded[1] is List)
+            ? decoded[1]
+            : decoded;
+        if (rawItems is List) {
+          for (final item in rawItems) {
+            if (item is Map) {
+              parseMapItem(item);
+            } else {
+              pushTitle(item);
+            }
+          }
+        }
+      }
+      return result;
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
   Future<void> _openHeaderCityPicker() async {
     if ((_geoDetectedCity?.trim().isEmpty ?? true)) {
       await _tryDetectCityFromGeolocation(requestPermissionIfNeeded: true);
@@ -1748,52 +1893,172 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           : detectedCity,
     );
     final controller = TextEditingController(text: initialCity);
+    Timer? suggestDebounce;
+    var suggestions = <String>[];
+    var suggestionsLoading = false;
+    String? suggestionsMessage;
+    var suggestSeq = 0;
     final picked = await showDialog<String>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Ваш город'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (detectedCity.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'Определено автоматически: $detectedCity',
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      color: Color(0xFF6B7280),
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            void scheduleSuggestions(String value) {
+              final query = value.trim();
+              suggestDebounce?.cancel();
+              if (query.runes.length < 2) {
+                setDialogState(() {
+                  suggestions = <String>[];
+                  suggestionsLoading = false;
+                  suggestionsMessage = null;
+                });
+                return;
+              }
+              suggestDebounce = Timer(const Duration(milliseconds: 260), () {
+                final activeQuery = controller.text.trim();
+                if (activeQuery.runes.length < 2) return;
+                final currentSeq = ++suggestSeq;
+                setDialogState(() {
+                  suggestionsLoading = true;
+                  suggestionsMessage = null;
+                });
+                unawaited(() async {
+                  final next = await _fetchHeaderCitySuggestions(activeQuery);
+                  if (!ctx.mounted || currentSeq != suggestSeq) return;
+                  setDialogState(() {
+                    suggestions = next;
+                    suggestionsLoading = false;
+                    suggestionsMessage = next.isEmpty
+                        ? 'Ничего не найдено'
+                        : null;
+                  });
+                }());
+              });
+            }
+
+            final showSuggestions = controller.text.trim().runes.length >= 2;
+            return AlertDialog(
+              title: const Text('Ваш город'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (detectedCity.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        'Определено автоматически: $detectedCity',
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 13,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
                     ),
+                  TextField(
+                    controller: controller,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      hintText: 'Введите город (минимум 2 символа)',
+                    ),
+                    onChanged: (value) {
+                      setDialogState(() {});
+                      scheduleSuggestions(value);
+                    },
                   ),
+                  if (showSuggestions) ...[
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 190),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: suggestionsLoading
+                            ? const SizedBox(
+                                height: 70,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.1,
+                                      color: Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : suggestionsMessage != null
+                            ? SizedBox(
+                                height: 52,
+                                child: Center(
+                                  child: Text(
+                                    suggestionsMessage!,
+                                    style: const TextStyle(
+                                      fontFamily: 'Roboto',
+                                      fontSize: 13,
+                                      color: Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                shrinkWrap: true,
+                                itemCount: suggestions.length,
+                                separatorBuilder: (_, __) => const Divider(
+                                  height: 1,
+                                  thickness: 1,
+                                  color: Color(0xFFE5E7EB),
+                                ),
+                                itemBuilder: (context, index) {
+                                  final cityName = suggestions[index];
+                                  return InkWell(
+                                    onTap: () =>
+                                        Navigator.of(ctx).pop(cityName),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      child: Text(
+                                        cityName,
+                                        style: const TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 15,
+                                          color: Color(0xFF111827),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Отмена'),
                 ),
-              TextField(
-                controller: controller,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(hintText: 'Введите город'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Отмена'),
-            ),
-            if (detectedCity.isNotEmpty)
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(detectedCity),
-                child: const Text('По геолокации'),
-              ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text),
-              child: const Text('Сохранить'),
-            ),
-          ],
+                if (detectedCity.isNotEmpty)
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(detectedCity),
+                    child: const Text('По геолокации'),
+                  ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(controller.text),
+                  child: const Text('Сохранить'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+    suggestDebounce?.cancel();
     controller.dispose();
     final normalized = _normalizeCityName(picked ?? '');
     if (normalized.isEmpty || !mounted) return;
@@ -1874,6 +2139,162 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_maybeRotateHeroBannerByTime());
+      unawaited(_ensureNotificationsPermissionFlow(triggeredByResume: true));
+    }
+  }
+
+  bool _isNotificationPermissionAllowed(PermissionStatus status) {
+    return status.isGranted || status == PermissionStatus.limited;
+  }
+
+  Future<bool?> _showNotificationsReminderDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+          contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          title: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: Color(0x1AF4A21D),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.notifications_active_rounded,
+                  color: Color(0xFFF4A21D),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  "Не пропустите самое важное",
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            "Включите уведомления, чтобы первыми узнавать о скидках, новинках и статусе заказов. Только полезные новости и без спама.",
+            style: TextStyle(
+              fontFamily: 'Roboto',
+              fontSize: 14,
+              height: 1.35,
+              color: Colors.black87,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text(
+                "Позже",
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                "Включить",
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _ensureNotificationsPermissionFlow({
+    bool triggeredByResume = false,
+  }) async {
+    if (!mounted) return;
+    if (_isCheckingNotificationsPermission) return;
+    if (_isNotificationReminderDialogOpen) return;
+
+    _isCheckingNotificationsPermission = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final requestedBefore =
+          prefs.getBool(_prefsNotificationsPermissionRequestedKey) ?? false;
+      var status = await Permission.notification.status;
+
+      if (!requestedBefore) {
+        _requestedNotificationsThisSession = true;
+        try {
+          await OneSignal.Notifications.requestPermission(false);
+        } catch (_) {
+          try {
+            await Permission.notification.request();
+          } catch (_) {}
+        }
+        await prefs.setBool(_prefsNotificationsPermissionRequestedKey, true);
+        return;
+      }
+
+      if (_isNotificationPermissionAllowed(status)) return;
+      if (_requestedNotificationsThisSession) return;
+
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final lastShownAtMs =
+          prefs.getInt(_prefsNotificationsReminderShownAtKey) ?? 0;
+      const minResumeIntervalMs = 10 * 60 * 1000;
+      if (triggeredByResume && (nowMs - lastShownAtMs) < minResumeIntervalMs) {
+        return;
+      }
+
+      if (triggeredByResume) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+      if (!mounted || _isNotificationReminderDialogOpen) return;
+
+      status = await Permission.notification.status;
+      if (_isNotificationPermissionAllowed(status)) return;
+
+      _isNotificationReminderDialogOpen = true;
+      final shouldOpenSettings = await _showNotificationsReminderDialog();
+      _isNotificationReminderDialogOpen = false;
+      await prefs.setInt(_prefsNotificationsReminderShownAtKey, nowMs);
+
+      if (shouldOpenSettings == true) {
+        await openAppSettings();
+      }
+    } catch (_) {
+      _isNotificationReminderDialogOpen = false;
+    } finally {
+      _isCheckingNotificationsPermission = false;
     }
   }
 
@@ -2218,7 +2639,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _rotateHeroBanner({bool randomize = false}) {
-    if (_heroBanners.isEmpty) return;
+    if (_heroBanners.isEmpty) {
+      return;
+    }
     final current = _heroBannerIndex % _heroBanners.length;
     int next = current;
     if (_heroBanners.length == 1) {
@@ -2231,7 +2654,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     } else {
       next = (current + 1) % _heroBanners.length;
     }
-    if (next == current) return;
+    if (next == current) {
+      return;
+    }
     if (!mounted) {
       _heroBannerIndex = next;
       return;
@@ -2245,7 +2670,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void _startHeroBannerRotationTimer() {
     _heroBannerRotateTimer?.cancel();
     _heroBannerRotateTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       _rotateHeroBanner();
     });
   }
@@ -2260,13 +2687,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _fetchDiscountedProducts(),
       CategoryCounterService.loadCounts(),
     ]);
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _startNativeSplashFallbackTimer() {
     _nativeSplashFallbackTimer?.cancel();
     _nativeSplashFallbackTimer = Timer(_nativeSplashMaxHoldDuration, () {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       _isSplashFallbackElapsed = true;
       _maybeRemoveNativeSplash();
     });
@@ -2278,7 +2709,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _removeNativeSplashOnce();
       return;
     }
-    if (!_isHomeAboveFoldReady || !_isInitialHomeContentReady) return;
+    if (!_isHomeAboveFoldReady || !_isInitialHomeContentReady) {
+      return;
+    }
     _nativeSplashFallbackTimer?.cancel();
     _removeNativeSplashOnce();
   }
@@ -2496,6 +2929,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _featureCodeById.clear();
         _featureIdByCode.clear();
         _featureValueTextById.clear();
+        _featureValueTextBySortById.clear();
         _featureIndexById.clear();
         _featureValuesLoading.clear();
         _featureInfoQueue.clear();
@@ -2585,6 +3019,122 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         modalSetter(() {});
       } catch (_) {}
     }
+    final activeCategoryId =
+        _nativeCustomCategoryIdByKey[_nativeCategory] ??
+        _nativeCategoryIdForSubcategories(_nativeCategory);
+    if (activeCategoryId != null && activeCategoryId.isNotEmpty) {
+      await _ensureCategoryColorAvailability(_nativeCategory, activeCategoryId);
+    }
+  }
+
+  Map<String, Set<String>> _cloneAvailableFeatureValuesMap(
+    Map<String, Set<String>> source,
+  ) {
+    final clone = <String, Set<String>>{};
+    source.forEach((key, values) {
+      clone[key] = Set<String>.from(values);
+    });
+    return clone;
+  }
+
+  void _restoreCurrentCategoryFeatureAvailability() {
+    final cached = _availableFeatureValuesByCategoryKey[_nativeCategory];
+    _availableFeatureValuesInCategory = _cloneAvailableFeatureValuesMap(
+      cached ?? const <String, Set<String>>{},
+    );
+  }
+
+  String? _resolveColorFeatureId() {
+    for (final feature in _availableFeatures) {
+      if (feature is! Map) continue;
+      final fid = feature['id']?.toString().trim() ?? '';
+      final name = feature['name']?.toString() ?? '';
+      final code = feature['code']?.toString() ?? '';
+      final normalizedCode = _normalizeComparable(code);
+      if (fid.isEmpty) continue;
+      if (_isColorFeatureName(name) ||
+          normalizedCode.contains('color') ||
+          normalizedCode.contains('tsvet')) {
+        return fid;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _ensureFeatureValueTextsLoaded(String fid) async {
+    if (fid.isEmpty) return;
+    if (_featureValueTextById.containsKey(fid)) return;
+    _ensureFeatureValuesLoaded(fid);
+    while (!_featureValueTextById.containsKey(fid) &&
+        (_featureValuesLoading.contains(fid) ||
+            _featureInfoQueue.any((req) => req.fid == fid) ||
+            _featureInfoInFlight > 0)) {
+      await Future<void>.delayed(const Duration(milliseconds: 24));
+    }
+  }
+
+  Future<void> _ensureCategoryColorAvailability(
+    String categoryKey,
+    String categoryId,
+  ) async {
+    if (categoryKey.isEmpty || categoryId.isEmpty) return;
+    if (_colorAvailabilityLoadingKeys.contains(categoryKey)) return;
+
+    _colorAvailabilityLoadingKeys.add(categoryKey);
+    try {
+      await _fetchFilterMetadata();
+      final colorFid = _resolveColorFeatureId();
+      if (colorFid == null || colorFid.isEmpty) return;
+      await _ensureFeatureValueTextsLoaded(colorFid);
+      final sourceItems = List<dynamic>.from(
+        _nativePreviewBaseLists[categoryKey] ??
+            (_getOriginalNativeListByKey(categoryKey).isNotEmpty
+                ? _getOriginalNativeListByKey(categoryKey)
+                : _getNativeListByKey(categoryKey)),
+      );
+      if (sourceItems.isEmpty) return;
+      await _updateAvailableFeatureValuesForProducts(
+        categoryKey,
+        sourceItems,
+        rebuildFromScratch: true,
+      );
+    } finally {
+      _colorAvailabilityLoadingKeys.remove(categoryKey);
+    }
+  }
+
+  void _primeCurrentCategoryFilterCaches() {
+    final key = _nativeCategory;
+    final items = _getNativeListByKey(key);
+    final cached = _availableFeatureValuesByCategoryKey[key];
+    if ((cached == null || cached.isEmpty) && items.isNotEmpty) {
+      unawaited(
+        _updateAvailableFeatureValuesForProducts(
+          key,
+          items,
+          rebuildFromScratch: true,
+        ),
+      );
+    }
+    final categoryId = _nativeCategoryIdForSubcategories(key);
+    if (categoryId != null && categoryId.isNotEmpty) {
+      unawaited(_ensureCategoryColorAvailability(key, categoryId));
+    }
+  }
+
+  void _registerProductFeaturesFromProducts(List<dynamic> products) {
+    var changed = false;
+    for (final product in products) {
+      if (product is! Map) continue;
+      final id = product['id']?.toString() ?? '';
+      final rawFeatures = product['features'];
+      if (id.isEmpty || rawFeatures is! Map || rawFeatures.isEmpty) continue;
+      _productFeaturesById[id] = Map<String, dynamic>.from(rawFeatures);
+      changed = true;
+    }
+    if (changed) {
+      _productFeaturesVersion++;
+    }
   }
 
   String _featureOptionLabel(dynamic raw, {String fallback = ""}) {
@@ -2612,9 +3162,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Color? _resolveFilterColorSwatch(String rawLabel) {
     final label = rawLabel.trim();
     if (label.isEmpty) return null;
-    final hexMatch = RegExp(r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})').firstMatch(
-      label,
-    );
+    final hexMatch = RegExp(
+      r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})',
+    ).firstMatch(label);
     if (hexMatch != null) {
       final source = hexMatch.group(1)!;
       final expanded = source.length == 3
@@ -2627,32 +3177,55 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     final n = _normalizeComparable(label).replaceAll('ё', 'е');
-    if (n.contains('черн')) return const Color(0xFF222222);
+    if (n.contains('черн')) {
+      return const Color(0xFF222222);
+    }
     if (n.contains('бел') || n.contains('молоч') || n.contains('айвори')) {
       return const Color(0xFFF5F5F0);
     }
-    if (n.contains('серебр')) return const Color(0xFFBFC5CE);
-    if (n.contains('сер') || n.contains('графит')) return const Color(0xFF7C7C7C);
-    if (n.contains('красн') || n.contains('бордо')) return const Color(0xFFB3261E);
-    if (n.contains('оранж')) return const Color(0xFFE17824);
-    if (n.contains('желт') || n.contains('горч')) return const Color(0xFFE0B020);
+    if (n.contains('серебр')) {
+      return const Color(0xFFBFC5CE);
+    }
+    if (n.contains('сер') || n.contains('графит')) {
+      return const Color(0xFF7C7C7C);
+    }
+    if (n.contains('красн') || n.contains('бордо')) {
+      return const Color(0xFFB3261E);
+    }
+    if (n.contains('оранж') || n.contains('рыж') || n.contains('коньяк')) {
+      return const Color(0xFFE17824);
+    }
+    if (n.contains('желт') || n.contains('горч')) {
+      return const Color(0xFFE0B020);
+    }
     if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
       return const Color(0xFF5E7B2D);
     }
-    if (n.contains('голуб') || n.contains('бирюз')) return const Color(0xFF45A4D8);
-    if (n.contains('син')) return const Color(0xFF254B9A);
-    if (n.contains('фиолет') || n.contains('лилов')) return const Color(0xFF7E57C2);
-    if (n.contains('розов')) return const Color(0xFFE891B8);
-    if (n.contains('беж') || n.contains('крем')) return const Color(0xFFD8C2A3);
-    if (n.contains('корич') || n.contains('шоколад')) return const Color(0xFF6D4C41);
-    if (n.contains('золот')) return const Color(0xFFD4AF37);
+    if (n.contains('голуб') || n.contains('бирюз')) {
+      return const Color(0xFF45A4D8);
+    }
+    if (n.contains('син')) {
+      return const Color(0xFF254B9A);
+    }
+    if (n.contains('фиолет') || n.contains('лилов')) {
+      return const Color(0xFF7E57C2);
+    }
+    if (n.contains('розов')) {
+      return const Color(0xFFE891B8);
+    }
+    if (n.contains('беж') || n.contains('крем')) {
+      return const Color(0xFFD8C2A3);
+    }
+    if (n.contains('корич') || n.contains('шоколад')) {
+      return const Color(0xFF6D4C41);
+    }
+    if (n.contains('золот')) {
+      return const Color(0xFFD4AF37);
+    }
     return null;
   }
 
-  Widget _buildFilterColorSwatch(
-    String label, {
-    required bool isSelected,
-  }) {
+  Widget _buildFilterColorSwatch(String label, {required bool isSelected}) {
     final swatchColor = _resolveFilterColorSwatch(label);
     final defaultBorder = isSelected
         ? Colors.white.withValues(alpha: 0.86)
@@ -2663,7 +3236,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         height: 14,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white.withValues(alpha: 0.1) : Colors.white,
+          color: isSelected
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.white,
           shape: BoxShape.circle,
           border: Border.all(color: defaultBorder, width: 1),
         ),
@@ -2711,12 +3286,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 result?['values'] ?? <String, dynamic>{};
             final Map<String, String> textMap =
                 result?['textMap'] ?? <String, String>{};
+            final Map<String, String> sortTextMap =
+                result?['sortTextMap'] ?? <String, String>{};
             if (index != null &&
                 index >= 0 &&
                 index < _availableFeatures.length) {
               _availableFeatures[index]['values'] = values;
             }
             _featureValueTextById[req.fid] = textMap;
+            _featureValueTextBySortById[req.fid] = sortTextMap;
           })
           .whenComplete(() {
             _featureInfoInFlight--;
@@ -2765,13 +3343,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         }
       }
       final textMap = <String, String>{};
+      final sortTextMap = <String, String>{};
       processedValues.forEach((key, value) {
-        textMap[key.toString()] = _featureOptionLabel(
-          value,
-          fallback: key.toString(),
-        );
+        final label = _featureOptionLabel(value, fallback: key.toString());
+        textMap[key.toString()] = label;
+        if (value is Map) {
+          final sort = value['sort']?.toString().trim() ?? '';
+          if (sort.isNotEmpty && label.isNotEmpty) {
+            sortTextMap[sort] = label;
+          }
+        }
       });
-      return {"values": processedValues, "textMap": textMap};
+      return {
+        "values": processedValues,
+        "textMap": textMap,
+        "sortTextMap": sortTextMap,
+      };
     } catch (_) {
       return null;
     }
@@ -2782,6 +3369,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required String categoryId,
     List<MapEntry<String, String>>? customParams,
     bool reset = true,
+    bool preserveVisibleResultsDuringReset = false,
   }) async {
     if (_nativeIsLoadingMore[key] == true) return;
     if (!reset && _nativeHasMore[key] == false) return;
@@ -2799,10 +3387,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _nativeShowLoadingIndicator[key] = false;
         _nativeLoadingIndicatorTimers[key]?.cancel();
         _nativeLoadingIndicatorTimers[key] = null;
-        _setNativeListByKey(key, []);
-        _setOriginalNativeListByKey(key, []);
+        if (!preserveVisibleResultsDuringReset) {
+          _setNativeListByKey(key, []);
+          _setOriginalNativeListByKey(key, []);
+        }
         _nativeFilterParams[key] = customParams ?? [];
-        _availableFeatureValuesInCategory = {};
+        if (!preserveVisibleResultsDuringReset) {
+          _availableFeatureValuesByCategoryKey[key] = <String, Set<String>>{};
+          if (key == _nativeCategory) {
+            _availableFeatureValuesInCategory = {};
+          }
+        }
         _pendingGalleryRequests.removeWhere((req) => req.categoryKey == key);
         _queuedGalleryRequestKeys.removeWhere((k) => k.startsWith("$key::"));
         _galleryRequestsInFlight.removeWhere((k) => k.startsWith("$key::"));
@@ -2831,6 +3426,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
       final offset = _nativeOffsets[key] ?? 0;
       final effectiveParams = customParams ?? _nativeFilterParams[key] ?? [];
+      final bool hasServerFeatureOrStockFilters = effectiveParams.any(
+        (entry) => entry.key.startsWith('features[') || entry.key == 'stock_id',
+      );
+      final bool hasServerPriceFilter = effectiveParams.any(
+        (entry) =>
+            (entry.key == 'price_min' && entry.value != '0') ||
+            (entry.key == 'price_max' && entry.value != '30000'),
+      );
       final queryParts = <String>[
         'access_token=${Uri.encodeQueryComponent(_apiToken)}',
         'limit=$_nativePageSize',
@@ -2840,6 +3443,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         'order=desc',
         'status=1',
         'in_stock=1',
+        'fields=${Uri.encodeQueryComponent(_nativeCategoryFieldsParamValue)}',
       ];
 
       if (effectiveParams.isNotEmpty) {
@@ -2880,6 +3484,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         if (_hasDiscountConfig) {
           _applyDiscountConfigToProducts(initialProducts);
         }
+        _registerProductFeaturesFromProducts(initialProducts);
         final List<dynamic> filteredProducts = await _applyLocalFilters(
           initialProducts,
         );
@@ -2899,8 +3504,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           }
         }
 
-        final existing = _getNativeListByKey(key);
-        final existingOriginal = _getOriginalNativeListByKey(key);
+        final existing = reset ? <dynamic>[] : _getNativeListByKey(key);
+        final existingOriginal = reset
+            ? <dynamic>[]
+            : _getOriginalNativeListByKey(key);
         final existingIds = <String>{};
         for (final item in existing) {
           if (item is! Map) continue;
@@ -2922,6 +3529,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final merged = [...existing, ...uniqueNew];
         final mergedOriginal = [...existingOriginal, ...uniqueNew];
         final bool isInitialPage = reset && offset == 0;
+        if (!hasServerFeatureOrStockFilters && !hasServerPriceFilter) {
+          _nativePreviewBaseLists[key] = List<dynamic>.from(mergedOriginal);
+        }
 
         if (mounted) {
           setState(() {
@@ -2932,9 +3542,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           });
         }
 
+        _updateAvailableFeatureValuesForProducts(
+          key,
+          uniqueNew,
+          rebuildFromScratch: isInitialPage,
+        );
         if (key == _nativeCategory) {
-          _updateAvailableFeatureValuesForProducts(uniqueNew);
-
           // После рендеринга определяем видимые карточки и загружаем для них галереи
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (isInitialPage) {
@@ -3006,7 +3619,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _setNativeListByKey(key, []);
         _setOriginalNativeListByKey(key, []);
         _nativeFilterParams[key] = [];
-        _availableFeatureValuesInCategory = {};
+        _availableFeatureValuesByCategoryKey[key] = <String, Set<String>>{};
+        if (key == _nativeCategory) {
+          _availableFeatureValuesInCategory = {};
+        }
         _pendingGalleryRequests.removeWhere((req) => req.categoryKey == key);
         _queuedGalleryRequestKeys.removeWhere((k) => k.startsWith("$key::"));
         _galleryRequestsInFlight.removeWhere((k) => k.startsWith("$key::"));
@@ -3146,8 +3762,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         });
       }
 
+      _updateAvailableFeatureValuesForProducts(
+        key,
+        uniqueNew,
+        rebuildFromScratch: isInitialPage,
+      );
       if (key == _nativeCategory) {
-        _updateAvailableFeatureValuesForProducts(uniqueNew);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (isInitialPage) {
             _precacheCategoryPreviewImages(merged);
@@ -3616,30 +4236,56 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<void> _updateAvailableFeatureValuesForProducts(
-    List<dynamic> products,
-  ) async {
+    String categoryKey,
+    List<dynamic> products, {
+    bool rebuildFromScratch = false,
+  }) async {
     try {
-      await _ensureProductDetails(products);
-      final Map<String, Set<String>> valuesByFeature = Map.from(
-        _availableFeatureValuesInCategory,
-      );
+      final Map<String, Set<String>> valuesByFeature =
+          _cloneAvailableFeatureValuesMap(
+            rebuildFromScratch
+                ? const <String, Set<String>>{}
+                : (_availableFeatureValuesByCategoryKey[categoryKey] ??
+                      const <String, Set<String>>{}),
+          );
       for (final product in products) {
+        if (product is! Map) continue;
         final id = product['id']?.toString() ?? "";
         if (id.isEmpty) continue;
         final features = _productFeaturesById[id];
         if (features == null) continue;
-        features.forEach((code, rawValue) {
-          final fid = _featureIdByCode[code.toString()];
-          if (fid == null || fid.isEmpty) return;
-          final values = _normalizeFeatureValues(
-            rawValue,
-          ).map(_normalizeComparable).where((v) => v.isNotEmpty);
-          if (values.isEmpty) return;
-          valuesByFeature.putIfAbsent(fid, () => <String>{}).addAll(values);
-        });
+        for (final feature in _availableFeatures) {
+          if (feature is! Map) continue;
+          final fid = feature['id']?.toString().trim() ?? '';
+          if (fid.isEmpty) continue;
+          final code = feature['code']?.toString().trim() ?? '';
+          dynamic rawValue;
+          if (code.isNotEmpty && features.containsKey(code)) {
+            rawValue = features[code];
+          } else if (features.containsKey(fid)) {
+            rawValue = features[fid];
+          }
+          if (rawValue == null) continue;
+          final rawValues = _normalizeFeatureValuesForFeature(fid, rawValue);
+          if (rawValues.isEmpty) continue;
+          final normalizedValues = rawValues
+              .map(_normalizeComparable)
+              .where((v) => v.isNotEmpty)
+              .toSet();
+          if (normalizedValues.isEmpty) continue;
+          valuesByFeature
+              .putIfAbsent(fid, () => <String>{})
+              .addAll(normalizedValues);
+        }
       }
-      _availableFeatureValuesInCategory = valuesByFeature;
-      if (mounted) setState(() {});
+      _availableFeatureValuesByCategoryKey[categoryKey] =
+          _cloneAvailableFeatureValuesMap(valuesByFeature);
+      if (categoryKey == _nativeCategory) {
+        _availableFeatureValuesInCategory = _cloneAvailableFeatureValuesMap(
+          valuesByFeature,
+        );
+        if (mounted) setState(() {});
+      }
     } catch (e, st) {
       debugPrint("Update feature values error: $e");
       if (kDebugMode) debugPrint("$st");
@@ -4161,12 +4807,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final code = _featureCodeById[fid];
       final key = (code != null && code.isNotEmpty) ? code : fid;
       final rawValue = features[key];
-      final productValues = _normalizeFeatureValues(rawValue);
+      final productValues = _normalizeFeatureValuesForFeature(fid, rawValue);
       if (productValues.isEmpty) return false;
       final selectedTexts = vids
-          .map((vid) {
-            final text = _featureValueTextById[fid]?[vid];
-            return (text == null || text.isEmpty) ? vid : text;
+          .expand((vid) sync* {
+            final rawVid = vid.toString().trim();
+            if (rawVid.isNotEmpty) {
+              yield rawVid;
+            }
+            final mappedText =
+                _featureValueTextById[fid]?[vid]?.toString().trim() ?? "";
+            if (mappedText.isNotEmpty) {
+              yield mappedText;
+            }
           })
           .map(_normalizeComparable)
           .where((v) => v.isNotEmpty)
@@ -4197,39 +4850,147 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return false;
   }
 
-  List<String> _normalizeFeatureValues(dynamic rawValue) {
-    final List<String> values = [];
-    if (rawValue == null) return values;
-    if (rawValue is List) {
-      for (final item in rawValue) {
-        if (item is Map) {
-          if (item['value'] != null) {
-            values.add(item['value'].toString());
-          } else if (item['name'] != null) {
-            values.add(item['name'].toString());
-          } else {
-            values.add(item.toString());
-          }
-        } else {
-          values.add(item.toString());
-        }
-      }
-    } else if (rawValue is Map) {
-      if (rawValue['value'] != null) {
-        values.add(rawValue['value'].toString());
-      } else if (rawValue['name'] != null) {
-        values.add(rawValue['name'].toString());
-      } else {
-        values.add(rawValue.toString());
-      }
-    } else {
-      values.add(rawValue.toString());
+  List<String> _normalizeFeatureValuesForFeature(String fid, dynamic rawValue) {
+    if (fid.isEmpty) {
+      return _normalizeFeatureValues(rawValue);
     }
-    return values;
+
+    final Set<String> values = <String>{};
+    final textById = _featureValueTextById[fid] ?? const <String, String>{};
+    final textBySort =
+        _featureValueTextBySortById[fid] ?? const <String, String>{};
+
+    void addText(String raw) {
+      final text = raw.trim();
+      if (text.isNotEmpty) {
+        values.add(text);
+      }
+    }
+
+    void collect(dynamic value) {
+      if (value == null) return;
+      if (value is List) {
+        for (final item in value) {
+          collect(item);
+        }
+        return;
+      }
+      if (value is Map) {
+        var resolvedFromMeta = false;
+        const idKeys = <String>['id', 'value_id'];
+        for (final key in idKeys) {
+          final rawId = value[key]?.toString().trim() ?? '';
+          if (rawId.isEmpty) continue;
+          final mapped = textById[rawId]?.toString().trim() ?? '';
+          if (mapped.isNotEmpty) {
+            addText(mapped);
+            resolvedFromMeta = true;
+          }
+        }
+        final sort = value['sort']?.toString().trim() ?? '';
+        if (sort.isNotEmpty) {
+          final mapped = textBySort[sort]?.toString().trim() ?? '';
+          if (mapped.isNotEmpty) {
+            addText(mapped);
+            resolvedFromMeta = true;
+          }
+        }
+        if (resolvedFromMeta) return;
+
+        const directKeys = <String>['value', 'name', 'title', 'label', 'text'];
+        bool hasDirectValue = false;
+        for (final key in directKeys) {
+          final direct = value[key];
+          if (direct == null) continue;
+          if (direct is Map || direct is List) {
+            final before = values.length;
+            collect(direct);
+            if (values.length > before) {
+              hasDirectValue = true;
+            }
+            continue;
+          }
+          final text = direct.toString().trim();
+          if (text.isEmpty) continue;
+          addText(text);
+          hasDirectValue = true;
+        }
+        if (hasDirectValue) return;
+
+        const technicalKeys = <String>{
+          'id',
+          'value_id',
+          'feature_id',
+          'sort',
+          'code',
+          'cml1c_id',
+        };
+        final hasMeaningfulFields = value.keys.any(
+          (key) => !technicalKeys.contains(key.toString()),
+        );
+        if (!hasMeaningfulFields) return;
+
+        for (final entry in value.entries) {
+          collect(entry.value);
+        }
+        return;
+      }
+      addText(value.toString());
+    }
+
+    collect(rawValue);
+    return values.toList(growable: false);
+  }
+
+  List<String> _normalizeFeatureValues(dynamic rawValue) {
+    final Set<String> values = <String>{};
+
+    void collect(dynamic value) {
+      if (value == null) return;
+      if (value is List) {
+        for (final item in value) {
+          collect(item);
+        }
+        return;
+      }
+      if (value is Map) {
+        const directKeys = <String>['value', 'name', 'title', 'label', 'text'];
+        bool hasDirectValue = false;
+        for (final key in directKeys) {
+          final direct = value[key];
+          if (direct == null) continue;
+          final text = direct.toString().trim();
+          if (text.isEmpty) continue;
+          values.add(text);
+          hasDirectValue = true;
+        }
+        if (hasDirectValue) return;
+        for (final entry in value.entries) {
+          final nested = entry.value;
+          if (nested == null) continue;
+          if (nested is Map || nested is List) {
+            collect(nested);
+            continue;
+          }
+          final text = nested.toString().trim();
+          if (text.isNotEmpty) {
+            values.add(text);
+          }
+        }
+        return;
+      }
+      final text = value.toString().trim();
+      if (text.isNotEmpty) {
+        values.add(text);
+      }
+    }
+
+    collect(rawValue);
+    return values.toList(growable: false);
   }
 
   String _normalizeComparable(String value) {
-    return value.trim().toLowerCase();
+    return value.trim().toLowerCase().replaceAll('ё', 'е');
   }
 
   bool _stringSetEquals(Set<String> a, Set<String> b) {
@@ -4483,8 +5244,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _isNativeCategoryPage = true;
       _nativeCategory = key;
       _resetVisibleRangeForCategory(_nativeCategory);
+      _restoreCurrentCategoryFeatureAvailability();
     });
     _updatePageTitleFromCategory(categoryId, key, fallback: title);
+    _primeCurrentCategoryFilterCaches();
     if (prevNative != key) {
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
@@ -7391,8 +8154,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _isNativeCategoryPage = true;
       _nativeCategory = nativeKey;
       _resetVisibleRangeForCategory(_nativeCategory);
+      _restoreCurrentCategoryFeatureAvailability();
     });
 
+    _primeCurrentCategoryFilterCaches();
     if (prevNative != nativeKey) {
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
@@ -8464,8 +9229,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _searchOriginNativeEntry = null;
       _searchOriginBackStack.clear();
       _resetVisibleRangeForCategory(_nativeCategory);
+      _restoreCurrentCategoryFeatureAvailability();
     });
 
+    _primeCurrentCategoryFilterCaches();
     if (prevNative != origin.key) {
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
@@ -8536,8 +9303,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _nativeCategory = previous.key;
       _catalogBackSwipeScrollLocked = false;
       _resetVisibleRangeForCategory(_nativeCategory);
+      _restoreCurrentCategoryFeatureAvailability();
     });
 
+    _primeCurrentCategoryFilterCaches();
     if (prevNative != previous.key) {
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
@@ -9609,7 +10378,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   controller: _nativeScrollController,
                   key: const PageStorageKey('native_category_scroll'),
                   cacheExtent: MediaQuery.of(context).size.height * 0.9,
-                  physics: _catalogBackSwipeScrollLocked
+                  physics:
+                      _catalogBackSwipeScrollLocked ||
+                          _isNativeEmptyStateVisible()
                       ? const NeverScrollableScrollPhysics()
                       : const AlwaysScrollableScrollPhysics(
                           parent: BouncingScrollPhysics(),
@@ -9651,7 +10422,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         _nativeCategory != "cart" &&
                         _nativeCategory != "profile")
                       _buildNativeLoadMoreSliver(),
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                    if (!_isNativeEmptyStateVisible())
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
                   ],
                 ),
               ),
@@ -9841,6 +10613,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     EdgeInsetsGeometry? contentPadding,
     double? priceNameGap,
     double? nameActionsGap,
+    bool showFavoriteButton = true,
+    bool showCompareButton = true,
   }) {
     final id = product['id']?.toString() ?? "";
     return NativeProductCard(
@@ -9856,6 +10630,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       contentPadding: contentPadding,
       priceNameGap: priceNameGap,
       nameActionsGap: nameActionsGap,
+      showFavoriteButton: showFavoriteButton,
+      showCompareButton: showCompareButton,
       galleryListenable: id.isNotEmpty ? _getGalleryNotifier(id) : null,
       favoriteListenable: id.isNotEmpty ? _getFavoriteNotifier(id) : null,
       isFavoriteResolver: _isFavorite,
@@ -11811,42 +12587,85 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  bool _isNativeEmptyStateVisible() {
+    if (_nativeCategory == "wishlist") {
+      return _getActiveNativeList().isEmpty;
+    }
+    if (_nativeCategory == "cart") {
+      return _getCartItems().isEmpty;
+    }
+    if (_nativeCategory == "compare") {
+      final products = _getActiveNativeList().whereType<Map>().toList();
+      if (products.isEmpty) return true;
+      return _groupCompareProducts(products).isEmpty;
+    }
+    return false;
+  }
+
   Widget _buildEmptyState({
     required String imageAsset,
     required String actionLabel,
   }) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return SliverFillRemaining(
       hasScrollBody: false,
+      fillOverscroll: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
           const buttonHeight = 46.0;
-          const verticalGaps = 22.0;
-          final maxImageHeight =
-              (constraints.maxHeight - buttonHeight - verticalGaps)
-                  .clamp(220.0, 620.0)
-                  .toDouble();
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
-            child: Column(
-              children: [
-                SizedBox(
-                  height: maxImageHeight,
-                  child: Center(
-                    child: Image.asset(
-                      imageAsset,
-                      fit: BoxFit.contain,
+          const buttonBottomOffset = 12.0;
+          const imageToButtonGap = 8.0;
+          final maxReservation = math.max(0.0, constraints.maxHeight - 1);
+          final imageBottomInset = math.min(
+            buttonHeight + buttonBottomOffset + bottomInset + imageToButtonGap,
+            maxReservation,
+          );
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              const ColoredBox(color: Colors.white),
+              Positioned.fill(
+                bottom: imageBottomInset,
+                child: ClipRect(
+                  child: Image.asset(
+                    imageAsset,
+                    fit: BoxFit.fitWidth,
+                    alignment: Alignment.topCenter,
+                    filterQuality: FilterQuality.high,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.white,
                       alignment: Alignment.center,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey.shade100,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_not_supported_outlined),
+                      child: const Icon(Icons.image_not_supported_outlined),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: imageBottomInset + 44,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x00FFFFFF),
+                          Color(0xCCFFFFFF),
+                          Colors.white,
+                        ],
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
+              ),
+              Positioned(
+                left: 14,
+                right: 14,
+                bottom: buttonBottomOffset + bottomInset,
+                child: SizedBox(
                   height: buttonHeight,
                   child: ElevatedButton(
                     onPressed: _openCustomMenu,
@@ -11868,8 +12687,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
@@ -15722,8 +16541,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return _discountedProductCard(
       normalized,
       horizontalCardWidth: horizontalCardWidth,
-      priceNameGap: 8,
-      nameActionsGap: 12,
+      priceTextStyle: _cardPriceStyle.copyWith(fontSize: 16),
+      oldPriceTextStyle: _cardOldPriceStyle.copyWith(fontSize: 11),
+      nameTextStyle: _cardNameStyle.copyWith(fontSize: 12, height: 1.25),
+      cartButtonTextStyle: const TextStyle(
+        fontFamily: 'Roboto',
+        fontSize: 11,
+        fontWeight: FontWeight.w500,
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+      priceNameGap: 5,
+      nameActionsGap: 8,
+      showFavoriteButton: false,
+      showCompareButton: false,
     );
   }
 
@@ -15749,160 +16579,215 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           final viewedItems = _viewedProducts.take(8).toList();
           final profileName = (_authUserName ?? '').trim();
           const viewedCardGap = 10.0;
-          final viewedCardWidth =
+          final baseViewedCardWidth =
               ((MediaQuery.of(context).size.width - 20 - viewedCardGap) / 2)
-                  .clamp(150.0, 190.0)
                   .toDouble();
-          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 152;
+          final viewedCardWidth = (baseViewedCardWidth / 1.35)
+              .clamp(112.0, 142.0)
+              .toDouble();
+          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 120;
           return Padding(
             padding: const EdgeInsets.fromLTRB(10, 12, 10, 22),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 30,
-                            backgroundColor: Colors.grey.shade100,
-                            backgroundImage: _authAvatarProvider(_authPhotoUrl),
-                            child:
-                                (_authPhotoUrl == null ||
-                                    _authPhotoUrl!.isEmpty ||
-                                    _authAvatarProvider(_authPhotoUrl) == null)
-                                ? const Icon(
-                                    Icons.person_outline,
-                                    color: Colors.black45,
-                                    size: 32,
-                                  )
-                                : null,
-                          ),
-                          Positioned(
-                            right: -2,
-                            bottom: -2,
-                            child: Material(
-                              color: Colors.black,
-                              shape: const CircleBorder(),
-                              child: InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: _pickAndSaveProfileAvatar,
-                                child: const Padding(
-                                  padding: EdgeInsets.all(6),
-                                  child: Icon(
-                                    Icons.camera_alt_outlined,
-                                    size: 14,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                if (_isAuthorized)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Stack(
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    profileName.isEmpty
-                                        ? 'Пользователь'
-                                        : profileName,
-                                    style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.w500,
-                                      height: 1.1,
+                            CircleAvatar(
+                              radius: 30,
+                              backgroundColor: Colors.grey.shade100,
+                              backgroundImage: _authAvatarProvider(
+                                _authPhotoUrl,
+                              ),
+                              child:
+                                  (_authPhotoUrl == null ||
+                                      _authPhotoUrl!.isEmpty ||
+                                      _authAvatarProvider(_authPhotoUrl) ==
+                                          null)
+                                  ? const Icon(
+                                      Icons.person_outline,
+                                      color: Colors.black45,
+                                      size: 32,
+                                    )
+                                  : null,
+                            ),
+                            Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Material(
+                                color: Colors.black,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: _pickAndSaveProfileAvatar,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(6),
+                                    child: Icon(
+                                      Icons.camera_alt_outlined,
+                                      size: 14,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
-                                IconButton(
-                                  onPressed: _editProfileName,
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(
-                                    Icons.edit_outlined,
-                                    size: 20,
-                                    color: Colors.black54,
-                                  ),
-                                  tooltip: 'Редактировать профиль',
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            InkWell(
-                              onTap: _openProfileAuthPage,
-                              child: const Text(
-                                'Изменить телефон',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.black54,
-                                  decoration: TextDecoration.underline,
-                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _formatPhoneMasked(_authPhone ?? ''),
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.black54,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            FutureBuilder<double?>(
-                              future: bonusFuture,
-                              builder: (context, bonusSnapshot) {
-                                final bonus = bonusSnapshot.data;
-                                if (bonus == null) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF5F5F5),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.stars_outlined,
-                                        size: 16,
-                                        color: Colors.black87,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'Бонусы: ${_formatBonusBalance(bonus)}',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.black87,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      profileName.isEmpty
+                                          ? 'Пользователь'
+                                          : profileName,
+                                      style: const TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1.1,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: _editProfileName,
+                                    visualDensity: VisualDensity.compact,
+                                    icon: const Icon(
+                                      Icons.edit_outlined,
+                                      size: 20,
+                                      color: Colors.black54,
+                                    ),
+                                    tooltip: 'Редактировать профиль',
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              InkWell(
+                                onTap: _openProfileAuthPage,
+                                child: const Text(
+                                  'Изменить телефон',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _formatPhoneMasked(_authPhone ?? ''),
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FutureBuilder<double?>(
+                                future: bonusFuture,
+                                builder: (context, bonusSnapshot) {
+                                  final bonus = bonusSnapshot.data;
+                                  if (bonus == null) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF5F5F5),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.stars_outlined,
+                                          size: 16,
+                                          color: Colors.black87,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'Бонусы: ${_formatBonusBalance(bonus)}',
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Получайте кэшбек, сохраняйте и отслеживайте заказы",
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                            height: 1.2,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _openProfileAuthPage,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(46),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              "Войти",
+                              style: TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
                 const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
@@ -15917,15 +16802,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         title: city,
                         onTap: _openHeaderCityPicker,
                       ),
-                      if (deliveryAddress.isNotEmpty) ...[
-                        Divider(height: 1, color: Colors.grey.shade200),
-                        _profileMenuTile(
-                          icon: Icons.home_outlined,
-                          title: "Адрес доставки",
-                          subtitle: deliveryAddress,
-                          onTap: () => _navigateToSimple("Профиль", "/my/"),
-                        ),
-                      ],
                       Divider(height: 1, color: Colors.grey.shade200),
                       _profileMenuTile(
                         icon: Icons.store_outlined,
@@ -15933,15 +16809,41 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         subtitle: defaultStore.isEmpty
                             ? "Изначально устанавливается при оформлении заказа"
                             : defaultStore,
-                        onTap: () => _navigateToSimple("Профиль", "/my/"),
+                        onTap: _isAuthorized
+                            ? () => _navigateToSimple("Профиль", "/my/")
+                            : _openProfileAuthPage,
                       ),
-                      Divider(height: 1, color: Colors.grey.shade200),
-                      _profileMenuTile(
-                        icon: Icons.receipt_long_outlined,
-                        title: "Заказы",
-                        onTap: _openMyOrdersPage,
-                      ),
-                      Divider(height: 1, color: Colors.grey.shade200),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      if (deliveryAddress.isNotEmpty) ...[
+                        _profileMenuTile(
+                          icon: Icons.home_outlined,
+                          title: "Адрес доставки",
+                          subtitle: deliveryAddress,
+                          onTap: _isAuthorized
+                              ? () => _navigateToSimple("Профиль", "/my/")
+                              : _openProfileAuthPage,
+                        ),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                      ],
+                      if (_isAuthorized) ...[
+                        _profileMenuTile(
+                          icon: Icons.receipt_long_outlined,
+                          title: "Заказы",
+                          onTap: _openMyOrdersPage,
+                        ),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                      ],
                       ValueListenableBuilder<int>(
                         valueListenable: _wishCountNotifier,
                         builder: (context, count, _) => _profileMenuTile(
@@ -15965,14 +16867,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
                       ),
-                      Divider(height: 1, color: Colors.grey.shade200),
-                      _profileMenuTile(
-                        icon: _isAuthorized ? Icons.logout : Icons.login,
-                        title: _isAuthorized ? "Выйти" : "Войти",
-                        onTap: _isAuthorized
-                            ? _logoutProfile
-                            : _openProfileAuthPage,
-                      ),
+                      if (_isAuthorized) ...[
+                        Divider(height: 1, color: Colors.grey.shade200),
+                        _profileMenuTile(
+                          icon: Icons.logout,
+                          title: "Выйти",
+                          onTap: _logoutProfile,
+                        ),
+                      ],
                       Divider(height: 1, color: Colors.grey.shade200),
                       _buildSimpleContacts(),
                     ],
@@ -16468,6 +17370,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       ),
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
+          final activeCategoryId =
+              _nativeCustomCategoryIdByKey[_nativeCategory] ??
+              _nativeCategoryIdForSubcategories(_nativeCategory);
           final bool isFilterDataReady =
               isWishlist ||
               (_isFilterMetadataLoaded && _areAllFeatureValuesLoaded);
@@ -16476,6 +17381,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             unawaited(() async {
               await _fetchFilterMetadata(modalSetter: setModalState);
               await _warmFilterFeatureValues(modalSetter: setModalState);
+              if (activeCategoryId != null && activeCategoryId.isNotEmpty) {
+                await _ensureCategoryColorAvailability(
+                  _nativeCategory,
+                  activeCategoryId,
+                );
+              }
               if (!mounted) return;
               try {
                 setModalState(() {});
@@ -16693,22 +17604,37 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                   })
                                   .where((e) => e.value.trim().isNotEmpty)
                                   .toList(growable: false);
+                              final bool showColorPreview = _isColorFeatureName(
+                                fname,
+                              );
                               final availableSet =
                                   _availableFeatureValuesInCategory[fid];
-                              final filteredEntries = optionEntries.where((e) {
-                                if (availableSet == null ||
-                                    availableSet.isEmpty) {
-                                  return true;
-                                }
-                                return availableSet.contains(
-                                  _normalizeComparable(e.value),
-                                );
-                              }).toList();
-                              if (filteredEntries.isEmpty) {
+                              if (showColorPreview &&
+                                  (availableSet == null ||
+                                      availableSet.isEmpty)) {
                                 return const SizedBox.shrink();
                               }
-                              final bool showColorPreview =
-                                  _isColorFeatureName(fname);
+                              final filteredEntries = optionEntries
+                                  .where((e) {
+                                    if (availableSet == null ||
+                                        availableSet.isEmpty) {
+                                      return true;
+                                    }
+                                    final normalizedName = _normalizeComparable(
+                                      e.value,
+                                    );
+                                    final normalizedId = _normalizeComparable(
+                                      e.key,
+                                    );
+                                    return availableSet.contains(
+                                          normalizedName,
+                                        ) ||
+                                        availableSet.contains(normalizedId);
+                                  })
+                                  .toList(growable: false);
+                              if (filteredEntries.length <= 1) {
+                                return const SizedBox.shrink();
+                              }
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -17040,6 +17966,27 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
       return;
     }
+    final bool canPreviewLocally = _selectedStocks.isEmpty;
+    if (canPreviewLocally) {
+      final int previewSeq = ++_catalogLocalFilterSeq;
+      final previewSource = List<dynamic>.from(
+        _nativePreviewBaseLists[_nativeCategory] ?? _getOriginalNativeList(),
+      );
+      final previewItems = await _applyLocalFilters(previewSource).catchError((
+        _,
+      ) {
+        return <dynamic>[];
+      });
+      if (mounted && previewSeq == _catalogLocalFilterSeq) {
+        setState(() {
+          _setActiveNativeList(List<dynamic>.from(previewItems));
+          _currentSort = "default";
+        });
+      }
+    } else {
+      _catalogLocalFilterSeq++;
+    }
+
     List<MapEntry<String, String>> params = [];
 
     // Цена
@@ -17073,13 +18020,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     final customId = _nativeCustomCategoryIdByKey[_nativeCategory];
-    if (customId != null && customId.isNotEmpty) {
+    final categoryId = (customId != null && customId.isNotEmpty)
+        ? customId
+        : _nativeCategoryIdForSubcategories(_nativeCategory);
+    if (categoryId != null && categoryId.isNotEmpty) {
       _nativeFilterParams[_nativeCategory] = params;
       _fetchNativeCategory(
         key: _nativeCategory,
-        categoryId: customId,
+        categoryId: categoryId,
         customParams: params,
         reset: true,
+        preserveVisibleResultsDuringReset: canPreviewLocally,
       );
       return;
     }
@@ -34630,6 +35581,8 @@ class NativeProductCard extends StatefulWidget {
   final ValueListenable<int>? compareListenable;
   final bool Function(String id)? isCompareResolver;
   final VoidCallback? onCompareTap;
+  final bool showFavoriteButton;
+  final bool showCompareButton;
   final VoidCallback? onAddToCart;
   final ValueListenable<int>? cartListenable;
   final bool Function(String id)? isInCartResolver;
@@ -34658,6 +35611,8 @@ class NativeProductCard extends StatefulWidget {
     this.compareListenable,
     this.isCompareResolver,
     this.onCompareTap,
+    this.showFavoriteButton = true,
+    this.showCompareButton = true,
     this.onAddToCart,
     this.cartListenable,
     this.isInCartResolver,
@@ -35815,74 +36770,80 @@ class _NativeProductCardState extends State<NativeProductCard>
                           compact: widget.isHorizontal,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: widget.onFavoriteTap,
-                        child: SizedBox(
-                          width: widget.isHorizontal ? 26 : 30,
-                          height: widget.isHorizontal ? 26 : 30,
-                          child: Center(
-                            child: (widget.favoriteListenable == null)
-                                ? Icon(
-                                    Icons.favorite_border,
-                                    size: widget.isHorizontal ? 20 : 22,
-                                    color: Colors.black26,
-                                  )
-                                : ValueListenableBuilder<int>(
-                                    valueListenable: widget.favoriteListenable!,
-                                    builder: (context, _, __) {
-                                      final isFavorite =
-                                          widget.isFavoriteResolver?.call(
-                                            productId,
-                                          ) ??
-                                          false;
-                                      return Icon(
-                                        Icons.favorite_border,
-                                        size: widget.isHorizontal ? 20 : 22,
-                                        color: isFavorite
-                                            ? Colors.black
-                                            : Colors.black26,
-                                      );
-                                    },
-                                  ),
+                      if (widget.showFavoriteButton || widget.showCompareButton)
+                        const SizedBox(width: 8),
+                      if (widget.showFavoriteButton)
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: widget.onFavoriteTap,
+                          child: SizedBox(
+                            width: widget.isHorizontal ? 26 : 30,
+                            height: widget.isHorizontal ? 26 : 30,
+                            child: Center(
+                              child: (widget.favoriteListenable == null)
+                                  ? Icon(
+                                      Icons.favorite_border,
+                                      size: widget.isHorizontal ? 20 : 22,
+                                      color: Colors.black26,
+                                    )
+                                  : ValueListenableBuilder<int>(
+                                      valueListenable:
+                                          widget.favoriteListenable!,
+                                      builder: (context, _, __) {
+                                        final isFavorite =
+                                            widget.isFavoriteResolver?.call(
+                                              productId,
+                                            ) ??
+                                            false;
+                                        return Icon(
+                                          Icons.favorite_border,
+                                          size: widget.isHorizontal ? 20 : 22,
+                                          color: isFavorite
+                                              ? Colors.black
+                                              : Colors.black26,
+                                        );
+                                      },
+                                    ),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: widget.onCompareTap,
-                        child: SizedBox(
-                          width: widget.isHorizontal ? 26 : 30,
-                          height: widget.isHorizontal ? 26 : 30,
-                          child: Center(
-                            child: (widget.compareListenable == null)
-                                ? Icon(
-                                    Icons.bar_chart_outlined,
-                                    size: widget.isHorizontal ? 20 : 22,
-                                    color: Colors.black26,
-                                  )
-                                : ValueListenableBuilder<int>(
-                                    valueListenable: widget.compareListenable!,
-                                    builder: (context, _, __) {
-                                      final isCompared =
-                                          widget.isCompareResolver?.call(
-                                            productId,
-                                          ) ??
-                                          false;
-                                      return Icon(
-                                        Icons.bar_chart_outlined,
-                                        size: widget.isHorizontal ? 20 : 22,
-                                        color: isCompared
-                                            ? Colors.black
-                                            : Colors.black26,
-                                      );
-                                    },
-                                  ),
+                      if (widget.showFavoriteButton && widget.showCompareButton)
+                        const SizedBox(width: 6),
+                      if (widget.showCompareButton)
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: widget.onCompareTap,
+                          child: SizedBox(
+                            width: widget.isHorizontal ? 26 : 30,
+                            height: widget.isHorizontal ? 26 : 30,
+                            child: Center(
+                              child: (widget.compareListenable == null)
+                                  ? Icon(
+                                      Icons.bar_chart_outlined,
+                                      size: widget.isHorizontal ? 20 : 22,
+                                      color: Colors.black26,
+                                    )
+                                  : ValueListenableBuilder<int>(
+                                      valueListenable:
+                                          widget.compareListenable!,
+                                      builder: (context, _, __) {
+                                        final isCompared =
+                                            widget.isCompareResolver?.call(
+                                              productId,
+                                            ) ??
+                                            false;
+                                        return Icon(
+                                          Icons.bar_chart_outlined,
+                                          size: widget.isHorizontal ? 20 : 22,
+                                          color: isCompared
+                                              ? Colors.black
+                                              : Colors.black26,
+                                        );
+                                      },
+                                    ),
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ],
