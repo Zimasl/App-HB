@@ -711,6 +711,34 @@ List<String> _extractCategoryIdsForIsolate(Map<dynamic, dynamic> product) {
   return ids.toList(growable: false);
 }
 
+Map<String, dynamic> _extractProductFeaturesForIsolate(dynamic rawFeatures) {
+  if (rawFeatures is! Map || rawFeatures.isEmpty) {
+    return <String, dynamic>{};
+  }
+  final normalized = <String, dynamic>{};
+  for (final entry in rawFeatures.entries) {
+    final rawFeatureKey = entry.key?.toString().trim() ?? '';
+    final rawFeature = entry.value;
+    if (rawFeatureKey.isNotEmpty && rawFeature != null) {
+      normalized[rawFeatureKey] = rawFeature;
+    }
+    if (rawFeature is! Map) continue;
+    final feature = Map<String, dynamic>.from(rawFeature);
+    final fid = (feature['id'] ?? rawFeatureKey).toString().trim();
+    final code = feature['code']?.toString().trim() ?? '';
+    if (!feature.containsKey('value')) continue;
+    final dynamic value = feature['value'];
+    if (value == null) continue;
+    if (fid.isNotEmpty) {
+      normalized[fid] = value;
+    }
+    if (code.isNotEmpty) {
+      normalized[code] = value;
+    }
+  }
+  return normalized;
+}
+
 Map<String, dynamic> _parseNativeCategoryPayload(String body) {
   final decoded = json.decode(body);
   final data = (decoded is Map && decoded.containsKey('data'))
@@ -747,6 +775,7 @@ Map<String, dynamic> _parseNativeCategoryPayload(String body) {
     }
     final categoryIds = _extractCategoryIdsForIsolate(p);
     final String categoryId = p['category_id']?.toString() ?? "";
+    final features = _extractProductFeaturesForIsolate(p['features']);
 
     String? discountText;
     String? benefitText;
@@ -778,6 +807,7 @@ Map<String, dynamic> _parseNativeCategoryPayload(String body) {
       "link": "/product/${p['url']}/",
       "category_ids": categoryIds,
       if (categoryId.isNotEmpty) "category_id": categoryId,
+      if (features.isNotEmpty) "features": features,
     });
   }
 
@@ -1202,8 +1232,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   static const int _nativeSearchPageSize = 60;
   static const int _searchMinQueryLength = 3;
   static const String _nativeSearchProxyPath = '/native/search_products.php';
+  static const String _nativeCategoryFieldsParamValue =
+      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   static const String _nativeSearchFieldsParamValue =
-      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids';
+      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   String _activeSearchQuery = "";
   String? _activeSearchCorrectedQuery;
   bool _isSearchResultsLoading = false;
@@ -2518,6 +2550,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           if (id != null && id.isNotEmpty && code != null && code.isNotEmpty) {
             _featureCodeById[id] = code;
             _featureIdByCode[code] = id;
+            final normalizedCode = _normalizeComparable(code);
+            if (normalizedCode.isNotEmpty) {
+              _featureIdByCode[normalizedCode] = id;
+            }
           }
           if (id != null && id.isNotEmpty) {
             _featureIndexById[id] = i;
@@ -2802,10 +2838,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       }
       final textMap = <String, String>{};
       processedValues.forEach((key, value) {
-        textMap[key.toString()] = _featureOptionLabel(
-          value,
-          fallback: key.toString(),
-        );
+        final label = _featureOptionLabel(value, fallback: key.toString());
+        textMap[key.toString()] = label;
+        if (value is Map) {
+          final sort = value['sort']?.toString().trim() ?? '';
+          if (sort.isNotEmpty && label.isNotEmpty) {
+            textMap[sort] = label;
+          }
+        }
       });
       return {"values": processedValues, "textMap": textMap};
     } catch (_) {
@@ -2872,6 +2912,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         'limit=$_nativePageSize',
         'offset=$offset',
         'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
+        'fields=${Uri.encodeQueryComponent(_nativeCategoryFieldsParamValue)}',
         'sort=create_datetime',
         'order=desc',
         'status=1',
@@ -3512,12 +3553,28 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  void _registerProductFeaturesFromProducts(List<dynamic> products) {
+    var changed = false;
+    for (final product in products) {
+      if (product is! Map) continue;
+      final id = product['id']?.toString() ?? '';
+      final rawFeatures = product['features'];
+      if (id.isEmpty || rawFeatures is! Map || rawFeatures.isEmpty) continue;
+      _productFeaturesById[id] = Map<String, dynamic>.from(rawFeatures);
+      changed = true;
+    }
+    if (changed) {
+      _productFeaturesVersion++;
+    }
+  }
+
   Future<List<dynamic>> _applyLocalFilters(List<dynamic> products) async {
     final priceFiltered = await _applyLocalPriceFilterAsync(products);
     if (_selectedFeatures.isEmpty && _selectedStocks.isEmpty) {
       return priceFiltered;
     }
 
+    _registerProductFeaturesFromProducts(priceFiltered);
     await _ensureProductDetails(priceFiltered);
 
     return _applySelectedFiltersChunked(priceFiltered);
@@ -3655,6 +3712,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     List<dynamic> products,
   ) async {
     try {
+      _registerProductFeaturesFromProducts(products);
       await _ensureProductDetails(products);
       final Map<String, Set<String>> valuesByFeature = Map.from(
         _availableFeatureValuesInCategory,
@@ -3663,13 +3721,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final id = product['id']?.toString() ?? "";
         if (id.isEmpty) continue;
         final features = _productFeaturesById[id];
-        if (features == null) continue;
-        features.forEach((code, rawValue) {
-          final fid = _featureIdByCode[code.toString()];
+        if (features == null || features.isEmpty) continue;
+        features.forEach((featureKey, rawValue) {
+          final key = featureKey.toString().trim();
+          if (key.isEmpty) return;
+          String? fid;
+          if (_featureIndexById.containsKey(key)) {
+            fid = key;
+          } else {
+            fid =
+                _featureIdByCode[key] ??
+                _featureIdByCode[_normalizeComparable(key)];
+          }
           if (fid == null || fid.isEmpty) return;
-          final values = _normalizeFeatureValues(
-            rawValue,
-          ).map(_normalizeComparable).where((v) => v.isNotEmpty);
+          final values = _normalizedFeatureValueTokens(fid, rawValue);
           if (values.isEmpty) return;
           valuesByFeature.putIfAbsent(fid, () => <String>{}).addAll(values);
         });
@@ -4195,22 +4260,31 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final vids = entry.value;
       if (vids.isEmpty) continue;
       final code = _featureCodeById[fid];
-      final key = (code != null && code.isNotEmpty) ? code : fid;
-      final rawValue = features[key];
-      final productValues = _normalizeFeatureValues(rawValue);
-      if (productValues.isEmpty) return false;
-      final selectedTexts = vids
-          .map((vid) {
-            final text = _featureValueTextById[fid]?[vid];
-            return (text == null || text.isEmpty) ? vid : text;
-          })
-          .map(_normalizeComparable)
-          .where((v) => v.isNotEmpty)
-          .toSet();
-      final productValuesNormalized = productValues
-          .map(_normalizeComparable)
-          .where((v) => v.isNotEmpty)
-          .toSet();
+      dynamic rawValue;
+      if (code != null && code.isNotEmpty && features.containsKey(code)) {
+        rawValue = features[code];
+      } else {
+        rawValue = features[fid];
+      }
+      final productValuesNormalized = _normalizedFeatureValueTokens(
+        fid,
+        rawValue,
+      );
+      if (productValuesNormalized.isEmpty) return false;
+      final selectedTexts = <String>{};
+      for (final vid in vids) {
+        final normalizedVid = _normalizeComparable(vid);
+        if (normalizedVid.isNotEmpty) {
+          selectedTexts.add(normalizedVid);
+        }
+        final text = _featureValueTextById[fid]?[vid];
+        if (text != null && text.isNotEmpty) {
+          final normalizedText = _normalizeComparable(text);
+          if (normalizedText.isNotEmpty) {
+            selectedTexts.add(normalizedText);
+          }
+        }
+      }
       if (selectedTexts.isEmpty || productValuesNormalized.isEmpty) {
         return false;
       }
@@ -4262,6 +4336,75 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       values.add(rawValue.toString());
     }
     return values;
+  }
+
+  Set<String> _normalizedFeatureValueTokens(String fid, dynamic rawValue) {
+    final Set<String> tokens = <String>{};
+    final textMap = _featureValueTextById[fid] ?? const <String, String>{};
+
+    void addToken(dynamic raw) {
+      final value = raw?.toString().trim() ?? '';
+      if (value.isEmpty) return;
+      final normalizedValue = _normalizeComparable(value);
+      if (normalizedValue.isNotEmpty) {
+        tokens.add(normalizedValue);
+      }
+      final mapped = textMap[value]?.toString().trim() ?? '';
+      if (mapped.isNotEmpty) {
+        final normalizedMapped = _normalizeComparable(mapped);
+        if (normalizedMapped.isNotEmpty) {
+          tokens.add(normalizedMapped);
+        }
+      }
+    }
+
+    void collect(dynamic value) {
+      if (value == null) return;
+      if (value is List) {
+        for (final item in value) {
+          collect(item);
+        }
+        return;
+      }
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        final bool isFeatureDescriptor =
+            map.containsKey('code') || map.containsKey('name');
+        if (!isFeatureDescriptor) {
+          addToken(map['id']);
+          addToken(map['value_id']);
+          addToken(map['sort']);
+        }
+        if (map.containsKey('value')) {
+          collect(map['value']);
+          return;
+        }
+        if (map.containsKey('name')) {
+          addToken(map['name']);
+          return;
+        }
+        if (map.containsKey('title')) {
+          addToken(map['title']);
+          return;
+        }
+        if (map.containsKey('label')) {
+          addToken(map['label']);
+          return;
+        }
+        if (map.containsKey('text')) {
+          addToken(map['text']);
+          return;
+        }
+        if (!isFeatureDescriptor) {
+          addToken(map);
+        }
+        return;
+      }
+      addToken(value);
+    }
+
+    collect(rawValue);
+    return tokens;
   }
 
   String _normalizeComparable(String value) {
@@ -16046,160 +16189,215 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           final viewedItems = _viewedProducts.take(8).toList();
           final profileName = (_authUserName ?? '').trim();
           const viewedCardGap = 10.0;
-          final viewedCardWidth =
+          final baseViewedCardWidth =
               ((MediaQuery.of(context).size.width - 20 - viewedCardGap) / 2)
-                  .clamp(150.0, 190.0)
                   .toDouble();
-          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 152;
+          final viewedCardWidth = (baseViewedCardWidth / 1.35)
+              .clamp(112.0, 142.0)
+              .toDouble();
+          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 120;
           return Padding(
             padding: const EdgeInsets.fromLTRB(10, 12, 10, 22),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 30,
-                            backgroundColor: Colors.grey.shade100,
-                            backgroundImage: _authAvatarProvider(_authPhotoUrl),
-                            child:
-                                (_authPhotoUrl == null ||
-                                    _authPhotoUrl!.isEmpty ||
-                                    _authAvatarProvider(_authPhotoUrl) == null)
-                                ? const Icon(
-                                    Icons.person_outline,
-                                    color: Colors.black45,
-                                    size: 32,
-                                  )
-                                : null,
-                          ),
-                          Positioned(
-                            right: -2,
-                            bottom: -2,
-                            child: Material(
-                              color: Colors.black,
-                              shape: const CircleBorder(),
-                              child: InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: _pickAndSaveProfileAvatar,
-                                child: const Padding(
-                                  padding: EdgeInsets.all(6),
-                                  child: Icon(
-                                    Icons.camera_alt_outlined,
-                                    size: 14,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                if (_isAuthorized)
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Stack(
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    profileName.isEmpty
-                                        ? 'Пользователь'
-                                        : profileName,
-                                    style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.w500,
-                                      height: 1.1,
+                            CircleAvatar(
+                              radius: 30,
+                              backgroundColor: Colors.grey.shade100,
+                              backgroundImage: _authAvatarProvider(
+                                _authPhotoUrl,
+                              ),
+                              child:
+                                  (_authPhotoUrl == null ||
+                                      _authPhotoUrl!.isEmpty ||
+                                      _authAvatarProvider(_authPhotoUrl) ==
+                                          null)
+                                  ? const Icon(
+                                      Icons.person_outline,
+                                      color: Colors.black45,
+                                      size: 32,
+                                    )
+                                  : null,
+                            ),
+                            Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Material(
+                                color: Colors.black,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: _pickAndSaveProfileAvatar,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(6),
+                                    child: Icon(
+                                      Icons.camera_alt_outlined,
+                                      size: 14,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
-                                IconButton(
-                                  onPressed: _editProfileName,
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(
-                                    Icons.edit_outlined,
-                                    size: 20,
-                                    color: Colors.black54,
-                                  ),
-                                  tooltip: 'Редактировать профиль',
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            InkWell(
-                              onTap: _openProfileAuthPage,
-                              child: const Text(
-                                'Изменить телефон',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.black54,
-                                  decoration: TextDecoration.underline,
-                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _formatPhoneMasked(_authPhone ?? ''),
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.black54,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            FutureBuilder<double?>(
-                              future: bonusFuture,
-                              builder: (context, bonusSnapshot) {
-                                final bonus = bonusSnapshot.data;
-                                if (bonus == null) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF5F5F5),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.stars_outlined,
-                                        size: 16,
-                                        color: Colors.black87,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'Бонусы: ${_formatBonusBalance(bonus)}',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.black87,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      profileName.isEmpty
+                                          ? 'Пользователь'
+                                          : profileName,
+                                      style: const TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1.1,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: _editProfileName,
+                                    visualDensity: VisualDensity.compact,
+                                    icon: const Icon(
+                                      Icons.edit_outlined,
+                                      size: 20,
+                                      color: Colors.black54,
+                                    ),
+                                    tooltip: 'Редактировать профиль',
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              InkWell(
+                                onTap: _openProfileAuthPage,
+                                child: const Text(
+                                  'Изменить телефон',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _formatPhoneMasked(_authPhone ?? ''),
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FutureBuilder<double?>(
+                                future: bonusFuture,
+                                builder: (context, bonusSnapshot) {
+                                  final bonus = bonusSnapshot.data;
+                                  if (bonus == null) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF5F5F5),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.stars_outlined,
+                                          size: 16,
+                                          color: Colors.black87,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'Бонусы: ${_formatBonusBalance(bonus)}',
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Получайте кэшбек, сохраняйте и отслеживайте заказы",
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                            height: 1.2,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _openProfileAuthPage,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(46),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              "Войти",
+                              style: TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
                 const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
@@ -16214,15 +16412,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         title: city,
                         onTap: _openHeaderCityPicker,
                       ),
-                      if (deliveryAddress.isNotEmpty) ...[
-                        Divider(height: 1, color: Colors.grey.shade200),
-                        _profileMenuTile(
-                          icon: Icons.home_outlined,
-                          title: "Адрес доставки",
-                          subtitle: deliveryAddress,
-                          onTap: () => _navigateToSimple("Профиль", "/my/"),
-                        ),
-                      ],
                       Divider(height: 1, color: Colors.grey.shade200),
                       _profileMenuTile(
                         icon: Icons.store_outlined,
@@ -16230,15 +16419,41 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         subtitle: defaultStore.isEmpty
                             ? "Изначально устанавливается при оформлении заказа"
                             : defaultStore,
-                        onTap: () => _navigateToSimple("Профиль", "/my/"),
+                        onTap: _isAuthorized
+                            ? () => _navigateToSimple("Профиль", "/my/")
+                            : _openProfileAuthPage,
                       ),
-                      Divider(height: 1, color: Colors.grey.shade200),
-                      _profileMenuTile(
-                        icon: Icons.receipt_long_outlined,
-                        title: "Заказы",
-                        onTap: _openMyOrdersPage,
-                      ),
-                      Divider(height: 1, color: Colors.grey.shade200),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      if (deliveryAddress.isNotEmpty) ...[
+                        _profileMenuTile(
+                          icon: Icons.home_outlined,
+                          title: "Адрес доставки",
+                          subtitle: deliveryAddress,
+                          onTap: _isAuthorized
+                              ? () => _navigateToSimple("Профиль", "/my/")
+                              : _openProfileAuthPage,
+                        ),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                      ],
+                      if (_isAuthorized) ...[
+                        _profileMenuTile(
+                          icon: Icons.receipt_long_outlined,
+                          title: "Заказы",
+                          onTap: _openMyOrdersPage,
+                        ),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                      ],
                       ValueListenableBuilder<int>(
                         valueListenable: _wishCountNotifier,
                         builder: (context, count, _) => _profileMenuTile(
@@ -16262,14 +16477,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
                       ),
-                      Divider(height: 1, color: Colors.grey.shade200),
-                      _profileMenuTile(
-                        icon: _isAuthorized ? Icons.logout : Icons.login,
-                        title: _isAuthorized ? "Выйти" : "Войти",
-                        onTap: _isAuthorized
-                            ? _logoutProfile
-                            : _openProfileAuthPage,
-                      ),
+                      if (_isAuthorized) ...[
+                        Divider(height: 1, color: Colors.grey.shade200),
+                        _profileMenuTile(
+                          icon: Icons.logout,
+                          title: "Выйти",
+                          onTap: _logoutProfile,
+                        ),
+                      ],
                       Divider(height: 1, color: Colors.grey.shade200),
                       _buildSimpleContacts(),
                     ],
@@ -16983,14 +17198,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                   .toList(growable: false);
                               final availableSet =
                                   _availableFeatureValuesInCategory[fid];
+                              if (availableSet == null ||
+                                  availableSet.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
                               final filteredEntries = optionEntries.where((e) {
-                                if (availableSet == null ||
-                                    availableSet.isEmpty) {
-                                  return true;
-                                }
-                                return availableSet.contains(
-                                  _normalizeComparable(e.value),
+                                final normalizedName = _normalizeComparable(
+                                  e.value,
                                 );
+                                final normalizedId = _normalizeComparable(
+                                  e.key,
+                                );
+                                return availableSet.contains(normalizedName) ||
+                                    availableSet.contains(normalizedId);
                               }).toList();
                               if (filteredEntries.isEmpty) {
                                 return const SizedBox.shrink();
