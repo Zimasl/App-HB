@@ -950,12 +950,16 @@ class HozyainBarinApp extends StatefulWidget {
 class _HozyainBarinAppState extends State<HozyainBarinApp>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  late final ScrollController _homeScrollController;
   late final ScrollController _nativeScrollController;
   late final ScrollController _discountScrollController;
   late final List<ScrollController> _homeFeaturedProductsScrollControllers;
   late final ScrollController _homePromoScrollController;
   late final ScrollController _homeCategoryScrollController;
   late final ScrollController _homeDiscountTabsScrollController;
+  final ValueNotifier<double> _homeScrollOffsetNotifier = ValueNotifier<double>(
+    0.0,
+  );
   final List<_GalleryRequest> _pendingGalleryRequests = [];
   final Set<String> _queuedGalleryRequestKeys = {};
   final Set<String> _galleryRequestsInFlight = {};
@@ -1409,6 +1413,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     });
     _initDeepLinks();
+    _homeScrollController = ScrollController()
+      ..addListener(() {
+        if (!_homeScrollController.hasClients) return;
+        _homeScrollOffsetNotifier.value = _homeScrollController.position.pixels;
+      });
     _discountScrollController = ScrollController();
     _homeFeaturedProductsScrollControllers = List<ScrollController>.generate(
       _maxHomeFeaturedSections,
@@ -1810,6 +1819,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _nativeSplashFallbackTimer?.cancel();
     _catalogBackSwipeController.dispose();
     _catalogBackSwipeOffsetNotifier.dispose();
+    _homeScrollController.dispose();
     _nativeScrollController.dispose();
     _subcategoryMainScrollController.dispose();
     _subcategoryPreviewScrollController.dispose();
@@ -1839,6 +1849,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _galleryVersionById.clear();
     _scrollingNotifier.dispose();
     _scrollVisibleImagesTimer?.cancel();
+    _homeScrollOffsetNotifier.dispose();
     _scrollVisibleMainImageIds.dispose();
     _linkSubscription?.cancel();
     _favoriteOverlayTimer?.cancel();
@@ -2612,9 +2623,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Color? _resolveFilterColorSwatch(String rawLabel) {
     final label = rawLabel.trim();
     if (label.isEmpty) return null;
-    final hexMatch = RegExp(r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})').firstMatch(
-      label,
-    );
+    final hexMatch = RegExp(
+      r'#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})',
+    ).firstMatch(label);
     if (hexMatch != null) {
       final source = hexMatch.group(1)!;
       final expanded = source.length == 3
@@ -2632,27 +2643,30 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return const Color(0xFFF5F5F0);
     }
     if (n.contains('серебр')) return const Color(0xFFBFC5CE);
-    if (n.contains('сер') || n.contains('графит')) return const Color(0xFF7C7C7C);
-    if (n.contains('красн') || n.contains('бордо')) return const Color(0xFFB3261E);
+    if (n.contains('сер') || n.contains('графит'))
+      return const Color(0xFF7C7C7C);
+    if (n.contains('красн') || n.contains('бордо'))
+      return const Color(0xFFB3261E);
     if (n.contains('оранж')) return const Color(0xFFE17824);
-    if (n.contains('желт') || n.contains('горч')) return const Color(0xFFE0B020);
+    if (n.contains('желт') || n.contains('горч'))
+      return const Color(0xFFE0B020);
     if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
       return const Color(0xFF5E7B2D);
     }
-    if (n.contains('голуб') || n.contains('бирюз')) return const Color(0xFF45A4D8);
+    if (n.contains('голуб') || n.contains('бирюз'))
+      return const Color(0xFF45A4D8);
     if (n.contains('син')) return const Color(0xFF254B9A);
-    if (n.contains('фиолет') || n.contains('лилов')) return const Color(0xFF7E57C2);
+    if (n.contains('фиолет') || n.contains('лилов'))
+      return const Color(0xFF7E57C2);
     if (n.contains('розов')) return const Color(0xFFE891B8);
     if (n.contains('беж') || n.contains('крем')) return const Color(0xFFD8C2A3);
-    if (n.contains('корич') || n.contains('шоколад')) return const Color(0xFF6D4C41);
+    if (n.contains('корич') || n.contains('шоколад'))
+      return const Color(0xFF6D4C41);
     if (n.contains('золот')) return const Color(0xFFD4AF37);
     return null;
   }
 
-  Widget _buildFilterColorSwatch(
-    String label, {
-    required bool isSelected,
-  }) {
+  Widget _buildFilterColorSwatch(String label, {required bool isSelected}) {
     final swatchColor = _resolveFilterColorSwatch(label);
     final defaultBorder = isSelected
         ? Colors.white.withValues(alpha: 0.86)
@@ -2663,7 +2677,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         height: 14,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white.withValues(alpha: 0.1) : Colors.white,
+          color: isSelected
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.white,
           shape: BoxShape.circle,
           border: Border.all(color: defaultBorder, width: 1),
         ),
@@ -9530,6 +9546,32 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return "/category/$slug/";
   }
 
+  /// Светло-серый фон каталога; для пустых корзины / избранного / сравнения — белый.
+  Color _catalogScaffoldBackgroundColor() {
+    const Color catalogGrey = Color(0xFFF2F3F5);
+    if (!_isNativeCategoryPage) {
+      return catalogGrey;
+    }
+    switch (_nativeCategory) {
+      case "cart":
+        return _getCartItems().isEmpty ? Colors.white : catalogGrey;
+      case "wishlist":
+        return _getActiveNativeList().isEmpty ? Colors.white : catalogGrey;
+      case "compare":
+        final products = _getActiveNativeList().whereType<Map>().toList();
+        if (products.isEmpty) {
+          return Colors.white;
+        }
+        final grouped = _groupCompareProducts(products);
+        if (grouped.isEmpty) {
+          return Colors.white;
+        }
+        return catalogGrey;
+      default:
+        return catalogGrey;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final rootContent = PopScope(
@@ -9546,135 +9588,149 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           return;
         }
       },
-      child: Scaffold(
-        key: _scaffoldKey,
-        backgroundColor: const Color(0xFFF2F3F5),
-        appBar: _isNativeCategoryPage
-            ? AppBar(
-                elevation: 0,
-                scrolledUnderElevation: 0,
-                backgroundColor: Colors.white,
-                surfaceTintColor: Colors.white,
-                shadowColor: Colors.transparent,
-                automaticallyImplyLeading: false,
-                titleSpacing: 0,
-                title: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildCategoryHeader(),
-                ),
-                bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(1.0),
-                  child: Container(color: Colors.grey.shade200, height: 1.0),
-                ),
-              )
-            : null,
-        body: Stack(
-          children: [
-            // 1. Главная страница (всегда в памяти для сохранения скролла)
-            Offstage(
-              offstage: _isNativeCategoryPage,
-              child: RefreshIndicator(
-                onRefresh: _refreshHomeContent,
-                child: CustomScrollView(
-                  key: const PageStorageKey('home_scroll'),
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          _cartCountNotifier,
+          _wishCountNotifier,
+          _compareCountNotifier,
+        ]),
+        builder: (context, _) => Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: _catalogScaffoldBackgroundColor(),
+          appBar: _isNativeCategoryPage
+              ? AppBar(
+                  elevation: 0,
+                  scrolledUnderElevation: 0,
+                  backgroundColor: Colors.white,
+                  surfaceTintColor: Colors.white,
+                  shadowColor: Colors.transparent,
+                  automaticallyImplyLeading: false,
+                  titleSpacing: 0,
+                  title: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: _buildCategoryHeader(),
                   ),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildHomeShowcaseBlock()),
+                  bottom: PreferredSize(
+                    preferredSize: const Size.fromHeight(1.0),
+                    child: Container(color: Colors.grey.shade200, height: 1.0),
+                  ),
+                )
+              : null,
+          body: Stack(
+            children: [
+              // 1. Главная страница (всегда в памяти для сохранения скролла)
+              Offstage(
+                offstage: _isNativeCategoryPage,
+                child: RefreshIndicator(
+                  onRefresh: _refreshHomeContent,
+                  child: CustomScrollView(
+                    controller: _homeScrollController,
+                    key: const PageStorageKey('home_scroll'),
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
                     ),
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(child: _buildPromoBannerScroll()),
-                    ),
-                    SliverToBoxAdapter(
-                      child: RepaintBoundary(
-                        child: _buildDiscountedProductsSection(),
-                      ),
-                    ),
-                    SliverToBoxAdapter(child: _buildHomeFeaturedSections()),
-                  ],
-                ),
-              ),
-            ),
-
-            // 2. Нативная категория
-            Offstage(
-              offstage: !_isNativeCategoryPage,
-              child: RefreshIndicator(
-                onRefresh: () => CategoryCounterService.loadCounts().then((_) {
-                  if (mounted) setState(() {});
-                }),
-                child: CustomScrollView(
-                  controller: _nativeScrollController,
-                  key: const PageStorageKey('native_category_scroll'),
-                  cacheExtent: MediaQuery.of(context).size.height * 0.9,
-                  physics: _catalogBackSwipeScrollLocked
-                      ? const NeverScrollableScrollPhysics()
-                      : const AlwaysScrollableScrollPhysics(
-                          parent: BouncingScrollPhysics(),
-                        ),
-                  slivers: [
-                    if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
-                      const SliverToBoxAdapter(child: SizedBox(height: 5)),
-                    if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
-                      _buildMenSubcategoriesSliver(
-                        categoryId: _nativeCategoryIdForSubcategories(
-                          _nativeCategory,
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: RepaintBoundary(
+                          child: _buildHomeShowcaseBlock(),
                         ),
                       ),
-                    if (_nativeCategory == "compare")
-                      _buildComparePage(_getActiveNativeList())
-                    else if (_nativeCategory == "wishlist")
-                      ValueListenableBuilder<int>(
-                        valueListenable: _wishCountNotifier,
-                        builder: (context, _, __) {
-                          return _buildWishlistGrid(_getActiveNativeList());
-                        },
-                      )
-                    else if (_nativeCategory == "profile")
-                      _buildProfilePage()
-                    else if (_nativeCategory == "cart")
-                      AnimatedBuilder(
-                        animation: Listenable.merge([
-                          _cartCountNotifier,
-                          _cartSelectionNotifier,
-                        ]),
-                        builder: (context, _) {
-                          return _buildCartPage(_getCartItems());
-                        },
-                      )
-                    else
-                      _buildNativeCategoryPage(_getActiveNativeList()),
-                    if (_nativeCategory != "wishlist" &&
-                        _nativeCategory != "compare" &&
-                        _nativeCategory != "cart" &&
-                        _nativeCategory != "profile")
-                      _buildNativeLoadMoreSliver(),
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                  ],
+                      SliverToBoxAdapter(
+                        child: RepaintBoundary(
+                          child: _buildPromoBannerScroll(),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: RepaintBoundary(
+                          child: _buildDiscountedProductsSection(),
+                        ),
+                      ),
+                      SliverToBoxAdapter(child: _buildHomeFeaturedSections()),
+                    ],
+                  ),
                 ),
               ),
-            ),
+              if (!_isNativeCategoryPage) _buildHomeFloatingSearchOverlay(),
 
-            // 2.1 Липкая шапка сравнения
-            _buildCompareStickyOverlay(),
+              // 2. Нативная категория
+              Offstage(
+                offstage: !_isNativeCategoryPage,
+                child: RefreshIndicator(
+                  onRefresh: () =>
+                      CategoryCounterService.loadCounts().then((_) {
+                        if (mounted) setState(() {});
+                      }),
+                  child: CustomScrollView(
+                    controller: _nativeScrollController,
+                    key: const PageStorageKey('native_category_scroll'),
+                    cacheExtent: MediaQuery.of(context).size.height * 0.9,
+                    physics: _catalogBackSwipeScrollLocked
+                        ? const NeverScrollableScrollPhysics()
+                        : const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                    slivers: [
+                      if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
+                        const SliverToBoxAdapter(child: SizedBox(height: 5)),
+                      if (_shouldShowSubcategoriesForNativeKey(_nativeCategory))
+                        _buildMenSubcategoriesSliver(
+                          categoryId: _nativeCategoryIdForSubcategories(
+                            _nativeCategory,
+                          ),
+                        ),
+                      if (_nativeCategory == "compare")
+                        _buildComparePage(_getActiveNativeList())
+                      else if (_nativeCategory == "wishlist")
+                        ValueListenableBuilder<int>(
+                          valueListenable: _wishCountNotifier,
+                          builder: (context, _, __) {
+                            return _buildWishlistGrid(_getActiveNativeList());
+                          },
+                        )
+                      else if (_nativeCategory == "profile")
+                        _buildProfilePage()
+                      else if (_nativeCategory == "cart")
+                        AnimatedBuilder(
+                          animation: Listenable.merge([
+                            _cartCountNotifier,
+                            _cartSelectionNotifier,
+                          ]),
+                          builder: (context, _) {
+                            return _buildCartPage(_getCartItems());
+                          },
+                        )
+                      else
+                        _buildNativeCategoryPage(_getActiveNativeList()),
+                      if (_nativeCategory != "wishlist" &&
+                          _nativeCategory != "compare" &&
+                          _nativeCategory != "cart" &&
+                          _nativeCategory != "profile")
+                        _buildNativeLoadMoreSliver(),
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                    ],
+                  ),
+                ),
+              ),
 
-            // 2.2 Плавающая кнопка корзины
-            _buildCartFloatingButton(),
+              // 2.1 Липкая шапка сравнения
+              _buildCompareStickyOverlay(),
 
-            // 3. WebView категория удалена (полностью нативная версия)
-          ],
-        ),
-        bottomNavigationBar: Container(
-          color: Colors.white,
-          child: SafeArea(
-            top: false,
-            left: false,
-            right: false,
-            child: _buildBottomBar(
-              showTopBorder:
-                  _nativeCategory != "cart" || !_showCartFloatingButton,
+              // 2.2 Плавающая кнопка корзины
+              _buildCartFloatingButton(),
+
+              // 3. WebView категория удалена (полностью нативная версия)
+            ],
+          ),
+          bottomNavigationBar: Container(
+            color: Colors.white,
+            child: SafeArea(
+              top: false,
+              left: false,
+              right: false,
+              child: _buildBottomBar(
+                showTopBorder:
+                    _nativeCategory != "cart" || !_showCartFloatingButton,
+              ),
             ),
           ),
         ),
@@ -9729,29 +9785,30 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           )
         : rootContent;
 
-    final overlayStyle = _isNativeCategoryPage
-        ? const SystemUiOverlayStyle(
-            statusBarColor: Colors.white,
-            statusBarIconBrightness: Brightness.dark,
-            statusBarBrightness: Brightness.light,
-            systemNavigationBarColor: Colors.white,
-            systemNavigationBarIconBrightness: Brightness.dark,
-            systemNavigationBarDividerColor: Colors.white,
-            systemNavigationBarContrastEnforced: false,
-          )
-        : const SystemUiOverlayStyle(
-            statusBarColor: Colors.transparent,
-            statusBarIconBrightness: Brightness.light,
-            statusBarBrightness: Brightness.dark,
-            systemNavigationBarColor: Colors.white,
-            systemNavigationBarIconBrightness: Brightness.dark,
-            systemNavigationBarDividerColor: Colors.white,
-            systemNavigationBarContrastEnforced: false,
-          );
+    if (_isNativeCategoryPage) {
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarColor: Colors.white,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Colors.white,
+          systemNavigationBarIconBrightness: Brightness.dark,
+          systemNavigationBarDividerColor: Colors.white,
+          systemNavigationBarContrastEnforced: false,
+        ),
+        child: content,
+      );
+    }
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: overlayStyle,
+    return ValueListenableBuilder<double>(
+      valueListenable: _homeScrollOffsetNotifier,
       child: content,
+      builder: (context, _, child) {
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: _buildHomeSystemUiOverlayStyle(),
+          child: child!,
+        );
+      },
     );
   }
 
@@ -9954,7 +10011,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildWishlistGrid(List<dynamic> items) {
     if (items.isEmpty) {
       return _buildEmptyState(
-        imageAsset: 'assets/images/favourite.jpg',
+        imageAsset: 'assets/images/favourite.png',
         actionLabel: 'Добавить товар',
       );
     }
@@ -11806,7 +11863,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Widget _buildCartEmptyState() {
     return _buildEmptyState(
-      imageAsset: 'assets/images/cart.jpg',
+      imageAsset: 'assets/images/cart.png',
       actionLabel: 'Начать покупки',
     );
   }
@@ -11880,14 +11937,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final products = items.whereType<Map>().toList();
     if (products.isEmpty) {
       return _buildEmptyState(
-        imageAsset: 'assets/images/compare.jpg',
+        imageAsset: 'assets/images/compare.png',
         actionLabel: 'Добавить товар',
       );
     }
     final grouped = _groupCompareProducts(products);
     if (grouped.isEmpty) {
       return _buildEmptyState(
-        imageAsset: 'assets/images/compare.jpg',
+        imageAsset: 'assets/images/compare.png',
         actionLabel: 'Добавить товар',
       );
     }
@@ -14367,7 +14424,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildTopHeroHeaderLoading() {
+  Widget _buildTopHeroHeaderLoading({bool showInlineSearch = true}) {
     final screenWidth = MediaQuery.of(context).size.width;
     final topInset = MediaQuery.of(context).padding.top;
     final heroHeight = (screenWidth * _heroBannerContentHeightRatio) + topInset;
@@ -14436,19 +14493,20 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 ],
               ),
             ),
-            Positioned(
-              top: searchTop,
-              left: 12,
-              right: 12,
-              child: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.88),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
+            if (showInlineSearch)
+              Positioned(
+                top: searchTop,
+                left: 12,
+                right: 12,
+                child: Container(
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.88),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
                 ),
               ),
-            ),
             Positioned(
               top: topInset + 110,
               left: 16,
@@ -14499,7 +14557,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          _buildTopHeroHeaderLoading(),
+          _buildTopHeroHeaderLoading(showInlineSearch: forPreview),
           const SizedBox(height: 14),
           _buildHeaderLoyaltyCardSkeleton(),
           const SizedBox(height: 14),
@@ -14691,7 +14749,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildTopHeroHeader() {
+  Widget _buildTopHeroHeader({bool showInlineSearch = true}) {
     final screenWidth = MediaQuery.of(context).size.width;
     final topInset = MediaQuery.of(context).padding.top;
     final banner = _currentHeroBanner;
@@ -14745,19 +14803,42 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               right: 12,
               child: _buildHeroProfileInfoRow(),
             ),
-            Positioned(
-              top: searchTop,
-              left: 12,
-              right: 12,
-              child: _buildHeaderSearchOverlay(),
-            ),
+            if (showInlineSearch)
+              Positioned(
+                top: searchTop,
+                left: 12,
+                right: 12,
+                child: _buildHeaderSearchOverlay(),
+              ),
             Positioned(
               top: topInset + promoTop,
               left: promoLeft,
               right: 16,
               child: _buildHeroBannerPromoContent(screenWidth),
             ),
+            if (!showInlineSearch) _buildHomeHeroTransitionOverlay(),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHomeHeroTransitionOverlay() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ValueListenableBuilder<double>(
+          valueListenable: _homeScrollOffsetNotifier,
+          builder: (context, rawOffset, _) {
+            final double bannerFadeProgress = _homePinnedTransitionProgress(
+              rawOffset,
+            );
+            if (bannerFadeProgress <= 0.0) {
+              return const SizedBox.shrink();
+            }
+            return ColoredBox(
+              color: Colors.white.withValues(alpha: bannerFadeProgress),
+            );
+          },
         ),
       ),
     );
@@ -14776,7 +14857,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          _buildTopHeroHeader(),
+          _buildTopHeroHeader(showInlineSearch: forPreview),
           _buildMainContentHead(forPreview: forPreview),
           _buildCategoryScroll(forPreview: forPreview),
         ],
@@ -14949,7 +15030,122 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Widget _buildHeaderSearchOverlay() {
+  Widget _buildHomeFloatingSearchOverlay() {
+    final topInset = MediaQuery.of(context).padding.top;
+    const double searchHeight = 40.0;
+    const double searchHorizontalInset = 12.0;
+    const double pinnedTopOffset = 8.0;
+    final double pinnedTop = topInset + pinnedTopOffset;
+    final double initialTop = pinnedTop + 44.0;
+    final double searchSurfaceHeight =
+        topInset + pinnedTopOffset + searchHeight + searchHorizontalInset;
+
+    return ValueListenableBuilder<double>(
+      valueListenable: _homeScrollOffsetNotifier,
+      builder: (context, rawOffset, _) {
+        final double searchTop = math.max(pinnedTop, initialTop - rawOffset);
+        final double searchSurfaceProgress = _homePinnedSearchSurfaceProgress(
+          rawOffset,
+        );
+
+        return Stack(
+          children: [
+            if (searchSurfaceProgress > 0.0)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: searchSurfaceHeight,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(
+                        alpha: searchSurfaceProgress,
+                      ),
+                      borderRadius: const BorderRadius.vertical(
+                        bottom: Radius.circular(18),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              top: searchTop,
+              left: searchHorizontalInset,
+              right: searchHorizontalInset,
+              child: _buildHeaderSearchOverlay(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  double _homePinnedTransitionProgress([double? rawOffset]) {
+    final double t = _homePinnedTransitionLinearProgress(rawOffset);
+    return Curves.easeInOut.transform(t);
+  }
+
+  double _homePinnedTransitionLinearProgress([double? rawOffset]) {
+    final mediaQuery = MediaQuery.of(context);
+    final double topInset = mediaQuery.padding.top;
+    final double screenWidth = mediaQuery.size.width;
+    const double searchHeight = 40.0;
+    const double pinnedTopOffset = 8.0;
+    const double searchTravelDistance = 44.0;
+    final double heroHeight =
+        (screenWidth * _heroBannerContentHeightRatio) + topInset;
+    final double pinnedSearchBottom = topInset + pinnedTopOffset + searchHeight;
+    const double fadeStart = searchTravelDistance;
+    final double fadeEnd = math.max(
+      fadeStart + 1.0,
+      heroHeight - pinnedSearchBottom,
+    );
+    final double offset = math.max(
+      0.0,
+      rawOffset ?? _homeScrollOffsetNotifier.value,
+    );
+    return ((offset - fadeStart) / (fadeEnd - fadeStart))
+        .clamp(0.0, 1.0)
+        .toDouble();
+  }
+
+  double _homePinnedSearchSurfaceProgress([double? rawOffset]) {
+    final double transitionProgress = _homePinnedTransitionProgress(rawOffset);
+    const double revealStart = 0.96;
+    final double t = ((transitionProgress - revealStart) / (1.0 - revealStart))
+        .clamp(0.0, 1.0)
+        .toDouble();
+    return Curves.easeInOut.transform(t);
+  }
+
+  SystemUiOverlayStyle _buildHomeSystemUiOverlayStyle() {
+    final double backgroundProgress = _homePinnedTransitionProgress();
+    final bool useDarkStatusBarIcons = backgroundProgress >= 0.52;
+    return SystemUiOverlayStyle(
+      statusBarColor: Color.lerp(
+        Colors.transparent,
+        Colors.white,
+        backgroundProgress,
+      ),
+      statusBarIconBrightness: useDarkStatusBarIcons
+          ? Brightness.dark
+          : Brightness.light,
+      statusBarBrightness: useDarkStatusBarIcons
+          ? Brightness.light
+          : Brightness.dark,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: Colors.white,
+      systemNavigationBarContrastEnforced: false,
+    );
+  }
+
+  Widget _buildHeaderSearchOverlay({
+    Color backgroundColor = const Color(0xCCFFFFFF),
+    Color borderColor = const Color(0xFFE5E7EB),
+    List<BoxShadow>? boxShadow,
+  }) {
     return InkWell(
       onTap: () => _showSearchMenu(context, showHistoryOnOpen: true),
       borderRadius: BorderRadius.circular(12),
@@ -14957,16 +15153,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         height: 40,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: const Color(0xCCFFFFFF),
+          color: backgroundColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x14000000),
-              blurRadius: 12,
-              offset: Offset(0, 3),
-            ),
-          ],
+          border: Border.all(color: borderColor),
+          boxShadow:
+              boxShadow ??
+              const [
+                BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 3),
+                ),
+              ],
         ),
         child: Row(
           children: [
@@ -16707,8 +16905,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               if (filteredEntries.isEmpty) {
                                 return const SizedBox.shrink();
                               }
-                              final bool showColorPreview =
-                                  _isColorFeatureName(fname);
+                              final bool showColorPreview = _isColorFeatureName(
+                                fname,
+                              );
 
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
