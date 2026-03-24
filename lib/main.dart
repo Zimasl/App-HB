@@ -10036,6 +10036,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return _buildEmptyState(
         imageAsset: 'assets/images/favourite.png',
         actionLabel: 'Добавить товар',
+        buttonBottomOffset: 8,
+        imageToButtonGap: 0,
+        imageFit: BoxFit.contain,
+        imageAlignment: Alignment.center,
+        showBottomFade: false,
+        includeBottomInset: false,
       );
     }
     final screenWidth = MediaQuery.of(context).size.width;
@@ -11888,6 +11894,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return _buildEmptyState(
       imageAsset: 'assets/images/cart.png',
       actionLabel: 'Начать покупки',
+      buttonBottomOffset: 8,
+      imageToButtonGap: 0,
+      imageFit: BoxFit.contain,
+      imageAlignment: Alignment.center,
+      showBottomFade: false,
+      includeBottomInset: false,
     );
   }
 
@@ -11909,16 +11921,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Widget _buildEmptyState({
     required String imageAsset,
     required String actionLabel,
+    double buttonBottomOffset = 12.0,
+    double imageToButtonGap = 8.0,
+    BoxFit imageFit = BoxFit.fitWidth,
+    Alignment imageAlignment = Alignment.topCenter,
+    bool showBottomFade = true,
+    bool includeBottomInset = true,
   }) {
-    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final bottomInset = includeBottomInset
+        ? MediaQuery.of(context).padding.bottom
+        : 0.0;
     return SliverFillRemaining(
       hasScrollBody: false,
       fillOverscroll: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
           const buttonHeight = 46.0;
-          const buttonBottomOffset = 12.0;
-          const imageToButtonGap = 8.0;
           final maxReservation = math.max(0.0, constraints.maxHeight - 1);
           final imageBottomInset = math.min(
             buttonHeight + buttonBottomOffset + bottomInset + imageToButtonGap,
@@ -11933,8 +11951,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 child: ClipRect(
                   child: Image.asset(
                     imageAsset,
-                    fit: BoxFit.fitWidth,
-                    alignment: Alignment.topCenter,
+                    fit: imageFit,
+                    alignment: imageAlignment,
                     filterQuality: FilterQuality.high,
                     errorBuilder: (_, __, ___) => Container(
                       color: Colors.white,
@@ -11944,27 +11962,28 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ),
                 ),
               ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: Container(
-                    height: imageBottomInset + 44,
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x00FFFFFF),
-                          Color(0xCCFFFFFF),
-                          Colors.white,
-                        ],
+              if (showBottomFade)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: Container(
+                      height: imageBottomInset + 44,
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x00FFFFFF),
+                            Color(0xCCFFFFFF),
+                            Colors.white,
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
               Positioned(
                 left: 14,
                 right: 14,
@@ -12005,6 +12024,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return _buildEmptyState(
         imageAsset: 'assets/images/compare.png',
         actionLabel: 'Добавить товар',
+        buttonBottomOffset: 8,
+        imageToButtonGap: 0,
+        imageFit: BoxFit.contain,
+        imageAlignment: Alignment.center,
+        showBottomFade: false,
+        includeBottomInset: false,
       );
     }
     final grouped = _groupCompareProducts(products);
@@ -12012,6 +12037,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return _buildEmptyState(
         imageAsset: 'assets/images/compare.png',
         actionLabel: 'Добавить товар',
+        buttonBottomOffset: 8,
+        imageToButtonGap: 0,
+        imageFit: BoxFit.contain,
+        imageAlignment: Alignment.center,
+        showBottomFade: false,
+        includeBottomInset: false,
       );
     }
 
