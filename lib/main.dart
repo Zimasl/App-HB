@@ -2638,33 +2638,51 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     final n = _normalizeComparable(label).replaceAll('ё', 'е');
-    if (n.contains('черн')) return const Color(0xFF222222);
+    if (n.contains('черн')) {
+      return const Color(0xFF222222);
+    }
     if (n.contains('бел') || n.contains('молоч') || n.contains('айвори')) {
       return const Color(0xFFF5F5F0);
     }
-    if (n.contains('серебр')) return const Color(0xFFBFC5CE);
-    if (n.contains('сер') || n.contains('графит'))
+    if (n.contains('серебр')) {
+      return const Color(0xFFBFC5CE);
+    }
+    if (n.contains('сер') || n.contains('графит')) {
       return const Color(0xFF7C7C7C);
-    if (n.contains('красн') || n.contains('бордо'))
+    }
+    if (n.contains('красн') || n.contains('бордо')) {
       return const Color(0xFFB3261E);
+    }
     if (n.contains('оранж') || n.contains('рыж') || n.contains('коньяк')) {
       return const Color(0xFFE17824);
     }
-    if (n.contains('желт') || n.contains('горч'))
+    if (n.contains('желт') || n.contains('горч')) {
       return const Color(0xFFE0B020);
+    }
     if (n.contains('зелен') || n.contains('хаки') || n.contains('олив')) {
       return const Color(0xFF5E7B2D);
     }
-    if (n.contains('голуб') || n.contains('бирюз'))
+    if (n.contains('голуб') || n.contains('бирюз')) {
       return const Color(0xFF45A4D8);
-    if (n.contains('син')) return const Color(0xFF254B9A);
-    if (n.contains('фиолет') || n.contains('лилов'))
+    }
+    if (n.contains('син')) {
+      return const Color(0xFF254B9A);
+    }
+    if (n.contains('фиолет') || n.contains('лилов')) {
       return const Color(0xFF7E57C2);
-    if (n.contains('розов')) return const Color(0xFFE891B8);
-    if (n.contains('беж') || n.contains('крем')) return const Color(0xFFD8C2A3);
-    if (n.contains('корич') || n.contains('шоколад'))
+    }
+    if (n.contains('розов')) {
+      return const Color(0xFFE891B8);
+    }
+    if (n.contains('беж') || n.contains('крем')) {
+      return const Color(0xFFD8C2A3);
+    }
+    if (n.contains('корич') || n.contains('шоколад')) {
       return const Color(0xFF6D4C41);
-    if (n.contains('золот')) return const Color(0xFFD4AF37);
+    }
+    if (n.contains('золот')) {
+      return const Color(0xFFD4AF37);
+    }
     return null;
   }
 
