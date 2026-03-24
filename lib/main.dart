@@ -15598,6 +15598,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           _navBtnIcon(Icons.delete_outline, _clearFavorites, hPadding: 10),
         if (_isNativeCategoryPage && _nativeCategory == "cart")
           const SizedBox(width: 48),
+        if (_isNativeCategoryPage && _nativeCategory == "profile")
+          const SizedBox(width: 48),
       ],
     );
   }
@@ -16242,38 +16244,28 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "Вы смотрели",
-                        style: TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      if (viewedItems.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 18),
-                          child: Text(
-                            "Здесь будут товары, которые вы открывали",
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: Colors.black54,
-                            ),
+                if (viewedItems.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Вы смотрели",
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500,
                           ),
-                        )
-                      else
+                        ),
+                        const SizedBox(height: 10),
                         SizedBox(
                           height: viewedCardsHeight,
                           child: ListView.builder(
@@ -16292,9 +16284,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             ),
                           ),
                         ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           );
