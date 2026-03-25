@@ -1674,6 +1674,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       RegExp(r'^(г\.?|город)\s+', caseSensitive: false),
       '',
     );
+    if (city.contains(',')) {
+      city = city.split(',').first;
+    }
     return city.trim();
   }
 
@@ -1838,27 +1841,26 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ? address['formatted_address'] as String?
               : null;
           final titleRaw = raw['title'];
-          String? titleText = formattedAddress?.trim();
-          if (titleText == null || titleText.isEmpty) {
-            if (titleRaw is Map && titleRaw['text'] != null) {
-              titleText = titleRaw['text'] as String?;
-            } else {
-              titleText =
-                  raw['value'] as String? ??
-                  raw['displayName'] as String? ??
-                  raw['title'] as String?;
-            }
+          String? titleText;
+          if (titleRaw is Map && titleRaw['text'] != null) {
+            titleText = titleRaw['text'] as String?;
           }
-          final subtitle =
-              (raw['subtitle'] is Map &&
-                  (raw['subtitle'] as Map)['text'] != null)
-              ? (raw['subtitle'] as Map)['text'] as String
-              : null;
+          if (titleText == null || titleText.isEmpty) {
+            titleText =
+                raw['value'] as String? ??
+                raw['displayName'] as String? ??
+                raw['title'] as String?;
+          }
+          if ((titleText == null || titleText.isEmpty) &&
+              formattedAddress != null &&
+              formattedAddress.trim().isNotEmpty) {
+            titleText = formattedAddress.trim();
+          }
           final normalizedTitle = _normalizeCityName(titleText ?? '');
           if (normalizedTitle.isNotEmpty) {
             list.add({
               'title': normalizedTitle,
-              'subtitle': subtitle,
+              'subtitle': null,
               'uri': uriStr,
             });
           }
@@ -1897,9 +1899,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           if (normalizedTitle.isNotEmpty) {
             list.add({
               'title': normalizedTitle,
-              'subtitle': displayName != candidate
-                  ? displayName
-                  : (raw['subtitle'] as String?),
+              'subtitle': null,
               'uri': raw['uri'] as String?,
             });
           }
@@ -2034,7 +2034,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               ),
               titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
               contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-              actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               title: Row(
                 children: [
                   Container(
@@ -2136,6 +2135,103 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _catalogControlMuted,
+                            minimumSize: const Size.fromHeight(36),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'Отмена',
+                              style: _subMenuStyle.copyWith(
+                                fontSize: 12.5,
+                                color: _catalogControlMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (detectedCity.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton(
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(detectedCity),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _catalogControlText,
+                              side: const BorderSide(
+                                color: _catalogControlBorder,
+                              ),
+                              minimumSize: const Size.fromHeight(36),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 8,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'По геолокации',
+                                style: _subMenuStyle.copyWith(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(controller.text),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _catalogControlText,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            minimumSize: const Size.fromHeight(36),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'Сохранить',
+                              style: _subMenuStyle.copyWith(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                   if (showSuggestions)
                     Container(
                       width: double.infinity,
@@ -2194,8 +2290,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                 if (title.isEmpty) {
                                   return const SizedBox.shrink();
                                 }
-                                final subtitle =
-                                    (suggestion['subtitle'] as String?)?.trim();
                                 return InkWell(
                                   onTap: () =>
                                       Navigator.of(dialogContext).pop(title),
@@ -2217,21 +2311,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                        if (subtitle != null &&
-                                            subtitle.isNotEmpty &&
-                                            subtitle.toLowerCase() !=
-                                                title.toLowerCase()) ...[
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            subtitle,
-                                            style: _subMenuStyle.copyWith(
-                                              fontSize: 12,
-                                              color: _catalogControlMuted,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
                                       ],
                                     ),
                                   ),
@@ -2241,61 +2320,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ),
                 ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: Text(
-                    'Отмена',
-                    style: _subMenuStyle.copyWith(
-                      color: _catalogControlMuted,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                if (detectedCity.isNotEmpty)
-                  OutlinedButton(
-                    onPressed: () => Navigator.of(ctx).pop(detectedCity),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _catalogControlText,
-                      side: const BorderSide(color: _catalogControlBorder),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                    child: Text(
-                      'По геолокации',
-                      style: _subMenuStyle.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(controller.text),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _catalogControlText,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                  ),
-                  child: Text(
-                    'Сохранить',
-                    style: _subMenuStyle.copyWith(
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
             );
           },
         );
@@ -2531,12 +2555,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (_isNotificationPermissionAllowed(status)) return;
 
       _isNotificationReminderDialogOpen = true;
-      final shouldOpenSettings = await _showNotificationsReminderDialog();
+      final shouldRequestPermission = await _showNotificationsReminderDialog();
       _isNotificationReminderDialogOpen = false;
       await prefs.setInt(_prefsNotificationsReminderShownAtKey, nowMs);
 
-      if (shouldOpenSettings == true) {
-        await openAppSettings();
+      if (shouldRequestPermission == true) {
+        _requestedNotificationsThisSession = true;
+        try {
+          await OneSignal.Notifications.requestPermission(false);
+        } catch (_) {
+          try {
+            await Permission.notification.request();
+          } catch (_) {}
+        }
       }
     } catch (_) {
       _isNotificationReminderDialogOpen = false;
@@ -3602,6 +3633,37 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return name.contains("цвет") ||
         name.contains("color") ||
         name.contains("расцвет");
+  }
+
+  bool _isSizeFeatureName(String rawName) {
+    final name = _normalizeComparable(rawName).replaceAll('ё', 'е');
+    return name.contains("размер") || name.contains("size");
+  }
+
+  List<dynamic> _orderedFilterFeaturesForDisplay(List<dynamic> features) {
+    final indexed = <MapEntry<int, dynamic>>[];
+    for (int i = 0; i < features.length; i++) {
+      indexed.add(MapEntry<int, dynamic>(i, features[i]));
+    }
+
+    int priority(dynamic rawFeature) {
+      if (rawFeature is! Map) return 2;
+      final name = rawFeature['name']?.toString() ?? '';
+      final code = rawFeature['code']?.toString() ?? '';
+      final fingerprint = '$name $code';
+      if (_isColorFeatureName(fingerprint)) return 0;
+      if (_isSizeFeatureName(fingerprint)) return 1;
+      return 2;
+    }
+
+    indexed.sort((a, b) {
+      final pa = priority(a.value);
+      final pb = priority(b.value);
+      if (pa != pb) return pa.compareTo(pb);
+      return a.key.compareTo(b.key);
+    });
+
+    return indexed.map((entry) => entry.value).toList(growable: false);
   }
 
   Color? _resolveFilterColorSwatch(String rawLabel) {
@@ -17118,6 +17180,42 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return 'Выберите город';
   }
 
+  Future<void> _openProfilePickupStoreSelector() async {
+    final checkoutState = await _restoreCheckoutStateFromPrefs(_authContactId);
+    if (!mounted) return;
+    final selectedRaw = checkoutState?['selectedPickupPoint'];
+    final selectedPoint = selectedRaw is Map
+        ? Map<String, dynamic>.from(selectedRaw)
+        : null;
+
+    final selected = await Navigator.push<Map<String, dynamic>>(
+      context,
+      _adaptivePageRoute(
+        builder: (_) => PickupPointsPage(
+          initialDeliveryMethod: 1,
+          selectedPoint: selectedPoint,
+          productId: null,
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+
+    final normalizedSelectedPoint = <String, dynamic>{
+      ...selected,
+      'stock_id': selected['stock_id']?.toString() ?? selected['id']?.toString(),
+    };
+    final nextCheckoutState = Map<String, dynamic>.from(
+      checkoutState ?? <String, dynamic>{},
+    );
+    nextCheckoutState['selectedPickupPoint'] = normalizedSelectedPoint;
+    await _persistCheckoutStateToPrefs(_authContactId, nextCheckoutState);
+
+    if (!mounted) return;
+    setState(() {
+      _reloadProfileCheckoutState();
+    });
+  }
+
   Widget _profileMenuTile({
     required IconData icon,
     required String title,
@@ -17473,7 +17571,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             : defaultStore,
                         onTap: _isAuthorized
                             ? () => _navigateToSimple("Профиль", "/my/")
-                            : _openProfileAuthPage,
+                            : _openProfilePickupStoreSelector,
                       ),
                     ],
                   ),
@@ -18018,6 +18116,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
           final filterFeatures = _activeFilterFeatures;
+          final orderedFilterFeatures = isWishlist
+              ? const <dynamic>[]
+              : _orderedFilterFeaturesForDisplay(filterFeatures);
           final filterStocks = _activeFilterStocks;
           final filterValueTextById = _activeFilterFeatureValueTextById;
           final filterAvailableValues =
@@ -18108,9 +18209,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           itemCount: (() {
                             const int baseCount =
                                 5; // price title, spacing, slider, row, divider
-                            final int featureCount = isWishlist
-                                ? 0
-                                : filterFeatures.length;
+                            final int featureCount = orderedFilterFeatures.length;
                             final bool showStocks =
                                 !isWishlist && filterStocks.isNotEmpty;
                             final int stockHeaderCount = showStocks
@@ -18226,13 +18325,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             }
 
                             const int baseCount = 5;
-                            final int featureCount = isWishlist
-                                ? 0
-                                : filterFeatures.length;
+                            final int featureCount = orderedFilterFeatures.length;
                             const int featureStart = baseCount;
                             if (index >= featureStart &&
                                 index < featureStart + featureCount) {
-                              final feat = filterFeatures[index - featureStart];
+                              final feat =
+                                  orderedFilterFeatures[index - featureStart];
                               if (feat is! Map) return const SizedBox.shrink();
                               final String fid = feat['id']?.toString() ?? "";
                               final String fname =
