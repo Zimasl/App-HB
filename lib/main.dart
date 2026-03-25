@@ -297,6 +297,10 @@ const String _prefsHeroBannerTsKey = 'hb.hero.banner.ts';
 const String _prefsHomeHeroCacheKey = 'hb.home.hero.cache';
 const String _prefsHomeSliderCacheKey = 'hb.home.slider.cache';
 const String _prefsHomePromoCacheKey = 'hb.home.promo.cache';
+const String _prefsNotificationsPermissionRequestedKey =
+    'hb.notifications.permission.requested';
+const String _prefsNotificationsReminderShownAtKey =
+    'hb.notifications.reminder.shown_at_ms';
 const double _heroBannerContentHeightRatio = 850 / 1400;
 const Duration _nativeSplashMaxHoldDuration = Duration(milliseconds: 2200);
 
@@ -950,7 +954,6 @@ void main() async {
     ),
   );
   OneSignal.initialize("0f2f4f43-c8b4-475c-be74-9ed6045bae52");
-  OneSignal.Notifications.requestPermission(true);
 
   scheduleMicrotask(() {
     _ProductDetailPageState.prefetchGroupsCache();
@@ -1383,6 +1386,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
+  bool _isCheckingNotificationsPermission = false;
+  bool _isNotificationReminderDialogOpen = false;
+  bool _requestedNotificationsThisSession = false;
 
   @override
   void initState() {
@@ -1435,6 +1441,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         }),
       );
       unawaited(_bootstrapHeaderGeoCity());
+      unawaited(_ensureNotificationsPermissionFlow());
       _scheduleNativePrefetch();
       Timer(const Duration(seconds: 2), () {
         if (!mounted) return;
@@ -1776,6 +1783,125 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return null;
   }
 
+  List<Map<String, dynamic>> _parseHeaderCitySuggestResponse(String body) {
+    final list = <Map<String, dynamic>>[];
+    try {
+      final data = json.decode(body);
+      final map = data is Map<String, dynamic> ? data : null;
+      final results =
+          map?['results'] as List<dynamic>? ?? map?['items'] as List<dynamic>?;
+      if (results != null) {
+        for (final raw in results) {
+          if (raw is! Map) continue;
+          final uriStr = raw['uri'] as String?;
+          final address = raw['address'];
+          final formattedAddress = address is Map
+              ? address['formatted_address'] as String?
+              : null;
+          final titleRaw = raw['title'];
+          String? titleText = formattedAddress?.trim();
+          if (titleText == null || titleText.isEmpty) {
+            if (titleRaw is Map && titleRaw['text'] != null) {
+              titleText = titleRaw['text'] as String?;
+            } else {
+              titleText =
+                  raw['value'] as String? ??
+                  raw['displayName'] as String? ??
+                  raw['title'] as String?;
+            }
+          }
+          final subtitle =
+              (raw['subtitle'] is Map && (raw['subtitle'] as Map)['text'] != null)
+              ? (raw['subtitle'] as Map)['text'] as String
+              : null;
+          final normalizedTitle = _normalizeCityName(titleText ?? '');
+          if (normalizedTitle.isNotEmpty) {
+            list.add({
+              'title': normalizedTitle,
+              'subtitle': subtitle,
+              'uri': uriStr,
+            });
+          }
+        }
+        if (list.isNotEmpty) return list;
+      }
+      if (data is List) {
+        List<dynamic> items = data;
+        if (items.length >= 2 && items[1] is List) {
+          items = items[1] as List<dynamic>;
+        }
+        for (final raw in items) {
+          if (raw is String && raw.isNotEmpty) {
+            final normalizedTitle = _normalizeCityName(raw);
+            if (normalizedTitle.isNotEmpty) {
+              list.add({'title': normalizedTitle, 'subtitle': null, 'uri': null});
+            }
+            continue;
+          }
+          if (raw is! Map<String, dynamic>) continue;
+          final displayName = raw['displayName'] as String?;
+          final value = raw['value'] as String? ?? displayName;
+          final titleStr = raw['title'] is String ? raw['title'] as String? : null;
+          final candidate =
+              value ?? titleStr ?? raw['name'] as String? ?? raw['text'] as String?;
+          final normalizedTitle = _normalizeCityName(candidate ?? '');
+          if (normalizedTitle.isNotEmpty) {
+            list.add({
+              'title': normalizedTitle,
+              'subtitle': displayName != candidate
+                  ? displayName
+                  : (raw['subtitle'] as String?),
+              'uri': raw['uri'] as String?,
+            });
+          }
+        }
+      }
+    } catch (_) {}
+    final deduplicated = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final item in list) {
+      final title = (item['title'] as String? ?? '').trim();
+      if (title.isEmpty) continue;
+      final key = title.toLowerCase();
+      if (seen.add(key)) {
+        deduplicated.add(item);
+      }
+      if (deduplicated.length >= 7) break;
+    }
+    return deduplicated;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchHeaderCitySuggestions(
+    String query,
+  ) async {
+    if (_yandexSuggestApiKey.isEmpty) return const [];
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2) return const [];
+    final v1Uri = Uri.parse(
+      'https://suggest-maps.yandex.ru/v1/suggest'
+      '?apikey=$_yandexSuggestApiKey'
+      '&text=${Uri.encodeComponent(normalizedQuery)}'
+      '&lang=ru_RU'
+      '&results=7'
+      '&print_address=1'
+      '&attrs=uri',
+    );
+    var response = await _httpGetYandex(v1Uri);
+    if (response.statusCode == 403) {
+      final geoUri = Uri.parse(
+        'https://suggest-maps.yandex.ru/suggest-geo'
+        '?v=5'
+        '&lang=ru_RU'
+        '&search_type=tp'
+        '&part=${Uri.encodeComponent(normalizedQuery)}'
+        '&apikey=$_yandexSuggestApiKey',
+      );
+      response = await _httpGetYandex(geoUri);
+    }
+    if (response.statusCode != 200) return const [];
+    return _parseHeaderCitySuggestResponse(response.body);
+  }
+
   Future<void> _openHeaderCityPicker() async {
     if ((_geoDetectedCity?.trim().isEmpty ?? true)) {
       await _tryDetectCityFromGeolocation(requestPermissionIfNeeded: true);
@@ -1789,52 +1915,342 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           : detectedCity,
     );
     final controller = TextEditingController(text: initialCity);
+    final focusNode = FocusNode();
+    Timer? suggestDebounce;
+    var suggestRequestId = 0;
+    var suggestions = <Map<String, dynamic>>[];
+    var suggestionsLoading = false;
+    String? suggestionsMessage;
+    var dialogOpen = true;
+
+    Future<void> updateSuggestions(
+      String rawQuery,
+      StateSetter setDialogState,
+    ) async {
+      final query = rawQuery.trim();
+      suggestDebounce?.cancel();
+      if (query.length < 2) {
+        suggestRequestId++;
+        if (!dialogOpen) return;
+        setDialogState(() {
+          suggestions = [];
+          suggestionsLoading = false;
+          suggestionsMessage = null;
+        });
+        return;
+      }
+      final requestId = ++suggestRequestId;
+      if (dialogOpen) {
+        setDialogState(() {
+          suggestionsLoading = true;
+          suggestionsMessage = null;
+        });
+      }
+      suggestDebounce = Timer(const Duration(milliseconds: 260), () async {
+        try {
+          final result = await _fetchHeaderCitySuggestions(query);
+          if (!mounted || !dialogOpen || requestId != suggestRequestId) return;
+          setDialogState(() {
+            suggestions = result;
+            suggestionsLoading = false;
+            suggestionsMessage = result.isEmpty ? 'Ничего не найдено' : null;
+          });
+        } catch (_) {
+          if (!mounted || !dialogOpen || requestId != suggestRequestId) return;
+          setDialogState(() {
+            suggestions = [];
+            suggestionsLoading = false;
+            suggestionsMessage = 'Ошибка загрузки. Проверьте интернет.';
+          });
+        }
+      });
+    }
+
     final picked = await showDialog<String>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Ваш город'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (detectedCity.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+        const radius = 20.0;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final showSuggestions =
+                focusNode.hasFocus &&
+                controller.text.trim().length >= 2 &&
+                (suggestionsLoading ||
+                    suggestions.isNotEmpty ||
+                    suggestionsMessage != null);
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(radius),
+              ),
+              titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+              contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+              actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              title: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(
+                      color: Color(0x14000000),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.location_city_rounded,
+                      color: _catalogControlText,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Ваш город',
+                      style: TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (detectedCity.isNotEmpty)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _catalogControlSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _catalogControlBorder),
+                      ),
+                      child: Text(
+                        'Определено автоматически: $detectedCity',
+                        style: _subMenuStyle.copyWith(
+                          fontSize: 13,
+                          color: _catalogControlMuted,
+                        ),
+                      ),
+                    ),
+                  Focus(
+                    onFocusChange: (_) => setDialogState(() {}),
+                    child: TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (value) {
+                        updateSuggestions(value, setDialogState);
+                      },
+                      style: _subMenuStyle.copyWith(
+                        fontSize: 15,
+                        color: _catalogControlText,
+                      ),
+                      cursorColor: _catalogControlText,
+                      decoration: InputDecoration(
+                        hintText: 'Введите город',
+                        hintStyle: _subMenuStyle.copyWith(
+                          fontSize: 14,
+                          color: _catalogControlMuted,
+                        ),
+                        filled: true,
+                        fillColor: _catalogControlSurface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: _catalogControlBorder,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: _catalogControlBorder,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: _catalogControlText),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (showSuggestions)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 8),
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _catalogControlBorder),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x0F000000),
+                            blurRadius: 10,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: suggestionsLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: _catalogControlText,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : suggestionsMessage != null
+                          ? Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              child: Text(
+                                suggestionsMessage!,
+                                style: _subMenuStyle.copyWith(
+                                  color: _catalogControlMuted,
+                                  fontSize: 13,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              itemCount: suggestions.length,
+                              itemBuilder: (context, index) {
+                                final suggestion = suggestions[index];
+                                final title =
+                                    (suggestion['title'] as String? ?? '').trim();
+                                if (title.isEmpty) {
+                                  return const SizedBox.shrink();
+                                }
+                                final subtitle =
+                                    (suggestion['subtitle'] as String?)?.trim();
+                                return InkWell(
+                                  onTap: () => Navigator.of(
+                                    dialogContext,
+                                  ).pop(title),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          title,
+                                          style: _subMenuStyle.copyWith(
+                                            fontSize: 14,
+                                            color: _catalogControlText,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        if (subtitle != null &&
+                                            subtitle.isNotEmpty &&
+                                            subtitle.toLowerCase() !=
+                                                title.toLowerCase()) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            subtitle,
+                                            style: _subMenuStyle.copyWith(
+                                              fontSize: 12,
+                                              color: _catalogControlMuted,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
                   child: Text(
-                    'Определено автоматически: $detectedCity',
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      color: Color(0xFF6B7280),
+                    'Отмена',
+                    style: _subMenuStyle.copyWith(
+                      color: _catalogControlMuted,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
-              TextField(
-                controller: controller,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(hintText: 'Введите город'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Отмена'),
-            ),
-            if (detectedCity.isNotEmpty)
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(detectedCity),
-                child: const Text('По геолокации'),
-              ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text),
-              child: const Text('Сохранить'),
-            ),
-          ],
+                if (detectedCity.isNotEmpty)
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop(detectedCity),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _catalogControlText,
+                      side: const BorderSide(color: _catalogControlBorder),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                    child: Text(
+                      'По геолокации',
+                      style: _subMenuStyle.copyWith(fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(ctx).pop(controller.text),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _catalogControlText,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: Text(
+                    'Сохранить',
+                    style: _subMenuStyle.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+    dialogOpen = false;
+    suggestDebounce?.cancel();
+    focusNode.dispose();
     controller.dispose();
     final normalized = _normalizeCityName(picked ?? '');
     if (normalized.isEmpty || !mounted) return;
@@ -1917,6 +2333,162 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_maybeRotateHeroBannerByTime());
+      unawaited(_ensureNotificationsPermissionFlow(triggeredByResume: true));
+    }
+  }
+
+  bool _isNotificationPermissionAllowed(PermissionStatus status) {
+    return status.isGranted || status == PermissionStatus.limited;
+  }
+
+  Future<bool?> _showNotificationsReminderDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+          contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          title: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: Color(0x1AF4A21D),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.notifications_active_rounded,
+                  color: Color(0xFFF4A21D),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  "Не пропустите самое важное",
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            "Включите уведомления, чтобы первыми узнавать о скидках, новинках и статусе заказов. Только полезные новости и без спама.",
+            style: TextStyle(
+              fontFamily: 'Roboto',
+              fontSize: 14,
+              height: 1.35,
+              color: Colors.black87,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text(
+                "Позже",
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                "Включить",
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _ensureNotificationsPermissionFlow({
+    bool triggeredByResume = false,
+  }) async {
+    if (!mounted) return;
+    if (_isCheckingNotificationsPermission) return;
+    if (_isNotificationReminderDialogOpen) return;
+
+    _isCheckingNotificationsPermission = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final requestedBefore =
+          prefs.getBool(_prefsNotificationsPermissionRequestedKey) ?? false;
+      var status = await Permission.notification.status;
+
+      if (!requestedBefore) {
+        _requestedNotificationsThisSession = true;
+        try {
+          await OneSignal.Notifications.requestPermission(false);
+        } catch (_) {
+          try {
+            await Permission.notification.request();
+          } catch (_) {}
+        }
+        await prefs.setBool(_prefsNotificationsPermissionRequestedKey, true);
+        return;
+      }
+
+      if (_isNotificationPermissionAllowed(status)) return;
+      if (_requestedNotificationsThisSession) return;
+
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final lastShownAtMs =
+          prefs.getInt(_prefsNotificationsReminderShownAtKey) ?? 0;
+      const minResumeIntervalMs = 10 * 60 * 1000;
+      if (triggeredByResume && (nowMs - lastShownAtMs) < minResumeIntervalMs) {
+        return;
+      }
+
+      if (triggeredByResume) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+      if (!mounted || _isNotificationReminderDialogOpen) return;
+
+      status = await Permission.notification.status;
+      if (_isNotificationPermissionAllowed(status)) return;
+
+      _isNotificationReminderDialogOpen = true;
+      final shouldOpenSettings = await _showNotificationsReminderDialog();
+      _isNotificationReminderDialogOpen = false;
+      await prefs.setInt(_prefsNotificationsReminderShownAtKey, nowMs);
+
+      if (shouldOpenSettings == true) {
+        await openAppSettings();
+      }
+    } catch (_) {
+      _isNotificationReminderDialogOpen = false;
+    } finally {
+      _isCheckingNotificationsPermission = false;
     }
   }
 
