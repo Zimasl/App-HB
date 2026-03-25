@@ -745,6 +745,13 @@ Map<String, dynamic> _extractProductFeaturesForIsolate(dynamic rawFeatures) {
 
 Map<String, dynamic> _parseNativeCategoryPayload(String body) {
   final decoded = json.decode(body);
+  if (decoded is Map && decoded['status']?.toString() == 'error') {
+    return {
+      "items": const <Map<String, dynamic>>[],
+      "fetchedCount": 0,
+      "totalCount": 0,
+    };
+  }
   final data = (decoded is Map && decoded.containsKey('data'))
       ? decoded['data']
       : decoded;
@@ -815,7 +822,21 @@ Map<String, dynamic> _parseNativeCategoryPayload(String body) {
     });
   }
 
-  return {"items": items, "fetchedCount": products.length};
+  int totalCount = 0;
+  if (decoded is Map) {
+    final rawCount = decoded['count'] ?? decoded['total'];
+    if (rawCount is num) {
+      totalCount = rawCount.toInt();
+    } else if (rawCount != null) {
+      totalCount = int.tryParse(rawCount.toString()) ?? 0;
+    }
+  }
+
+  return {
+    "items": items,
+    "fetchedCount": products.length,
+    "totalCount": totalCount,
+  };
 }
 
 double _parsePriceValueForIsolate(dynamic value) {
@@ -1212,6 +1233,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     "compare": [],
     "profile": [],
   };
+  final Map<String, int> _nativeRequestEpochs = {};
   String _currentSort = "default";
   int _sortSeq = 0;
   int _wishlistFilterSeq = 0;
@@ -1231,12 +1253,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       "men"; // men | belt | shoulder | tablet | business | women | travel | backpacks | belts | wallets | accessories | discount_men | discount_women | search | wishlist | compare
   final Set<String> _animatedProductIds = <String>{};
   static const int _nativePageSize = 30;
+  static const String _nativeCategoryFieldsParamValue =
+      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   static const int _nativeSearchInitialPageSize = 30;
   static const int _nativeSearchPageSize = 60;
   static const int _searchMinQueryLength = 3;
   static const String _nativeSearchProxyPath = '/native/search_products.php';
-  static const String _nativeCategoryFieldsParamValue =
-      'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   static const String _nativeSearchFieldsParamValue =
       'id,name,price,compare_price,image_url,url,status,count,category_id,category_ids,features';
   String _activeSearchQuery = "";
@@ -1339,6 +1361,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   bool _isDetectingGeoCity = false;
   final Map<String, Timer?> _nativeLoadingIndicatorTimers = {};
   final Map<String, List<MapEntry<String, String>>> _nativeFilterParams = {};
+  final Map<String, List<dynamic>> _defaultNativeLists = {};
+  final Map<String, int> _defaultNativeOffsets = {};
+  final Map<String, bool> _defaultNativeHasMore = {};
+  final Set<String> _defaultNativeLoadedKeys = <String>{};
   final ScrollController _subcategoryMainScrollController = ScrollController();
   final ScrollController _subcategoryPreviewScrollController =
       ScrollController();
@@ -1358,6 +1384,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final Map<String, String> _featureCodeById = {}; // feature_id -> feature_code
   final Map<String, Map<String, String>> _featureValueTextById =
       {}; // feature_id -> value_id -> text
+  final Map<String, Map<String, String>> _featureSortTextById =
+      {}; // feature_id -> sort alias -> text
   final Map<String, Map<String, dynamic>> _productFeaturesById =
       {}; // product_id -> features map
   final Map<String, Map<String, int>> _productStockById =
@@ -1369,6 +1397,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       {}; // feature_id -> normalized values
   bool _isFilterMetadataLoading = false;
   bool _isFilterMetadataLoaded = false;
+  bool _isCategoryFacetMetadataLoading = false;
+  bool _hasCategoryFacetMetadataLoaded = false;
+  String? _categoryFacetMetadataCategoryId;
+  List<dynamic> _categoryFacetFeatures = [];
+  List<dynamic> _categoryFacetStocks = [];
+  final Map<String, String> _categoryFacetFeatureCodeById = {};
+  final Map<String, Map<String, String>> _categoryFacetFeatureValueTextById =
+      {};
+  Map<String, Set<String>> _categoryFacetAvailableFeatureValuesInCategory = {};
+  RangeValues _categoryFacetPriceBounds = const RangeValues(0, 30000);
   final Set<String> _featureValuesLoading = <String>{};
   final List<_FeatureInfoRequest> _featureInfoQueue = [];
   int _featureInfoInFlight = 0;
@@ -1448,6 +1486,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         unawaited(() async {
           await _fetchFilterMetadata();
           await _warmFilterFeatureValues();
+          await _fetchCategoryFacetMetadata();
         }());
       });
     });
@@ -1811,7 +1850,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             }
           }
           final subtitle =
-              (raw['subtitle'] is Map && (raw['subtitle'] as Map)['text'] != null)
+              (raw['subtitle'] is Map &&
+                  (raw['subtitle'] as Map)['text'] != null)
               ? (raw['subtitle'] as Map)['text'] as String
               : null;
           final normalizedTitle = _normalizeCityName(titleText ?? '');
@@ -1834,16 +1874,25 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           if (raw is String && raw.isNotEmpty) {
             final normalizedTitle = _normalizeCityName(raw);
             if (normalizedTitle.isNotEmpty) {
-              list.add({'title': normalizedTitle, 'subtitle': null, 'uri': null});
+              list.add({
+                'title': normalizedTitle,
+                'subtitle': null,
+                'uri': null,
+              });
             }
             continue;
           }
           if (raw is! Map<String, dynamic>) continue;
           final displayName = raw['displayName'] as String?;
           final value = raw['value'] as String? ?? displayName;
-          final titleStr = raw['title'] is String ? raw['title'] as String? : null;
+          final titleStr = raw['title'] is String
+              ? raw['title'] as String?
+              : null;
           final candidate =
-              value ?? titleStr ?? raw['name'] as String? ?? raw['text'] as String?;
+              value ??
+              titleStr ??
+              raw['name'] as String? ??
+              raw['text'] as String?;
           final normalizedTitle = _normalizeCityName(candidate ?? '');
           if (normalizedTitle.isNotEmpty) {
             list.add({
@@ -2080,7 +2129,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: _catalogControlText),
+                          borderSide: const BorderSide(
+                            color: _catalogControlText,
+                          ),
                         ),
                       ),
                     ),
@@ -2138,16 +2189,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               itemBuilder: (context, index) {
                                 final suggestion = suggestions[index];
                                 final title =
-                                    (suggestion['title'] as String? ?? '').trim();
+                                    (suggestion['title'] as String? ?? '')
+                                        .trim();
                                 if (title.isEmpty) {
                                   return const SizedBox.shrink();
                                 }
                                 final subtitle =
                                     (suggestion['subtitle'] as String?)?.trim();
                                 return InkWell(
-                                  onTap: () => Navigator.of(
-                                    dialogContext,
-                                  ).pop(title),
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(title),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 12,
@@ -2217,7 +2268,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ),
                     child: Text(
                       'По геолокации',
-                      style: _subMenuStyle.copyWith(fontWeight: FontWeight.w500),
+                      style: _subMenuStyle.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ElevatedButton(
@@ -3054,6 +3107,326 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  String? _activeFilterCategoryId() {
+    if (_nativeCategory == "wishlist" ||
+        _nativeCategory == "compare" ||
+        _nativeCategory == "cart" ||
+        _nativeCategory == "profile" ||
+        _nativeCategory == "search") {
+      return null;
+    }
+    final categoryId = _nativeCategoryIdForSubcategories(_nativeCategory);
+    if (categoryId == null || categoryId.isEmpty) return null;
+    return categoryId;
+  }
+
+  bool get _hasActiveCategoryFacetMetadata {
+    final categoryId = _activeFilterCategoryId();
+    return categoryId != null &&
+        _hasCategoryFacetMetadataLoaded &&
+        _categoryFacetMetadataCategoryId == categoryId;
+  }
+
+  List<dynamic> get _activeFilterFeatures => _hasActiveCategoryFacetMetadata
+      ? _categoryFacetFeatures
+      : _availableFeatures;
+
+  List<dynamic> get _activeFilterStocks =>
+      _hasActiveCategoryFacetMetadata ? _categoryFacetStocks : _availableStocks;
+
+  Map<String, String> get _activeFilterFeatureCodeById =>
+      _hasActiveCategoryFacetMetadata
+      ? _categoryFacetFeatureCodeById
+      : _featureCodeById;
+
+  Map<String, Map<String, String>> get _activeFilterFeatureValueTextById =>
+      _hasActiveCategoryFacetMetadata
+      ? _categoryFacetFeatureValueTextById
+      : _featureValueTextById;
+
+  Map<String, Set<String>> get _activeFilterAvailableFeatureValuesInCategory =>
+      _hasActiveCategoryFacetMetadata
+      ? _categoryFacetAvailableFeatureValuesInCategory
+      : _availableFeatureValuesInCategory;
+
+  RangeValues get _activeFilterPriceBounds => _hasActiveCategoryFacetMetadata
+      ? _categoryFacetPriceBounds
+      : const RangeValues(0, 30000);
+
+  bool get _isActiveFilterDataReady =>
+      _hasActiveCategoryFacetMetadata ||
+      (_isFilterMetadataLoaded && _areAllFeatureValuesLoaded);
+
+  RangeValues _normalizePriceBounds(double min, double max) {
+    var safeMin = min.isFinite ? min : 0.0;
+    var safeMax = max.isFinite ? max : safeMin;
+    if (safeMin < 0) safeMin = 0.0;
+    if (safeMax < safeMin) safeMax = safeMin;
+    return RangeValues(safeMin, safeMax);
+  }
+
+  RangeValues _clampPriceRangeToBounds(RangeValues range, RangeValues bounds) {
+    final min = bounds.start;
+    final max = bounds.end >= bounds.start ? bounds.end : bounds.start;
+    var start = range.start.isFinite ? range.start : min;
+    var end = range.end.isFinite ? range.end : max;
+    start = start.clamp(min, max).toDouble();
+    end = end.clamp(min, max).toDouble();
+    if (start > end) {
+      end = start;
+    }
+    return RangeValues(start, end);
+  }
+
+  Map<String, String> _resolvedFilterFeatureTextMap(String fid) {
+    final facetMap = _categoryFacetFeatureValueTextById[fid];
+    final globalMap = _featureValueTextById[fid];
+    if (!_hasActiveCategoryFacetMetadata) {
+      return globalMap ?? const <String, String>{};
+    }
+    if ((facetMap == null || facetMap.isEmpty) &&
+        (globalMap == null || globalMap.isEmpty)) {
+      return const <String, String>{};
+    }
+    if (facetMap == null || facetMap.isEmpty) {
+      return globalMap ?? const <String, String>{};
+    }
+    if (globalMap == null || globalMap.isEmpty) {
+      return facetMap;
+    }
+    return <String, String>{...globalMap, ...facetMap};
+  }
+
+  Uri _buildCategoryFacetMetadataUri(String categoryId) {
+    final queryParts = <String>[
+      'category_id=${Uri.encodeQueryComponent(categoryId)}',
+    ];
+    final featureCodeById = _activeFilterFeatureCodeById;
+    _selectedFeatures.forEach((fid, vids) {
+      if (vids.isEmpty) return;
+      final code = featureCodeById[fid];
+      final key = (code != null && code.isNotEmpty)
+          ? 'features[$code]'
+          : 'features[$fid]';
+      for (final vid in vids) {
+        queryParts.add(
+          '${Uri.encodeQueryComponent(key)}=${Uri.encodeQueryComponent(vid)}',
+        );
+      }
+    });
+    if (_selectedStocks.isNotEmpty) {
+      queryParts.add(
+        'stock_id=${Uri.encodeQueryComponent(_selectedStocks.join(','))}',
+      );
+    }
+    return Uri.parse(
+      '${AppConfig.apiBaseUrl}/native/category_facets.php?${queryParts.join('&')}',
+    );
+  }
+
+  bool _hasAnyActiveCatalogFilters({RangeValues? rangeOverride}) {
+    final bounds = _activeFilterPriceBounds;
+    final range = _clampPriceRangeToBounds(
+      rangeOverride ?? _currentPriceRange,
+      bounds,
+    );
+    final hasPriceDelta =
+        (range.start - bounds.start).abs() > 0.001 ||
+        (range.end - bounds.end).abs() > 0.001;
+    final hasFeatureFilters = _selectedFeatures.values.any(
+      (values) => values.isNotEmpty,
+    );
+    return hasPriceDelta || hasFeatureFilters || _selectedStocks.isNotEmpty;
+  }
+
+  Uri _buildNativeCategoryUri({
+    required String categoryId,
+    required List<MapEntry<String, String>> params,
+    required int limit,
+    required int offset,
+  }) {
+    var sort = 'create_datetime';
+    var order = 'desc';
+    for (final entry in params) {
+      final key = entry.key;
+      final value = entry.value.trim();
+      if (key == 'sort' && value.isNotEmpty) {
+        sort = value;
+      } else if (key == 'order' && value.isNotEmpty) {
+        order = value;
+      }
+    }
+    final queryParts = <String>[
+      'category_id=${Uri.encodeQueryComponent(categoryId)}',
+      'limit=$limit',
+      'offset=$offset',
+      'sort=${Uri.encodeQueryComponent(sort)}',
+      'order=${Uri.encodeQueryComponent(order)}',
+    ];
+    if (params.isNotEmpty) {
+      for (final entry in params) {
+        final key = entry.key;
+        final value = entry.value;
+        if (key == 'hash' ||
+            key == 'category_id' ||
+            key == 'sort' ||
+            key == 'order') {
+          continue;
+        }
+        queryParts.add(
+          '${Uri.encodeQueryComponent(key)}=${Uri.encodeQueryComponent(value)}',
+        );
+      }
+    }
+    return Uri.parse(
+      '${AppConfig.apiBaseUrl}/native/category_products.php?${queryParts.join('&')}',
+    );
+  }
+
+  Future<bool> _fetchCategoryFacetMetadata({StateSetter? modalSetter}) async {
+    final categoryId = _activeFilterCategoryId();
+    if (categoryId == null) return false;
+    if (_hasActiveCategoryFacetMetadata) return true;
+    if (_isCategoryFacetMetadataLoading) {
+      while (_isCategoryFacetMetadataLoading) {
+        await Future<void>.delayed(const Duration(milliseconds: 24));
+      }
+      return _hasActiveCategoryFacetMetadata;
+    }
+
+    _isCategoryFacetMetadataLoading = true;
+    if (mounted) setState(() {});
+    if (modalSetter != null) {
+      try {
+        modalSetter(() {});
+      } catch (_) {}
+    }
+
+    var success = false;
+    try {
+      final response = await _httpGet(
+        _buildCategoryFacetMetadataUri(categoryId),
+      );
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        if (decoded is Map && decoded['status']?.toString() == 'ok') {
+          final nextFeatures = <dynamic>[];
+          final nextStocks = <dynamic>[];
+          final nextFeatureCodeById = <String, String>{};
+          final nextFeatureValueTextById = <String, Map<String, String>>{};
+          final nextAvailableFeatureValues = <String, Set<String>>{};
+
+          final rawFeatures = decoded['features'];
+          if (rawFeatures is List) {
+            for (final rawFeature in rawFeatures) {
+              if (rawFeature is! Map) continue;
+              final feature = Map<String, dynamic>.from(rawFeature);
+              final fid = feature['id']?.toString().trim() ?? "";
+              final code = feature['code']?.toString().trim() ?? "";
+              final rawValues = feature['values'];
+              final values = rawValues is Map
+                  ? Map<String, dynamic>.from(rawValues)
+                  : <String, dynamic>{};
+              final normalizedValues = <String, dynamic>{};
+              final textMap = <String, String>{};
+              final availableSet = <String>{};
+
+              values.forEach((key, value) {
+                final vid = key.toString().trim();
+                if (vid.isEmpty) return;
+                final valueMap = value is Map
+                    ? Map<String, dynamic>.from(value)
+                    : <String, dynamic>{'id': vid};
+                valueMap['id'] ??= vid;
+                final label = _featureOptionLabel(valueMap, fallback: vid);
+                if (label.isEmpty) return;
+                valueMap['label'] = label;
+                normalizedValues[vid] = valueMap;
+                textMap[vid] = label;
+                final normalizedVid = _normalizeComparable(vid);
+                if (normalizedVid.isNotEmpty) {
+                  availableSet.add(normalizedVid);
+                }
+                final normalizedLabel = _normalizeComparable(label);
+                if (normalizedLabel.isNotEmpty) {
+                  availableSet.add(normalizedLabel);
+                }
+              });
+
+              if (normalizedValues.isEmpty) continue;
+
+              feature['values'] = normalizedValues;
+              nextFeatures.add(feature);
+              if (fid.isNotEmpty && code.isNotEmpty) {
+                nextFeatureCodeById[fid] = code;
+              }
+              if (fid.isNotEmpty) {
+                nextFeatureValueTextById[fid] = textMap;
+                nextAvailableFeatureValues[fid] = availableSet;
+              }
+            }
+          }
+
+          final rawStocks = decoded['stocks'];
+          if (rawStocks is List) {
+            for (final rawStock in rawStocks) {
+              if (rawStock is! Map) continue;
+              final stock = Map<String, dynamic>.from(rawStock);
+              final sid = stock['id']?.toString().trim() ?? "";
+              final name =
+                  (stock['name'] ?? stock['label'])?.toString().trim() ?? "";
+              if (sid.isEmpty || name.isEmpty) continue;
+              stock['id'] = sid;
+              stock['name'] = name;
+              nextStocks.add(stock);
+            }
+          }
+
+          var nextPriceBounds = const RangeValues(0, 30000);
+          final rawPrice = decoded['price'];
+          if (rawPrice is Map) {
+            final minPrice = _parsePriceValue(rawPrice['min']);
+            final maxPrice = _parsePriceValue(rawPrice['max']);
+            if (minPrice > 0 || maxPrice > 0) {
+              nextPriceBounds = _normalizePriceBounds(
+                minPrice,
+                maxPrice > 0 ? maxPrice : minPrice,
+              );
+            }
+          }
+
+          _categoryFacetMetadataCategoryId = categoryId;
+          _hasCategoryFacetMetadataLoaded = true;
+          _categoryFacetFeatures = nextFeatures;
+          _categoryFacetStocks = nextStocks;
+          _categoryFacetFeatureCodeById
+            ..clear()
+            ..addAll(nextFeatureCodeById);
+          _categoryFacetFeatureValueTextById
+            ..clear()
+            ..addAll(nextFeatureValueTextById);
+          _categoryFacetAvailableFeatureValuesInCategory =
+              nextAvailableFeatureValues;
+          _categoryFacetPriceBounds = nextPriceBounds;
+          success = true;
+        }
+      }
+    } catch (e, st) {
+      debugPrint("Category facets error: $e");
+      if (kDebugMode) debugPrint("$st");
+    } finally {
+      _isCategoryFacetMetadataLoading = false;
+      if (mounted) setState(() {});
+      if (modalSetter != null) {
+        try {
+          modalSetter(() {});
+        } catch (_) {}
+      }
+    }
+
+    return success;
+  }
+
   Future<void> _fetchFilterMetadata({StateSetter? modalSetter}) async {
     if (_isFilterMetadataLoaded || _isFilterMetadataLoading) return;
     _isFilterMetadataLoading = true;
@@ -3111,6 +3484,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _featureCodeById.clear();
         _featureIdByCode.clear();
         _featureValueTextById.clear();
+        _featureSortTextById.clear();
         _featureIndexById.clear();
         _featureValuesLoading.clear();
         _featureInfoQueue.clear();
@@ -3174,12 +3548,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _featureInfoInFlight > 0;
 
   bool get _areAllFeatureValuesLoaded {
-    if (_availableFeatures.isEmpty) return true;
-    for (final feat in _availableFeatures) {
+    final features = _activeFilterFeatures;
+    if (features.isEmpty) return true;
+    final textById = _activeFilterFeatureValueTextById;
+    for (final feat in features) {
       if (feat is! Map) continue;
       final fid = feat['id']?.toString() ?? "";
       if (fid.isEmpty) continue;
-      if (!_featureValueTextById.containsKey(fid)) return false;
+      if (!textById.containsKey(fid)) return false;
     }
     return true;
   }
@@ -3355,12 +3731,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 result?['values'] ?? <String, dynamic>{};
             final Map<String, String> textMap =
                 result?['textMap'] ?? <String, String>{};
+            final Map<String, String> sortTextMap =
+                result?['sortTextMap'] ?? <String, String>{};
             if (index != null &&
                 index >= 0 &&
                 index < _availableFeatures.length) {
               _availableFeatures[index]['values'] = values;
             }
             _featureValueTextById[req.fid] = textMap;
+            _featureSortTextById[req.fid] = sortTextMap;
           })
           .whenComplete(() {
             _featureInfoInFlight--;
@@ -3409,17 +3788,22 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         }
       }
       final textMap = <String, String>{};
+      final sortTextMap = <String, String>{};
       processedValues.forEach((key, value) {
         final label = _featureOptionLabel(value, fallback: key.toString());
         textMap[key.toString()] = label;
         if (value is Map) {
           final sort = value['sort']?.toString().trim() ?? '';
           if (sort.isNotEmpty && label.isNotEmpty) {
-            textMap[sort] = label;
+            sortTextMap[sort] = label;
           }
         }
       });
-      return {"values": processedValues, "textMap": textMap};
+      return {
+        "values": processedValues,
+        "textMap": textMap,
+        "sortTextMap": sortTextMap,
+      };
     } catch (_) {
       return null;
     }
@@ -3437,6 +3821,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (_nativeInitialLoadingKeys.contains(key)) return;
       _nativeInitialLoadingKeys.add(key);
     }
+    final int requestEpoch = reset
+        ? _bumpNativeRequestEpoch(key)
+        : _currentNativeRequestEpoch(key);
 
     try {
       if (reset) {
@@ -3479,36 +3866,35 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
       final offset = _nativeOffsets[key] ?? 0;
       final effectiveParams = customParams ?? _nativeFilterParams[key] ?? [];
-      final queryParts = <String>[
-        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-        'limit=$_nativePageSize',
-        'offset=$offset',
-        'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-        'fields=${Uri.encodeQueryComponent(_nativeCategoryFieldsParamValue)}',
-        'sort=create_datetime',
-        'order=desc',
-        'status=1',
-        'in_stock=1',
-      ];
-
-      if (effectiveParams.isNotEmpty) {
-        for (final entry in effectiveParams) {
-          final keyParam = entry.key;
-          final value = entry.value;
-          if (keyParam != 'hash' &&
-              keyParam != 'category_id' &&
-              keyParam != 'sort' &&
-              keyParam != 'order') {
-            queryParts.add(
-              '${Uri.encodeQueryComponent(keyParam)}=${Uri.encodeQueryComponent(value)}',
-            );
-          }
-        }
+      final bool useFilteredCategoryEndpoint = effectiveParams.isNotEmpty;
+      late final _SimpleHttpResponse response;
+      if (useFilteredCategoryEndpoint) {
+        response = await _httpGet(
+          _buildNativeCategoryUri(
+            categoryId: categoryId,
+            params: effectiveParams,
+            limit: _nativePageSize,
+            offset: offset,
+          ),
+        );
+      } else {
+        final queryParts = <String>[
+          'access_token=${Uri.encodeQueryComponent(_apiToken)}',
+          'limit=$_nativePageSize',
+          'offset=$offset',
+          'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
+          'fields=${Uri.encodeQueryComponent(_nativeCategoryFieldsParamValue)}',
+          'sort=create_datetime',
+          'order=desc',
+          'status=1',
+          'in_stock=1',
+        ];
+        response = await _httpGet(
+          Uri.parse(
+            'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}',
+          ),
+        );
       }
-
-      final url =
-          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-      final response = await _httpGet(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final parsed = await compute(
@@ -3525,14 +3911,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             : (fetchedCountRaw is num
                   ? fetchedCountRaw.toInt()
                   : initialProducts.length);
+        final totalCountRaw = parsed['totalCount'];
+        final int totalCount = totalCountRaw is int
+            ? totalCountRaw
+            : (totalCountRaw is num ? totalCountRaw.toInt() : 0);
 
         if (_hasDiscountConfig) {
           _applyDiscountConfigToProducts(initialProducts);
         }
-        final List<dynamic> filteredProducts = await _applyLocalFilters(
-          initialProducts,
-        );
-        for (final product in filteredProducts) {
+        if (requestEpoch != _currentNativeRequestEpoch(key)) {
+          return;
+        }
+        for (final product in initialProducts) {
           if (product is! Map) continue;
           product['source_category_id'] = categoryId;
           if (_newCategoryIds.contains(categoryId)) {
@@ -3557,7 +3947,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           if (id.isNotEmpty) existingIds.add(id);
         }
         final List<dynamic> uniqueNew = [];
-        for (final item in filteredProducts) {
+        for (final item in initialProducts) {
           if (item is! Map) {
             uniqueNew.add(item);
             continue;
@@ -3583,6 +3973,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
         if (key == _nativeCategory) {
           _updateAvailableFeatureValuesForProducts(uniqueNew);
+          unawaited(_fetchCategoryFacetMetadata());
 
           // После рендеринга определяем видимые карточки и загружаем для них галереи
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3607,20 +3998,34 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         // Запускаем обработку очереди немедленно
         _startGalleryProcessing();
 
-        _nativeOffsets[key] = offset + fetchedCount;
-        _nativeHasMore[key] = fetchedCount >= _nativePageSize;
+        final int nextOffset = offset + fetchedCount;
+        final bool hasMore = totalCount > 0
+            ? (offset + fetchedCount) < totalCount
+            : fetchedCount >= _nativePageSize;
+        _nativeOffsets[key] = nextOffset;
+        _nativeHasMore[key] = hasMore;
+        if (effectiveParams.isEmpty) {
+          _cacheDefaultNativeCategoryData(
+            key: key,
+            items: mergedOriginal,
+            nextOffset: nextOffset,
+            hasMore: hasMore,
+          );
+        }
       }
     } catch (e) {
       debugPrint("Native category API error: $e");
     } finally {
-      if (reset) {
-        _nativeInitialLoadingKeys.remove(key);
+      if (requestEpoch == _currentNativeRequestEpoch(key)) {
+        if (reset) {
+          _nativeInitialLoadingKeys.remove(key);
+        }
+        _nativeIsLoadingMore[key] = false;
+        _nativeShowLoadingIndicator[key] = false;
+        _nativeLoadingIndicatorTimers[key]?.cancel();
+        _nativeLoadingIndicatorTimers[key] = null;
+        if (mounted) setState(() => _isFilterLoading = false);
       }
-      _nativeIsLoadingMore[key] = false;
-      _nativeShowLoadingIndicator[key] = false;
-      _nativeLoadingIndicatorTimers[key]?.cancel();
-      _nativeLoadingIndicatorTimers[key] = null;
-      if (mounted) setState(() => _isFilterLoading = false);
     }
   }
 
@@ -4138,78 +4543,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (changed) {
       _productFeaturesVersion++;
     }
-  }
-
-  Future<List<dynamic>> _applyLocalFilters(List<dynamic> products) async {
-    final priceFiltered = await _applyLocalPriceFilterAsync(products);
-    if (_selectedFeatures.isEmpty && _selectedStocks.isEmpty) {
-      return priceFiltered;
-    }
-
-    _registerProductFeaturesFromProducts(priceFiltered);
-    await _ensureProductDetails(priceFiltered);
-
-    return _applySelectedFiltersChunked(priceFiltered);
-  }
-
-  Future<List<dynamic>> _applySelectedFiltersChunked(
-    List<dynamic> products,
-  ) async {
-    const int chunkSize = 80;
-    const int asyncThreshold = 160;
-    if (products.length < asyncThreshold) {
-      final List<dynamic> filtered = [];
-      for (final product in products) {
-        final id = product is Map ? product['id']?.toString() ?? "" : "";
-        if (id.isEmpty) continue;
-        if (_matchesSelectedFeatures(id) && _matchesSelectedStocks(id)) {
-          filtered.add(product);
-        }
-      }
-      return filtered;
-    }
-    final List<dynamic> filtered = [];
-    for (int i = 0; i < products.length; i++) {
-      final product = products[i];
-      final id = product is Map ? product['id']?.toString() ?? "" : "";
-      if (id.isNotEmpty &&
-          _matchesSelectedFeatures(id) &&
-          _matchesSelectedStocks(id)) {
-        filtered.add(product);
-      }
-      if (i > 0 && i % chunkSize == 0) {
-        await Future<void>.delayed(Duration.zero);
-      }
-    }
-    return filtered;
-  }
-
-  Future<List<dynamic>> _applyLocalPriceFilterAsync(
-    List<dynamic> products,
-  ) async {
-    const int isolateThreshold = 120;
-    if (products.length < isolateThreshold) {
-      return _applyLocalPriceFilter(products);
-    }
-    final payload = {
-      "products": products,
-      "minPrice": _currentPriceRange.start,
-      "maxPrice": _currentPriceRange.end,
-      "mode": "raw",
-    };
-    return compute(_filterProductsByPrice, payload);
-  }
-
-  List<dynamic> _applyLocalPriceFilter(List<dynamic> products) {
-    final minPrice = _currentPriceRange.start;
-    final maxPrice = _currentPriceRange.end;
-    return products.where((p) {
-      final raw = p['raw_price'];
-      final price = (raw is num)
-          ? raw.toDouble()
-          : double.tryParse(raw?.toString() ?? "0") ?? 0;
-      return price >= minPrice && price <= maxPrice;
-    }).toList();
   }
 
   Future<void> _ensureProductDetails(List<dynamic> products) async {
@@ -4823,62 +5156,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  bool _matchesSelectedFeatures(String productId) {
-    if (_selectedFeatures.isEmpty) return true;
-    final features = _productFeaturesById[productId];
-    if (features == null) return false;
-    for (final entry in _selectedFeatures.entries) {
-      final fid = entry.key;
-      final vids = entry.value;
-      if (vids.isEmpty) continue;
-      final code = _featureCodeById[fid];
-      dynamic rawValue;
-      if (code != null && code.isNotEmpty && features.containsKey(code)) {
-        rawValue = features[code];
-      } else {
-        rawValue = features[fid];
-      }
-      final productValuesNormalized = _normalizedFeatureValueTokens(
-        fid,
-        rawValue,
-      );
-      if (productValuesNormalized.isEmpty) return false;
-      final selectedTexts = <String>{};
-      for (final vid in vids) {
-        final normalizedVid = _normalizeComparable(vid);
-        if (normalizedVid.isNotEmpty) {
-          selectedTexts.add(normalizedVid);
-        }
-        final text = _featureValueTextById[fid]?[vid];
-        if (text != null && text.isNotEmpty) {
-          final normalizedText = _normalizeComparable(text);
-          if (normalizedText.isNotEmpty) {
-            selectedTexts.add(normalizedText);
-          }
-        }
-      }
-      if (selectedTexts.isEmpty || productValuesNormalized.isEmpty) {
-        return false;
-      }
-      final hasMatch = productValuesNormalized.any(
-        (val) => selectedTexts.contains(val),
-      );
-      if (!hasMatch) return false;
-    }
-    return true;
-  }
-
-  bool _matchesSelectedStocks(String productId) {
-    if (_selectedStocks.isEmpty) return true;
-    final stocks = _productStockById[productId];
-    if (stocks == null || stocks.isEmpty) return false;
-    for (final sid in _selectedStocks) {
-      final count = stocks[sid] ?? 0;
-      if (count > 0) return true;
-    }
-    return false;
-  }
-
   List<String> _normalizeFeatureValues(dynamic rawValue) {
     final List<String> values = [];
     if (rawValue == null) return values;
@@ -4912,16 +5189,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Set<String> _normalizedFeatureValueTokens(String fid, dynamic rawValue) {
     final Set<String> tokens = <String>{};
-    final textMap = _featureValueTextById[fid] ?? const <String, String>{};
+    final textMap = _resolvedFilterFeatureTextMap(fid);
+    final sortTextMap = _featureSortTextById[fid] ?? const <String, String>{};
 
-    void addToken(dynamic raw) {
+    void addToken(dynamic raw, {Map<String, String>? lookupMap}) {
       final value = raw?.toString().trim() ?? '';
       if (value.isEmpty) return;
       final normalizedValue = _normalizeComparable(value);
       if (normalizedValue.isNotEmpty) {
         tokens.add(normalizedValue);
       }
-      final mapped = textMap[value]?.toString().trim() ?? '';
+      final activeLookup = lookupMap ?? textMap;
+      final mapped = activeLookup[value]?.toString().trim() ?? '';
       if (mapped.isNotEmpty) {
         final normalizedMapped = _normalizeComparable(mapped);
         if (normalizedMapped.isNotEmpty) {
@@ -4945,7 +5224,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         if (!isFeatureDescriptor) {
           addToken(map['id']);
           addToken(map['value_id']);
-          addToken(map['sort']);
+          addToken(
+            map['sort'],
+            lookupMap: sortTextMap.isNotEmpty ? sortTextMap : textMap,
+          );
         }
         if (map.containsKey('value')) {
           collect(map['value']);
@@ -5209,6 +5491,102 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  bool _isResettableCatalogCategoryKey(String key) {
+    return key.isNotEmpty &&
+        key != "wishlist" &&
+        key != "compare" &&
+        key != "cart" &&
+        key != "profile" &&
+        key != "search";
+  }
+
+  void _resetControllerToStart(ScrollController controller) {
+    void reset() {
+      if (!controller.hasClients) return;
+      controller.jumpTo(0);
+    }
+
+    if (controller.hasClients) {
+      reset();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => reset());
+    }
+  }
+
+  void _resetSubcategoryControllers() {
+    _subcategoryMainCategoryId = null;
+    _subcategoryPreviewCategoryId = null;
+    _resetControllerToStart(_subcategoryMainScrollController);
+    _resetControllerToStart(_subcategoryPreviewScrollController);
+  }
+
+  void _resetCatalogFiltersAndSortState() {
+    _currentSort = "default";
+    _sortSeq++;
+    _selectedFeatures = {};
+    _selectedStocks = [];
+    _currentPriceRange = const RangeValues(0, 30000);
+    _isLocalSortLoading = false;
+    _isLocalFilterLoading = false;
+  }
+
+  void _cacheDefaultNativeCategoryData({
+    required String key,
+    required List<dynamic> items,
+    required int nextOffset,
+    required bool hasMore,
+  }) {
+    _defaultNativeLists[key] = List<dynamic>.from(items);
+    _defaultNativeOffsets[key] = nextOffset;
+    _defaultNativeHasMore[key] = hasMore;
+    _defaultNativeLoadedKeys.add(key);
+  }
+
+  bool _restoreDefaultNativeCategoryData(String key) {
+    if (!_defaultNativeLoadedKeys.contains(key)) return false;
+    final cachedItems = _defaultNativeLists[key] ?? const <dynamic>[];
+    _setNativeListByKey(key, List<dynamic>.from(cachedItems));
+    _setOriginalNativeListByKey(key, List<dynamic>.from(cachedItems));
+    _nativeOffsets[key] = _defaultNativeOffsets[key] ?? cachedItems.length;
+    _nativeHasMore[key] = _defaultNativeHasMore[key] ?? true;
+    return true;
+  }
+
+  void _resetNativeCategoryDataByKey(String key) {
+    _bumpNativeRequestEpoch(key);
+    _nativeInitialLoadingKeys.remove(key);
+    _nativeIsLoadingMore[key] = false;
+    _nativeShowLoadingIndicator[key] = false;
+    _nativeLoadingIndicatorTimers[key]?.cancel();
+    _nativeLoadingIndicatorTimers[key] = null;
+    _nativeFilterParams[key] = [];
+    _availableFeatureValuesInCategory = {};
+    if (!_restoreDefaultNativeCategoryData(key)) {
+      _nativeOffsets[key] = 0;
+      _nativeHasMore[key] = true;
+      _setNativeListByKey(key, []);
+      _setOriginalNativeListByKey(key, []);
+    }
+    if (_lastVisibleCategoryKey == key) {
+      _lastVisibleStart = -1;
+      _lastVisibleEnd = -1;
+    }
+  }
+
+  void _resetCurrentCategoryStateOnLeave() {
+    if (!_isNativeCategoryPage) return;
+    final key = _nativeCategory;
+    if (!_isResettableCatalogCategoryKey(key)) return;
+    _resetCatalogFiltersAndSortState();
+    _resetSubcategoryControllers();
+    _resetNativeCategoryDataByKey(key);
+  }
+
+  void _primeCurrentCategoryFacetMetadata() {
+    if (!_isResettableCatalogCategoryKey(_nativeCategory)) return;
+    unawaited(_fetchCategoryFacetMetadata());
+  }
+
   void _openNativeCategoryById({
     required String key,
     required String categoryId,
@@ -5217,6 +5595,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     String? returnToCatalogParentCategoryId,
   }) {
     final prevNative = _nativeCategory;
+    final prevCustomCategoryId = _nativeCustomCategoryIdByKey[prevNative];
+    final bool isSameTarget =
+        prevNative == key && prevCustomCategoryId == categoryId;
     _nativeCustomCategoryIdByKey[key] = categoryId;
     if (resetBackStack) {
       _nativeCategoryBackStack.clear();
@@ -5229,6 +5610,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _returnToCatalogParentCategoryId = null;
       }
     }
+    if (!isSameTarget) {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = title;
       _isNativeCategoryPage = true;
@@ -5240,12 +5624,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _animatedProductIds.clear();
       _resetNativeCategoryScroll();
     }
-    _fetchNativeCategory(
-      key: key,
-      categoryId: categoryId,
-      customParams: _nativeFilterParams[key],
-      reset: true,
-    );
+    _fetchActiveNativeCategoryIfNeeded();
+    _primeCurrentCategoryFacetMetadata();
     _scheduleVisibleGalleryLoad(_nativeCategory);
     if (Navigator.canPop(context)) {
       Navigator.pop(context);
@@ -8137,6 +8517,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         _returnToCatalogParentCategoryId = null;
       }
     }
+    if (prevNative != nativeKey) {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = apiTitle;
       _isNativeCategoryPage = true;
@@ -8239,6 +8622,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _activeSearchCorrectedQuery = null;
     _openSearchMenuOnBackToSearch = false;
     _rememberCategoryForBackNavigation(nextKey: "search");
+    if (prevNative != "search") {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = "Поиск";
       _isNativeCategoryPage = true;
@@ -8350,6 +8736,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     _rememberCategoryForBackNavigation(nextKey: nativeKey);
+    if (prevNative != nativeKey) {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = title;
       _isNativeCategoryPage = true;
@@ -9078,6 +9467,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void _goHome() {
     if (!mounted) return;
 
+    _resetCurrentCategoryStateOnLeave();
     setState(() {
       _isNativeCategoryPage = false;
       _pageTitle = "";
@@ -9199,6 +9589,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     }
 
+    if (prevNative != origin.key) {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = origin.title;
       _isNativeCategoryPage = true;
@@ -9281,6 +9674,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
     }
 
+    if (prevNative != previous.key) {
+      _resetCurrentCategoryStateOnLeave();
+    }
     setState(() {
       _pageTitle = previous.title;
       _isNativeCategoryPage = true;
@@ -9698,7 +10094,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return _getCategoryChildren(categoryId).isNotEmpty;
   }
 
-  void _fetchActiveNativeCategoryIfNeeded() {
+  void _fetchActiveNativeCategoryIfNeeded({bool forceReload = false}) {
     if (_nativeCategory == "wishlist" ||
         _nativeCategory == "compare" ||
         _nativeCategory == "cart" ||
@@ -9706,52 +10102,126 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return;
     }
     if (_nativeCategory == "search") {
-      if (_getNativeListByKey("search").isEmpty &&
+      if ((forceReload || _getNativeListByKey("search").isEmpty) &&
           _activeSearchQuery.isNotEmpty) {
-        _fetchNativeSearch(query: _activeSearchQuery);
+        _fetchNativeSearch(query: _activeSearchQuery, reset: true);
       }
       return;
     }
+    var startedFetch = false;
+    final activeParams = _nativeFilterParams[_nativeCategory];
     final customId = _nativeCustomCategoryIdByKey[_nativeCategory];
     if (customId != null && customId.isNotEmpty) {
-      if (_getActiveNativeList().isEmpty) {
-        _fetchNativeCategory(key: _nativeCategory, categoryId: customId);
+      if (forceReload || _getActiveNativeList().isEmpty) {
+        startedFetch = true;
+        _fetchNativeCategory(
+          key: _nativeCategory,
+          categoryId: customId,
+          customParams: activeParams,
+          reset: true,
+        );
+      }
+      if (!startedFetch) {
+        _primeCurrentCategoryFacetMetadata();
       }
       return;
     }
     switch (_nativeCategory) {
       case "belt":
-        if (_getNativeListByKey("belt").isEmpty) _fetchBeltBags();
+        if (forceReload || _getNativeListByKey("belt").isEmpty) {
+          startedFetch = true;
+          _fetchBeltBags(
+            customParams: _nativeFilterParams["belt"],
+            reset: true,
+          );
+        }
         break;
       case "shoulder":
-        if (_getNativeListByKey("shoulder").isEmpty) _fetchShoulderBags();
+        if (forceReload || _getNativeListByKey("shoulder").isEmpty) {
+          startedFetch = true;
+          _fetchShoulderBags(
+            customParams: _nativeFilterParams["shoulder"],
+            reset: true,
+          );
+        }
         break;
       case "tablet":
-        if (_getNativeListByKey("tablet").isEmpty) _fetchTabletBags();
+        if (forceReload || _getNativeListByKey("tablet").isEmpty) {
+          startedFetch = true;
+          _fetchTabletBags(
+            customParams: _nativeFilterParams["tablet"],
+            reset: true,
+          );
+        }
         break;
       case "business":
-        if (_getNativeListByKey("business").isEmpty) _fetchBusinessBags();
+        if (forceReload || _getNativeListByKey("business").isEmpty) {
+          startedFetch = true;
+          _fetchBusinessBags(
+            customParams: _nativeFilterParams["business"],
+            reset: true,
+          );
+        }
         break;
       case "women":
-        if (_getNativeListByKey("women").isEmpty) _fetchWomenBags();
+        if (forceReload || _getNativeListByKey("women").isEmpty) {
+          startedFetch = true;
+          _fetchWomenBags(
+            customParams: _nativeFilterParams["women"],
+            reset: true,
+          );
+        }
         break;
       case "travel":
-        if (_getNativeListByKey("travel").isEmpty) _fetchTravelBags();
+        if (forceReload || _getNativeListByKey("travel").isEmpty) {
+          startedFetch = true;
+          _fetchTravelBags(
+            customParams: _nativeFilterParams["travel"],
+            reset: true,
+          );
+        }
         break;
       case "backpacks":
-        if (_getNativeListByKey("backpacks").isEmpty) _fetchBackpacks();
+        if (forceReload || _getNativeListByKey("backpacks").isEmpty) {
+          startedFetch = true;
+          _fetchBackpacks(
+            customParams: _nativeFilterParams["backpacks"],
+            reset: true,
+          );
+        }
         break;
       case "belts":
-        if (_getNativeListByKey("belts").isEmpty) _fetchBelts();
+        if (forceReload || _getNativeListByKey("belts").isEmpty) {
+          startedFetch = true;
+          _fetchBelts(customParams: _nativeFilterParams["belts"], reset: true);
+        }
         break;
       case "wallets":
-        if (_getNativeListByKey("wallets").isEmpty) _fetchWallets();
+        if (forceReload || _getNativeListByKey("wallets").isEmpty) {
+          startedFetch = true;
+          _fetchWallets(
+            customParams: _nativeFilterParams["wallets"],
+            reset: true,
+          );
+        }
         break;
       case "accessories":
-        if (_getNativeListByKey("accessories").isEmpty) _fetchAccessories();
+        if (forceReload || _getNativeListByKey("accessories").isEmpty) {
+          startedFetch = true;
+          _fetchAccessories(
+            customParams: _nativeFilterParams["accessories"],
+            reset: true,
+          );
+        }
         break;
       default:
-        if (_getNativeListByKey("men").isEmpty) _fetchMenBags();
+        if (forceReload || _getNativeListByKey("men").isEmpty) {
+          startedFetch = true;
+          _fetchMenBags(customParams: _nativeFilterParams["men"], reset: true);
+        }
+    }
+    if (!startedFetch) {
+      _primeCurrentCategoryFacetMetadata();
     }
   }
 
@@ -9781,6 +10251,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   void _setOriginalNativeListByKey(String key, List<dynamic> items) {
     _originalNativeLists[key] = items;
+  }
+
+  int _bumpNativeRequestEpoch(String key) {
+    final next = (_nativeRequestEpochs[key] ?? 0) + 1;
+    _nativeRequestEpochs[key] = next;
+    return next;
+  }
+
+  int _currentNativeRequestEpoch(String key) {
+    return _nativeRequestEpochs[key] ?? 0;
   }
 
   void _initDeepLinks() async {
@@ -17255,13 +17735,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   bool get _hasActiveCatalogFilters {
-    final hasPriceDelta =
-        (_currentPriceRange.start - 0).abs() > 0.001 ||
-        (_currentPriceRange.end - 30000).abs() > 0.001;
-    final hasFeatureFilters = _selectedFeatures.values.any(
-      (values) => values.isNotEmpty,
-    );
-    return hasPriceDelta || hasFeatureFilters || _selectedStocks.isNotEmpty;
+    return _hasAnyActiveCatalogFilters();
   }
 
   Widget _catalogActionIconButton({
@@ -17543,25 +18017,47 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       ),
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
-          final bool isFilterDataReady =
-              isWishlist ||
-              (_isFilterMetadataLoaded && _areAllFeatureValuesLoaded);
-          if (!isWishlist && !filterDataPrepareStarted && !isFilterDataReady) {
+          final filterFeatures = _activeFilterFeatures;
+          final filterStocks = _activeFilterStocks;
+          final filterValueTextById = _activeFilterFeatureValueTextById;
+          final filterAvailableValues =
+              _activeFilterAvailableFeatureValuesInCategory;
+          final filterPriceBounds = _activeFilterPriceBounds;
+          final displayPrice = _clampPriceRangeToBounds(
+            localPrice,
+            filterPriceBounds,
+          );
+          final bool needsCategoryFacets =
+              !isWishlist &&
+              _activeFilterCategoryId() != null &&
+              !_hasActiveCategoryFacetMetadata;
+          final bool isFilterDataReady = isWishlist || _isActiveFilterDataReady;
+          if (!isWishlist &&
+              !filterDataPrepareStarted &&
+              (needsCategoryFacets || !isFilterDataReady)) {
             filterDataPrepareStarted = true;
             unawaited(() async {
-              await _fetchFilterMetadata(modalSetter: setModalState);
-              await _warmFilterFeatureValues(modalSetter: setModalState);
+              var categoryFacetsReady = false;
+              if (_activeFilterCategoryId() != null) {
+                categoryFacetsReady = await _fetchCategoryFacetMetadata(
+                  modalSetter: setModalState,
+                );
+              }
+              if (!categoryFacetsReady && !_isActiveFilterDataReady) {
+                await _fetchFilterMetadata(modalSetter: setModalState);
+                await _warmFilterFeatureValues(modalSetter: setModalState);
+              }
+              localPrice = _clampPriceRangeToBounds(
+                localPrice,
+                _activeFilterPriceBounds,
+              );
               if (!mounted) return;
               try {
                 setModalState(() {});
               } catch (_) {}
             }());
           }
-          final bool showFilterDataLoading =
-              !isWishlist &&
-              (_isFilterMetadataLoading ||
-                  _isFilterFeatureValuesLoading ||
-                  !isFilterDataReady);
+          final bool showFilterDataLoading = !isWishlist && !isFilterDataReady;
           return Container(
             height: MediaQuery.of(context).size.height * 0.88,
             padding: EdgeInsets.only(
@@ -17614,14 +18110,14 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                 5; // price title, spacing, slider, row, divider
                             final int featureCount = isWishlist
                                 ? 0
-                                : _availableFeatures.length;
+                                : filterFeatures.length;
                             final bool showStocks =
-                                !isWishlist && _availableStocks.isNotEmpty;
+                                !isWishlist && filterStocks.isNotEmpty;
                             final int stockHeaderCount = showStocks
                                 ? 2
                                 : 0; // title + spacing
                             final int stockCount = showStocks
-                                ? _availableStocks.length
+                                ? filterStocks.length
                                 : 0;
                             return baseCount +
                                 featureCount +
@@ -17657,13 +18153,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                       ),
                                 ),
                                 child: RangeSlider(
-                                  values: localPrice,
-                                  min: 0,
-                                  max: 30000,
-                                  divisions: 30,
+                                  values: displayPrice,
+                                  min: filterPriceBounds.start,
+                                  max: filterPriceBounds.end,
+                                  divisions:
+                                      filterPriceBounds.end >
+                                          filterPriceBounds.start
+                                      ? 30
+                                      : null,
                                   labels: RangeLabels(
-                                    "${localPrice.start.round()} ₽",
-                                    "${localPrice.end.round()} ₽",
+                                    "${displayPrice.start.round()} ₽",
+                                    "${displayPrice.end.round()} ₽",
                                   ),
                                   onChanged: (val) =>
                                       setModalState(() => localPrice = val),
@@ -17688,7 +18188,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                       ),
                                     ),
                                     child: Text(
-                                      "от ${localPrice.start.round()} ₽",
+                                      "от ${displayPrice.start.round()} ₽",
                                       style: _subMenuStyle.copyWith(
                                         color: _catalogControlText,
                                         fontWeight: FontWeight.w500,
@@ -17708,7 +18208,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                       ),
                                     ),
                                     child: Text(
-                                      "до ${localPrice.end.round()} ₽",
+                                      "до ${displayPrice.end.round()} ₽",
                                       style: _subMenuStyle.copyWith(
                                         color: _catalogControlText,
                                         fontWeight: FontWeight.w500,
@@ -17728,12 +18228,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             const int baseCount = 5;
                             final int featureCount = isWishlist
                                 ? 0
-                                : _availableFeatures.length;
+                                : filterFeatures.length;
                             const int featureStart = baseCount;
                             if (index >= featureStart &&
                                 index < featureStart + featureCount) {
-                              final feat =
-                                  _availableFeatures[index - featureStart];
+                              final feat = filterFeatures[index - featureStart];
                               if (feat is! Map) return const SizedBox.shrink();
                               final String fid = feat['id']?.toString() ?? "";
                               final String fname =
@@ -17750,7 +18249,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                 return const SizedBox.shrink();
                               }
                               final textMap =
-                                  _featureValueTextById[fid] ??
+                                  filterValueTextById[fid] ??
                                   const <String, String>{};
                               final optionEntries = values.entries
                                   .map((e) {
@@ -17768,8 +18267,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                   })
                                   .where((e) => e.value.trim().isNotEmpty)
                                   .toList(growable: false);
-                              final availableSet =
-                                  _availableFeatureValuesInCategory[fid];
+                              final availableSet = filterAvailableValues[fid];
                               if (availableSet == null ||
                                   availableSet.isEmpty) {
                                 return const SizedBox.shrink();
@@ -17875,7 +18373,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             }
 
                             final bool showStocks =
-                                !isWishlist && _availableStocks.isNotEmpty;
+                                !isWishlist && filterStocks.isNotEmpty;
                             final int stockHeaderStart =
                                 featureStart + featureCount;
                             if (showStocks && index == stockHeaderStart) {
@@ -17895,8 +18393,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                               final int stockStart = stockHeaderStart + 2;
                               final int stockIndex = index - stockStart;
                               if (stockIndex >= 0 &&
-                                  stockIndex < _availableStocks.length) {
-                                final stock = _availableStocks[stockIndex];
+                                  stockIndex < filterStocks.length) {
+                                final stock = filterStocks[stockIndex];
                                 final String sid = stock['id'].toString();
                                 final String sname = stock['name'] ?? "";
                                 final bool isSelected = localStocks.contains(
@@ -17996,7 +18494,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         child: OutlinedButton(
                           onPressed: () {
                             setModalState(() {
-                              localPrice = const RangeValues(0, 30000);
+                              localPrice = filterPriceBounds;
                               localFeatures.clear();
                               localStocks.clear();
                             });
@@ -18026,13 +18524,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
+                            final appliedPrice = _clampPriceRangeToBounds(
+                              localPrice,
+                              _activeFilterPriceBounds,
+                            );
                             if (isWishlist) {
                               setState(() {
-                                _currentPriceRange = localPrice;
+                                _currentPriceRange = appliedPrice;
                               });
                             } else {
                               setState(() {
-                                _currentPriceRange = localPrice;
+                                _currentPriceRange = appliedPrice;
                                 _selectedFeatures = localFeatures;
                                 _selectedStocks = localStocks;
                               });
@@ -18121,15 +18623,18 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       });
       return;
     }
+    final appliedPriceRange = _clampPriceRangeToBounds(
+      _currentPriceRange,
+      _activeFilterPriceBounds,
+    );
     List<MapEntry<String, String>> params = [];
+    final featureCodeById = _activeFilterFeatureCodeById;
 
     // Цена
     params.add(
-      MapEntry('price_min', _currentPriceRange.start.round().toString()),
+      MapEntry('price_min', appliedPriceRange.start.round().toString()),
     );
-    params.add(
-      MapEntry('price_max', _currentPriceRange.end.round().toString()),
-    );
+    params.add(MapEntry('price_max', appliedPriceRange.end.round().toString()));
 
     // Характеристики
     _selectedFeatures.forEach((fid, vids) {
@@ -18138,7 +18643,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         // Согласно ТЗ: features[material]=ID_VALUE
         // Если выбрано несколько, обычно это массив или через запятую.
         // Попробуем через запятую или уточним. ТЗ говорит features[material]=ID_VALUE.
-        final code = _featureCodeById[fid];
+        final code = featureCodeById[fid];
         final key = (code != null && code.isNotEmpty)
             ? 'features[$code]'
             : 'features[$fid]';
