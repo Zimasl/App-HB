@@ -299,8 +299,6 @@ const String _prefsHomeSliderCacheKey = 'hb.home.slider.cache';
 const String _prefsHomePromoCacheKey = 'hb.home.promo.cache';
 const String _prefsNotificationsPermissionRequestedKey =
     'hb.notifications.permission.requested';
-const String _prefsNotificationsReminderShownAtKey =
-    'hb.notifications.reminder.shown_at_ms';
 const double _heroBannerContentHeightRatio = 850 / 1400;
 const Duration _nativeSplashMaxHoldDuration = Duration(milliseconds: 2200);
 
@@ -1425,8 +1423,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
   bool _isCheckingNotificationsPermission = false;
-  bool _isNotificationReminderDialogOpen = false;
-  bool _requestedNotificationsThisSession = false;
+  bool _isStartupPermissionsFlowRunning = false;
 
   @override
   void initState() {
@@ -1478,8 +1475,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           unawaited(_fetchMenBags());
         }),
       );
-      unawaited(_bootstrapHeaderGeoCity());
-      unawaited(_ensureNotificationsPermissionFlow());
+      unawaited(_runStartupPermissionsFlow());
       _scheduleNativePrefetch();
       Timer(const Duration(seconds: 2), () {
         if (!mounted) return;
@@ -1701,8 +1697,36 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     await prefs.setString(_prefsHeaderCityKey, normalized);
   }
 
-  Future<void> _bootstrapHeaderGeoCity() async {
-    await _tryDetectCityFromGeolocation(requestPermissionIfNeeded: true);
+  Future<LocationPermission?> _resolveGeolocationPermission({
+    bool requestPermissionIfNeeded = false,
+  }) async {
+    final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!isServiceEnabled) return null;
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied && requestPermissionIfNeeded) {
+      permission = await Geolocator.requestPermission();
+    }
+    return permission;
+  }
+
+  Future<void> _runStartupPermissionsFlow() async {
+    if (_isStartupPermissionsFlowRunning) return;
+    _isStartupPermissionsFlowRunning = true;
+    try {
+      final permission = await _resolveGeolocationPermission(
+        requestPermissionIfNeeded: true,
+      );
+      if (!mounted) return;
+      await _ensureNotificationsPermissionFlow();
+      if (permission != null &&
+          permission != LocationPermission.denied &&
+          permission != LocationPermission.deniedForever) {
+        unawaited(_tryDetectCityFromGeolocation());
+      }
+    } finally {
+      _isStartupPermissionsFlowRunning = false;
+    }
   }
 
   Future<void> _tryDetectCityFromGeolocation({
@@ -1717,15 +1741,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _isDetectingGeoCity = true;
     }
     try {
-      final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!isServiceEnabled) return;
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied &&
-          requestPermissionIfNeeded) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
+      final permission = await _resolveGeolocationPermission(
+        requestPermissionIfNeeded: requestPermissionIfNeeded,
+      );
+      if (permission == null ||
+          permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         return;
       }
@@ -2410,7 +2430,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_maybeRotateHeroBannerByTime());
-      unawaited(_ensureNotificationsPermissionFlow(triggeredByResume: true));
     }
   }
 
@@ -2418,159 +2437,68 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return status.isGranted || status == PermissionStatus.limited;
   }
 
-  Future<bool?> _showNotificationsReminderDialog() {
-    return showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          titlePadding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
-          contentPadding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-          actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          title: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  color: Color(0x1AF4A21D),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.notifications_active_rounded,
-                  color: Color(0xFFF4A21D),
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  "Не пропустите самое важное",
-                  style: TextStyle(
-                    fontFamily: 'Roboto',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          content: const Text(
-            "Включите уведомления, чтобы первыми узнавать о скидках, новинках и статусе заказов. Только полезные новости и без спама.",
-            style: TextStyle(
-              fontFamily: 'Roboto',
-              fontSize: 14,
-              height: 1.35,
-              color: Colors.black87,
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text(
-                "Позже",
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  color: Colors.black54,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-              ),
-              child: const Text(
-                "Включить",
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
+  Future<PermissionStatus> _getNotificationPermissionStatus() async {
+    try {
+      return await Permission.notification.status;
+    } catch (_) {
+      return PermissionStatus.denied;
+    }
   }
 
-  Future<void> _ensureNotificationsPermissionFlow({
-    bool triggeredByResume = false,
+  Future<PermissionStatus> _requestNotificationsPermission({
+    required bool requestedBefore,
   }) async {
+    var status = await _getNotificationPermissionStatus();
+    if (_isNotificationPermissionAllowed(status)) return status;
+
+    // iOS allows the native notification prompt only once.
+    if (Platform.isIOS && requestedBefore) {
+      return status;
+    }
+
+    try {
+      if (Platform.isIOS) {
+        await OneSignal.Notifications.requestPermission(false);
+      } else {
+        status = await Permission.notification.request();
+      }
+    } catch (_) {}
+
+    status = await _getNotificationPermissionStatus();
+    if (_isNotificationPermissionAllowed(status)) {
+      return status;
+    }
+
+    if (Platform.isIOS) {
+      try {
+        status = await Permission.notification.request();
+      } catch (_) {
+        status = await _getNotificationPermissionStatus();
+      }
+    }
+
+    return status;
+  }
+
+  Future<void> _ensureNotificationsPermissionFlow() async {
     if (!mounted) return;
     if (_isCheckingNotificationsPermission) return;
-    if (_isNotificationReminderDialogOpen) return;
 
     _isCheckingNotificationsPermission = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final requestedBefore =
           prefs.getBool(_prefsNotificationsPermissionRequestedKey) ?? false;
-      var status = await Permission.notification.status;
+      if (requestedBefore) return;
 
-      if (!requestedBefore) {
-        _requestedNotificationsThisSession = true;
-        try {
-          await OneSignal.Notifications.requestPermission(false);
-        } catch (_) {
-          try {
-            await Permission.notification.request();
-          } catch (_) {}
-        }
+      final status = await _getNotificationPermissionStatus();
+      if (_isNotificationPermissionAllowed(status)) {
         await prefs.setBool(_prefsNotificationsPermissionRequestedKey, true);
         return;
       }
 
-      if (_isNotificationPermissionAllowed(status)) return;
-      if (_requestedNotificationsThisSession) return;
-
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final lastShownAtMs =
-          prefs.getInt(_prefsNotificationsReminderShownAtKey) ?? 0;
-      const minResumeIntervalMs = 10 * 60 * 1000;
-      if (triggeredByResume && (nowMs - lastShownAtMs) < minResumeIntervalMs) {
-        return;
-      }
-
-      if (triggeredByResume) {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-      if (!mounted || _isNotificationReminderDialogOpen) return;
-
-      status = await Permission.notification.status;
-      if (_isNotificationPermissionAllowed(status)) return;
-
-      _isNotificationReminderDialogOpen = true;
-      final shouldRequestPermission = await _showNotificationsReminderDialog();
-      _isNotificationReminderDialogOpen = false;
-      await prefs.setInt(_prefsNotificationsReminderShownAtKey, nowMs);
-
-      if (shouldRequestPermission == true) {
-        _requestedNotificationsThisSession = true;
-        try {
-          await OneSignal.Notifications.requestPermission(false);
-        } catch (_) {
-          try {
-            await Permission.notification.request();
-          } catch (_) {}
-        }
-      }
-    } catch (_) {
-      _isNotificationReminderDialogOpen = false;
+      await prefs.setBool(_prefsNotificationsPermissionRequestedKey, true);
+      await _requestNotificationsPermission(requestedBefore: false);
     } finally {
       _isCheckingNotificationsPermission = false;
     }
@@ -9476,6 +9404,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     if (!mounted) return;
     _goHome();
     setState(() {});
+  }
+
+  Future<void> _openNotificationSettings() async {
+    final opened = await openAppSettings();
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось открыть настройки приложения'),
+        ),
+      );
+    }
   }
 
   Future<void> _editProfileName() async {
@@ -17202,7 +17141,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
     final normalizedSelectedPoint = <String, dynamic>{
       ...selected,
-      'stock_id': selected['stock_id']?.toString() ?? selected['id']?.toString(),
+      'stock_id':
+          selected['stock_id']?.toString() ?? selected['id']?.toString(),
     };
     final nextCheckoutState = Map<String, dynamic>.from(
       checkoutState ?? <String, dynamic>{},
@@ -17626,6 +17566,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           onTap: () =>
                               _navigateToSimple("Сравнение", "/compare/"),
                         ),
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade200),
+                      _profileMenuTile(
+                        icon: Icons.notifications_outlined,
+                        title: "Уведомления",
+                        onTap: () => unawaited(_openNotificationSettings()),
                       ),
                       if (_isAuthorized) ...[
                         Divider(height: 1, color: Colors.grey.shade200),
@@ -18209,7 +18155,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           itemCount: (() {
                             const int baseCount =
                                 5; // price title, spacing, slider, row, divider
-                            final int featureCount = orderedFilterFeatures.length;
+                            final int featureCount =
+                                orderedFilterFeatures.length;
                             final bool showStocks =
                                 !isWishlist && filterStocks.isNotEmpty;
                             final int stockHeaderCount = showStocks
@@ -18325,7 +18272,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                             }
 
                             const int baseCount = 5;
-                            final int featureCount = orderedFilterFeatures.length;
+                            final int featureCount =
+                                orderedFilterFeatures.length;
                             const int featureStart = baseCount;
                             if (index >= featureStart &&
                                 index < featureStart + featureCount) {
