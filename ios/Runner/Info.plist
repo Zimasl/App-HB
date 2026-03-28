@@ -60,7 +60,7 @@
 		<key>NSLocationAlwaysUsageDescription</key>
 		<string>Нужно для корректной работы карты и функций, связанных с геолокацией.</string>
 		<key>YANDEX_MAPKIT_API_KEY</key>
-		<string>d8fdb4b0-7698-4e1d-bdb5-978a25275ba9</string>
+		<string>$(YANDEX_MAPKIT_API_KEY)</string>
 		<key>CFBundleURLTypes</key>
 		<array>
 			<dict>

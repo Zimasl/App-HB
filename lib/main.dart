@@ -114,7 +114,6 @@ const TextStyle _cardNameStyle = TextStyle(
   letterSpacing: 0.1,
 );
 const Set<String> _newCategoryIds = {"147"};
-const String _shopApiToken = "f616081435730714b089ec1115bac63b";
 const String _homeFeaturedProductsJsonUrl =
     'https://hozyain-barin.ru/native/home_featured_products.json';
 const int _maxHomeFeaturedSections = 3;
@@ -128,7 +127,7 @@ const int _maxNativeCategoryHistoryDepth = 40;
 /// Ключ для подсказок и геокодера. Варианты в кабинете:
 /// — «JavaScript API и HTTP Геокодер» (рекомендуется для suggest-geo);
 /// — «API Геосаджеста» для v1/suggest.
-const String _yandexSuggestApiKey = '96ed130b-bc4c-4b17-a60f-a6a775f1af34';
+const String _yandexSuggestApiKey = AppConfig.yandexSuggestApiKey;
 
 Widget _buildBottomSheetHandle() {
   return Center(
@@ -144,6 +143,23 @@ Widget _buildBottomSheetHandle() {
 }
 
 Dio? _authDio;
+final PersistCookieJar _authCookieJar = PersistCookieJar(
+  ignoreExpires: true,
+  storage: FileStorage(
+    '${Directory.systemTemp.path}${Platform.pathSeparator}hb_auth_cookies',
+  ),
+);
+
+Future<bool> _hasPersistedAuthCookies() async {
+  try {
+    final cookies = await _authCookieJar.loadForRequest(
+      Uri.parse(AppConfig.apiBaseUrl),
+    );
+    return cookies.isNotEmpty;
+  } catch (_) {
+    return false;
+  }
+}
 
 Route<T> _adaptivePageRoute<T>({
   required WidgetBuilder builder,
@@ -210,8 +226,7 @@ Dio _getAuthDio() {
       },
     ),
   );
-  final jar = CookieJar();
-  dio.interceptors.add(CookieManager(jar));
+  dio.interceptors.add(CookieManager(_authCookieJar));
   _authDio = dio;
   return dio;
 }
@@ -288,7 +303,10 @@ const String _prefsAuthUserNameKey = 'hb.auth.user_name';
 const String _prefsAuthPhoneKey = 'hb.auth.phone';
 const String _prefsAuthPhotoUrlKey = 'hb.auth.photo_url';
 const String _prefsCheckoutStatePrefix = 'hb.checkout.state.';
+const String _prefsProfileBonusPrefix = 'hb.profile.bonus.';
 const String _prefsCartStateKey = 'hb.cart.state';
+const String _prefsFavoritesStateKey = 'hb.favorites.state';
+const String _prefsCompareStateKey = 'hb.compare.state';
 const String _prefsViewedProductsKey = 'hb.viewed.products';
 const String _prefsSearchHistoryKey = 'hb.search.history';
 const String _prefsHeaderCityKey = 'hb.header.city';
@@ -314,6 +332,12 @@ String _checkoutStateStorageKey(String? contactId) {
   final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
   final suffix = normalizedContactId.isEmpty ? 'guest' : normalizedContactId;
   return '$_prefsCheckoutStatePrefix$suffix';
+}
+
+String _profileBonusStorageKey(String? contactId) {
+  final normalizedContactId = (contactId ?? _authContactId ?? '').trim();
+  final suffix = normalizedContactId.isEmpty ? 'guest' : normalizedContactId;
+  return '$_prefsProfileBonusPrefix$suffix';
 }
 
 Future<void> _persistAuthSessionToPrefs() async {
@@ -351,6 +375,17 @@ Future<void> _restoreAuthSessionFromPrefs() async {
   final prefs = await SharedPreferences.getInstance();
   final contactId = prefs.getString(_prefsAuthContactIdKey)?.trim() ?? '';
   if (contactId.isEmpty) return;
+  if (!await _hasPersistedAuthCookies()) {
+    _authContactId = null;
+    _authUserName = null;
+    _authPhone = null;
+    _authPhotoUrl = null;
+    await prefs.remove(_prefsAuthContactIdKey);
+    await prefs.remove(_prefsAuthUserNameKey);
+    await prefs.remove(_prefsAuthPhoneKey);
+    await prefs.remove(_prefsAuthPhotoUrlKey);
+    return;
+  }
   _authContactId = contactId;
   _authUserName = prefs.getString(_prefsAuthUserNameKey)?.trim();
   _authPhone = prefs.getString(_prefsAuthPhoneKey)?.trim();
@@ -427,7 +462,7 @@ ImageProvider? _authAvatarProvider(String? rawUrl) {
   final value = rawUrl?.trim() ?? '';
   if (value.isEmpty) return null;
   if (value.startsWith('http://') || value.startsWith('https://')) {
-    return NetworkImage(value);
+    return CachedNetworkImageProvider(value);
   }
   if (!kIsWeb && value.startsWith('/')) {
     return FileImage(File(value));
@@ -972,7 +1007,13 @@ void main() async {
       systemNavigationBarContrastEnforced: false,
     ),
   );
-  OneSignal.initialize("0f2f4f43-c8b4-475c-be74-9ed6045bae52");
+  if (AppConfig.oneSignalAppId.isNotEmpty) {
+    OneSignal.initialize(AppConfig.oneSignalAppId);
+  } else if (kDebugMode) {
+    debugPrint(
+      'OneSignal app id is empty. Pass --dart-define=ONESIGNAL_APP_ID=...',
+    );
+  }
 
   scheduleMicrotask(() {
     _ProductDetailPageState.prefetchGroupsCache();
@@ -1354,6 +1395,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   };
   final List<Map<String, dynamic>> _viewedProducts = <Map<String, dynamic>>[];
   Future<Map<String, dynamic>?>? _profileCheckoutStateFuture;
+  double? _profileBonusBalance;
+  bool _isProfileBonusLoading = false;
+  Future<void>? _profileBonusInFlight;
   String? _headerSelectedCity;
   String? _geoDetectedCity;
   bool _isDetectingGeoCity = false;
@@ -1417,7 +1461,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   String _compareRowsKey = "";
   List<Map<String, dynamic>> _compareRowsCache = [];
 
-  final String _apiToken = "f616081435730714b089ec1115bac63b";
   String? _expandedCategoryId;
 
   final AppLinks _appLinks = AppLinks();
@@ -1434,6 +1477,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _startHeroBannerRotationTimer();
     unawaited(_restoreHeaderCityFromPrefs());
     unawaited(_restoreCartFromPrefs());
+    unawaited(_restoreFavoritesFromPrefs());
+    unawaited(_restoreCompareFromPrefs());
     unawaited(_restoreViewedProductsFromPrefs());
     unawaited(_restoreSearchHistoryFromPrefs());
     _catalogBackSwipeController =
@@ -1594,14 +1639,137 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _cartSelectionNotifier.addListener(_scheduleCartFloatingButtonUpdate);
   }
 
-  void _reloadProfileData() {
+  void _reloadProfileData({
+    bool refreshIdentity = true,
+    bool revalidateBonus = true,
+  }) {
     _reloadProfileCheckoutState();
+    if (refreshIdentity) {
+      unawaited(_refreshProfileIdentity());
+    }
+    if (revalidateBonus) {
+      unawaited(_ensureProfileBonusLoaded(revalidate: true));
+    }
   }
 
   void _reloadProfileCheckoutState() {
     _profileCheckoutStateFuture = _restoreCheckoutStateFromPrefs(
       _authContactId,
     );
+  }
+
+  Future<void> _restoreProfileBonusFromPrefs() async {
+    final contactId = (_authContactId ?? '').trim();
+    _profileBonusInFlight = null;
+    _isProfileBonusLoading = false;
+    if (contactId.isEmpty) {
+      _profileBonusBalance = null;
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = _profileBonusStorageKey(contactId);
+    _profileBonusBalance = prefs.containsKey(key) ? prefs.getDouble(key) : null;
+  }
+
+  Future<void> _persistProfileBonusToPrefs() async {
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = _profileBonusStorageKey(contactId);
+    final balance = _profileBonusBalance;
+    if (balance == null) {
+      await prefs.remove(key);
+      return;
+    }
+
+    await prefs.setDouble(key, balance);
+  }
+
+  String _profileBonusText() {
+    final balance = _profileBonusBalance;
+    if (balance != null) {
+      return 'Бонусы: ${_formatBonusBalance(balance)}';
+    }
+    return _isProfileBonusLoading ? 'Бонусы: ...' : 'Бонусы: --';
+  }
+
+  void _warmAuthAvatar() {
+    final provider = _authAvatarProvider(_authPhotoUrl);
+    if (!mounted || provider == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(precacheImage(provider, context).catchError((_) {}));
+    });
+  }
+
+  Future<void> _ensureProfileBonusLoaded({bool revalidate = false}) async {
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) {
+      _profileBonusBalance = null;
+      _isProfileBonusLoading = false;
+      _profileBonusInFlight = null;
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final hasCached = _profileBonusBalance != null;
+    if (!revalidate && hasCached) return;
+    if (_profileBonusInFlight != null) {
+      await _profileBonusInFlight;
+      return;
+    }
+
+    final showLoading = !hasCached;
+    final future = () async {
+      if (showLoading) {
+        _isProfileBonusLoading = true;
+        if (mounted) setState(() {});
+      }
+      try {
+        final balance = await _fetchBonusPlusBalance();
+        if (balance != null) {
+          _profileBonusBalance = balance < 0 ? 0 : balance;
+          await _persistProfileBonusToPrefs();
+        }
+      } finally {
+        _isProfileBonusLoading = false;
+        _profileBonusInFlight = null;
+        if (mounted) setState(() {});
+      }
+    }();
+
+    _profileBonusInFlight = future;
+    await future;
+  }
+
+  Future<void> _refreshProfileIdentity() async {
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) return;
+    try {
+      final info = await _fetchCustomerInfoById(contactId);
+      if (info == null) return;
+      var changed = false;
+      final name = info['name']?.toString().trim() ?? '';
+      final photo = info['photo_url']?.toString().trim() ?? '';
+      if (name.isNotEmpty && name != (_authUserName ?? '').trim()) {
+        _authUserName = name;
+        changed = true;
+      }
+      if (photo.isNotEmpty &&
+          !_isDefaultUserpic(photo) &&
+          photo != (_authPhotoUrl ?? '').trim()) {
+        _authPhotoUrl = photo;
+        changed = true;
+        _warmAuthAvatar();
+      }
+      if (!changed) return;
+      await _persistAuthSessionToPrefs();
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Profile identity refresh error: $e');
+    }
   }
 
   String _normalizePhoneForBonusPlus(String raw) {
@@ -2430,6 +2598,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_maybeRotateHeroBannerByTime());
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      unawaited(_persistFavoritesToPrefs());
+      unawaited(_persistCompareToPrefs());
+      unawaited(_persistCartToPrefs());
+      unawaited(_persistViewedProductsToPrefs());
     }
   }
 
@@ -2914,6 +3093,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     try {
       await _restoreHomeVisualCache();
       await _restoreAuthSessionFromPrefs();
+      await _restoreProfileBonusFromPrefs();
+      _warmAuthAvatar();
       _reloadProfileData();
       await _initHeroBannerOnLaunch();
     } catch (e) {
@@ -3035,7 +3216,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   void _scheduleNativePrefetch() {
     if (_nativePrefetchStarted) return;
     _nativePrefetchStarted = true;
-    Future.delayed(const Duration(milliseconds: 900), () {
+    Future.delayed(const Duration(milliseconds: 300), () {
       if (!mounted) return;
       _prefetchNativeCategories();
     });
@@ -3242,6 +3423,50 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
+  Uri _buildCatalogBridgeUri({
+    required String action,
+    Map<String, String> queryParameters = const {},
+  }) {
+    final base = AppConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '');
+    return Uri.parse('$base/native/bridge/catalog.php').replace(
+      queryParameters: <String, String>{'action': action, ...queryParameters},
+    );
+  }
+
+  Future<_SimpleHttpResponse> _catalogBridgeGet({
+    required String action,
+    Map<String, String> queryParameters = const {},
+  }) {
+    return _httpGet(
+      _buildCatalogBridgeUri(action: action, queryParameters: queryParameters),
+    );
+  }
+
+  Future<_SimpleHttpResponse> _catalogProductSearchGet({
+    required String hash,
+    required int limit,
+    required int offset,
+    String? fields,
+    String? sort,
+    String? order,
+    String status = '1',
+    String inStock = '1',
+  }) {
+    return _catalogBridgeGet(
+      action: 'product_search',
+      queryParameters: <String, String>{
+        'hash': hash,
+        'limit': '$limit',
+        'offset': '$offset',
+        'status': status,
+        'in_stock': inStock,
+        if (fields != null && fields.isNotEmpty) 'fields': fields,
+        if (sort != null && sort.isNotEmpty) 'sort': sort,
+        if (order != null && order.isNotEmpty) 'order': order,
+      },
+    );
+  }
+
   Future<bool> _fetchCategoryFacetMetadata({StateSetter? modalSetter}) async {
     final categoryId = _activeFilterCategoryId();
     if (categoryId == null) return false;
@@ -3398,11 +3623,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     bool success = false;
     try {
       // 1. Характеристики
-      final featRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.feature.getList?access_token=$_apiToken',
-        ),
-      );
+      final featRes = await _catalogBridgeGet(action: 'feature_list');
       if (featRes.statusCode == 200) {
         final decoded = json.decode(featRes.body);
         var rawData = (decoded is Map && decoded.containsKey('data'))
@@ -3468,11 +3689,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       }
 
       // 2. Склады/Магазины
-      final stockRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.stock.getList?access_token=$_apiToken',
-        ),
-      );
+      final stockRes = await _catalogBridgeGet(action: 'stock_list');
       if (stockRes.statusCode == 200) {
         final stockDecoded = json.decode(stockRes.body);
         var stockData =
@@ -3746,10 +3963,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<Map<String, dynamic>?> _fetchFeatureValuesForId(String fid) async {
     try {
-      final infoRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.feature.getInfo?id=$fid&access_token=$_apiToken',
-        ),
+      final infoRes = await _catalogBridgeGet(
+        action: 'feature_info',
+        queryParameters: {'id': fid},
       );
       if (infoRes.statusCode != 200) return null;
       final infoDecoded = json.decode(infoRes.body);
@@ -3805,7 +4021,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     List<MapEntry<String, String>>? customParams,
     bool reset = true,
   }) async {
-    if (_nativeIsLoadingMore[key] == true) return;
+    final bool hasExistingItems = _getNativeListByKey(key).isNotEmpty;
+    final bool allowForegroundTakeover =
+        reset && !hasExistingItems && _nativeIsLoadingMore[key] == true;
+    if (_nativeIsLoadingMore[key] == true && !allowForegroundTakeover) return;
     if (!reset && _nativeHasMore[key] == false) return;
     if (reset) {
       if (_nativeInitialLoadingKeys.contains(key)) return;
@@ -3868,21 +4087,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           ),
         );
       } else {
-        final queryParts = <String>[
-          'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-          'limit=$_nativePageSize',
-          'offset=$offset',
-          'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-          'fields=${Uri.encodeQueryComponent(_nativeCategoryFieldsParamValue)}',
-          'sort=create_datetime',
-          'order=desc',
-          'status=1',
-          'in_stock=1',
-        ];
-        response = await _httpGet(
-          Uri.parse(
-            'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}',
-          ),
+        response = await _catalogProductSearchGet(
+          hash: 'category/$categoryId',
+          limit: _nativePageSize,
+          offset: offset,
+          fields: _nativeCategoryFieldsParamValue,
+          sort: 'create_datetime',
+          order: 'desc',
         );
       }
 
@@ -3952,6 +4163,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         final mergedOriginal = [...existingOriginal, ...uniqueNew];
         final bool isInitialPage = reset && offset == 0;
 
+        if (isInitialPage && key == _nativeCategory) {
+          _precacheCategoryPreviewImages(merged);
+        }
+        if (offset == 0 && effectiveParams.isEmpty && key != _nativeCategory) {
+          _precacheCategoryPreviewImages(merged, limit: 4);
+        }
+
         if (mounted) {
           setState(() {
             _setNativeListByKey(key, merged);
@@ -3967,9 +4185,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
           // После рендеринга определяем видимые карточки и загружаем для них галереи
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (isInitialPage) {
-              _precacheCategoryPreviewImages(merged);
-            }
             _scheduleVisibleGalleryLoad(key);
             // Если пользователь уже долистал до плейсхолдеров — добираем страницы
             _loadMoreActiveNativeIfNeeded();
@@ -4181,6 +4396,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       final mergedOriginal = [...existingOriginal, ...uniqueNew];
       final bool isInitialPage = reset && offset == 0;
 
+      if (isInitialPage && key == _nativeCategory) {
+        _precacheCategoryPreviewImages(merged);
+      }
+
       if (mounted) {
         setState(() {
           _setNativeListByKey(key, merged);
@@ -4193,9 +4412,6 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (key == _nativeCategory) {
         _updateAvailableFeatureValuesForProducts(uniqueNew);
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (isInitialPage) {
-            _precacheCategoryPreviewImages(merged);
-          }
           _scheduleVisibleGalleryLoad(key);
           _loadMoreActiveNativeIfNeeded();
         });
@@ -4226,24 +4442,21 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  List<String> _buildNativeSearchQueryParts({
+  Map<String, String> _buildNativeSearchQueryParameters({
     required String hash,
     required int limit,
     required int offset,
     required bool includeFields,
   }) {
-    final parts = <String>[
-      'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-      'limit=$limit',
-      'offset=$offset',
-      'hash=${Uri.encodeQueryComponent(hash)}',
-      'status=1',
-      'in_stock=1',
-    ];
+    final parts = <String, String>{
+      'limit': '$limit',
+      'offset': '$offset',
+      'hash': hash,
+      'status': '1',
+      'in_stock': '1',
+    };
     if (includeFields) {
-      parts.add(
-        'fields=${Uri.encodeQueryComponent(_nativeSearchFieldsParamValue)}',
-      );
+      parts['fields'] = _nativeSearchFieldsParamValue;
     }
     return parts;
   }
@@ -4266,15 +4479,16 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
 
     Future<_SimpleHttpResponse> doRequest(bool includeFields) {
-      final queryParts = _buildNativeSearchQueryParts(
+      final queryParameters = _buildNativeSearchQueryParameters(
         hash: hash,
         limit: limit,
         offset: offset,
         includeFields: includeFields,
       );
-      final url =
-          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-      return _httpGet(Uri.parse(url));
+      return _catalogBridgeGet(
+        action: 'product_search',
+        queryParameters: queryParameters,
+      );
     }
 
     final searchQuery = extractQueryFromHash(hash);
@@ -4644,13 +4858,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<void> _fetchProductDetails(String productId) async {
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.getInfo?id=$productId&access_token=$_apiToken',
-        ),
+      final response = await _catalogBridgeGet(
+        action: 'product_info',
+        queryParameters: {'id': productId},
       );
       if (response.statusCode == 200) {
-        final decoded = json.decode(response.body);
+        dynamic decoded = json.decode(response.body);
+        if (decoded is Map && decoded['data'] is Map) {
+          decoded = decoded['data'];
+        }
         if (decoded is Map) {
           final features = decoded['features'];
           if (features is Map) {
@@ -4692,13 +4908,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<Map<String, dynamic>?> _fetchProductInfoById(String productId) async {
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.getInfo?id=$productId&access_token=$_apiToken',
-        ),
+      final response = await _catalogBridgeGet(
+        action: 'product_info',
+        queryParameters: {'id': productId},
       );
       if (response.statusCode != 200) return null;
-      final decoded = json.decode(response.body);
+      dynamic decoded = json.decode(response.body);
+      if (decoded is Map && decoded['data'] is Map) {
+        decoded = decoded['data'];
+      }
       if (decoded is! Map) return null;
       final priceValue = _parsePriceValue(decoded['price']);
       final compareValue = _parsePriceValue(decoded['compare_price']);
@@ -4913,31 +5131,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     String productId,
   ) async {
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.reviews.getTree?product_id=$productId&access_token=$_apiToken',
-        ),
+      final response = await _catalogBridgeGet(
+        action: 'product_reviews',
+        queryParameters: {'product_id': productId},
       );
       if (response.statusCode != 200) return const <Map<String, dynamic>>[];
       final decoded = json.decode(response.body);
-      dynamic data = decoded;
-      if (decoded is Map) {
-        if (decoded.containsKey('data')) data = decoded['data'];
-        if (decoded.containsKey('reviews')) data = decoded['reviews'];
-      }
-      if (data is List) {
-        return data
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-      if (data is Map && data['reviews'] is List) {
-        return (data['reviews'] as List)
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-      return const <Map<String, dynamic>>[];
+      return _extractReviewMaps(decoded);
     } catch (e) {
       debugPrint("Product reviews webasyst error for $productId: $e");
       return const <Map<String, dynamic>>[];
@@ -4955,24 +5155,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       );
       if (response.statusCode != 200) return const <Map<String, dynamic>>[];
       final decoded = json.decode(response.body);
-      dynamic data = decoded;
-      if (decoded is Map) {
-        if (decoded.containsKey('data')) data = decoded['data'];
-        if (decoded.containsKey('reviews')) data = decoded['reviews'];
-      }
-      if (data is List) {
-        return data
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-      if (data is Map && data['reviews'] is List) {
-        return (data['reviews'] as List)
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
-      return const <Map<String, dynamic>>[];
+      return _extractReviewMaps(decoded);
     } catch (e) {
       debugPrint("Product reviews custom error for $productId: $e");
       return const <Map<String, dynamic>>[];
@@ -5013,6 +5196,61 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  List<Map<String, dynamic>> _extractReviewMaps(dynamic decoded) {
+    dynamic data = decoded;
+    if (decoded is Map) {
+      if (decoded.containsKey('data')) data = decoded['data'];
+      if (decoded.containsKey('reviews')) data = decoded['reviews'];
+    }
+
+    List<Map<String, dynamic>> asList(dynamic raw) {
+      if (raw is List) {
+        return raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (raw is Map) {
+        if (raw['reviews'] is List) {
+          return (raw['reviews'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+        if (raw['reviews'] is Map) {
+          return (raw['reviews'] as Map).values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+
+        final looksLikeSingleReview =
+            raw.containsKey('id') ||
+            raw.containsKey('text') ||
+            raw.containsKey('comment') ||
+            raw.containsKey('review') ||
+            raw.containsKey('title') ||
+            raw.containsKey('subject') ||
+            raw.containsKey('rate') ||
+            raw.containsKey('rating') ||
+            raw.containsKey('contact') ||
+            raw.containsKey('contact_id');
+        if (looksLikeSingleReview) {
+          return [Map<String, dynamic>.from(raw)];
+        }
+
+        final values = raw.values
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        if (values.isNotEmpty) return values;
+      }
+      return const <Map<String, dynamic>>[];
+    }
+
+    return asList(data);
+  }
+
   Future<bool> _submitProductReview({
     required String productId,
     required String name,
@@ -5025,14 +5263,12 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     try {
       final safeName = name.trim().isEmpty ? "Александр" : name.trim();
       final fields = <String, String>{
-        "access_token": _apiToken,
         "product_id": productId,
         "name": safeName,
         "title": title,
         "text": text,
         "rate": rate.toString(),
       };
-      final uri = Uri.parse('https://hozyain-barin.ru/post_review.php');
       final files = <MultipartFile>[];
       for (final photo in photos) {
         final path = photo.path;
@@ -5044,8 +5280,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         if (files.isNotEmpty) 'images[]': files,
       });
       final dio = _getAuthDio();
-      final response = await dio.postUri(
-        uri,
+      final response = await dio.post(
+        '/native/bridge/catalog.php',
+        queryParameters: const {'action': 'submit_review'},
         data: formData,
         options: Options(
           contentType: 'multipart/form-data',
@@ -5088,20 +5325,26 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<Map<String, dynamic>?> _fetchCustomerInfoById(String contactId) async {
-    if (contactId.isEmpty) return null;
+    final requestedId = contactId.trim();
+    if (requestedId.isEmpty) return null;
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.customer.search?hash=id/$contactId&access_token=$_apiToken',
-        ),
+      final dio = _getAuthDio();
+      final currentId = (_authContactId ?? '').trim();
+      final isCurrentUser = currentId.isNotEmpty && currentId == requestedId;
+      final response = await dio.get(
+        '/native/bridge/customer.php',
+        queryParameters: isCurrentUser
+            ? const {'action': 'me'}
+            : {'action': 'public_contact', 'id': requestedId},
       );
-      if (response.statusCode != 200) return null;
-      final decoded = json.decode(response.body);
-      dynamic data = decoded;
-      if (decoded is Map) {
-        if (decoded['data'] != null) data = decoded['data'];
-        if (decoded['contacts'] != null) data = decoded['contacts'];
-        if (decoded['customers'] != null) data = decoded['customers'];
+      final decoded = _parseAuthResponse(response.data);
+      final status = decoded?['status']?.toString().toLowerCase();
+      if (status != 'ok') return null;
+      dynamic data = decoded?['data'];
+      if (data is Map) {
+        if (data['data'] != null) data = data['data'];
+        if (data['contacts'] != null) data = data['contacts'];
+        if (data['customers'] != null) data = data['customers'];
       }
       Map? contact;
       if (data is List && data.isNotEmpty && data.first is Map) {
@@ -5136,7 +5379,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           : "";
       if (name.isEmpty && photo.isEmpty) return null;
       return {
-        "id": contactId,
+        "id": contact['id']?.toString().trim().isNotEmpty == true
+            ? contact['id'].toString().trim()
+            : (contact['contact_id']?.toString().trim().isNotEmpty == true
+                  ? contact['contact_id'].toString().trim()
+                  : requestedId),
         if (name.isNotEmpty) "name": name,
         if (photo.isNotEmpty) "photo_url": photo,
       };
@@ -5636,30 +5883,38 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return "";
   }
 
-  static final RegExp _previewSizeTokenRegex = RegExp(r'\.0x\d+\.');
-  static final RegExp _previewSizeAltRegex = RegExp(r'\.\d+x\d+\.');
-
-  String _toPreviewThumbUrl(String url) {
-    if (url.isEmpty) return url;
-    if (_previewSizeTokenRegex.hasMatch(url)) {
-      return url.replaceAll(_previewSizeTokenRegex, '.0x200.');
-    }
-    if (_previewSizeAltRegex.hasMatch(url)) {
-      return url.replaceAll(_previewSizeAltRegex, '.0x200.');
-    }
-    return url;
+  int _categoryPreviewImageLimit() {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    if (mediaQuery == null) return 6;
+    const horizontalPadding = 8.0;
+    const crossAxisSpacing = 3.0;
+    const mainAxisSpacing = 5.0;
+    const contentHeight = 146.0;
+    final itemWidth =
+        (mediaQuery.size.width - horizontalPadding - crossAxisSpacing) / 2;
+    final itemHeight = itemWidth * 4 / 3 + contentHeight + mainAxisSpacing;
+    final visibleRows = (mediaQuery.size.height / itemHeight).ceil() + 1;
+    return (visibleRows * 2).clamp(6, 10).toInt();
   }
 
-  void _precacheCategoryPreviewImages(List<dynamic> items, {int limit = 6}) {
+  void _precacheCategoryPreviewImages(List<dynamic> items, {int? limit}) {
     if (!mounted || items.isEmpty) return;
+    final int effectiveLimit = limit ?? _categoryPreviewImageLimit();
     int count = 0;
     for (final item in items) {
-      if (count >= limit) break;
+      if (count >= effectiveLimit) break;
       if (item is! Map) continue;
       final url = _getProductPreviewImage(item);
       if (url.isEmpty) continue;
-      final thumbUrl = _toPreviewThumbUrl(url);
-      precacheImage(CachedNetworkImageProvider(thumbUrl), context);
+      // Прогреваем тот же URL, который реально рисует карточка категории.
+      // Раньше грелся только 0x200 thumb, а карточка запрашивала 0x400,
+      // из-за чего ускорение почти не ощущалось.
+      unawaited(
+        precacheImage(
+          CachedNetworkImageProvider(url),
+          context,
+        ).catchError((_) {}),
+      );
       count++;
     }
   }
@@ -6545,6 +6800,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
     _wishCountNotifier.value = _favoriteIds.length;
     _getFavoriteNotifier(id).value++;
+    unawaited(_persistFavoritesToPrefs());
     _showFavoriteToast(product, added);
   }
 
@@ -6571,6 +6827,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
     _compareCountNotifier.value = _compareIds.length;
     _getCompareNotifier(id).value++;
+    unawaited(_persistCompareToPrefs());
     _showCompareToast(product, added);
     if (_nativeCategory == "compare") {
       _syncCompareList();
@@ -6585,6 +6842,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _favoriteProductsById.clear();
     _syncWishlistList();
     _wishCountNotifier.value = 0;
+    unawaited(_persistFavoritesToPrefs());
     for (final id in ids) {
       final notifier = _favoriteVersionById[id];
       if (notifier != null) notifier.value++;
@@ -6604,6 +6862,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _compareRightIndexByGroup.clear();
     _activeCompareGroupKey = null;
     _compareCountNotifier.value = 0;
+    unawaited(_persistCompareToPrefs());
     for (final id in ids) {
       final notifier = _compareVersionById[id];
       if (notifier != null) notifier.value++;
@@ -6634,13 +6893,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       return;
     }
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.category.getInfo?id=$categoryId&access_token=$_apiToken',
-        ),
+      final response = await _catalogBridgeGet(
+        action: 'category_info',
+        queryParameters: {'id': categoryId},
       );
       if (response.statusCode != 200) return;
-      final decoded = json.decode(response.body);
+      dynamic decoded = json.decode(response.body);
+      if (decoded is Map && decoded['data'] is Map) {
+        decoded = decoded['data'];
+      }
       if (decoded is! Map) return;
       final name = decoded['name']?.toString() ?? "";
       if (name.isEmpty) return;
@@ -6917,10 +7178,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         return;
       }
 
-      final imgRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.images.getList?product_id=$productId&access_token=$_apiToken',
-        ),
+      final imgRes = await _catalogBridgeGet(
+        action: 'product_images',
+        queryParameters: {'product_id': productId},
       );
       if (imgRes.statusCode == 200) {
         final decoded = json.decode(imgRes.body);
@@ -6978,10 +7238,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final cached = _productFullGalleryById[productId];
     if (cached != null && cached.isNotEmpty) return cached;
     try {
-      final imgRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.images.getList?product_id=$productId&access_token=$_apiToken',
-        ),
+      final imgRes = await _catalogBridgeGet(
+        action: 'product_images',
+        queryParameters: {'product_id': productId},
       );
       if (imgRes.statusCode == 200) {
         final decoded = json.decode(imgRes.body);
@@ -7133,10 +7392,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         return;
       }
 
-      final imgRes = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.product.images.getList?product_id=$productId&access_token=$_apiToken',
-        ),
+      final imgRes = await _catalogBridgeGet(
+        action: 'product_images',
+        queryParameters: {'product_id': productId},
       );
       if (imgRes.statusCode == 200) {
         final decoded = json.decode(imgRes.body);
@@ -7246,19 +7504,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<void> _fetchDiscountedProductsLegacy() async {
     try {
       final results = await Future.wait<_SimpleHttpResponse>([
-        _httpGet(
-          Uri.parse(
-            'https://hozyain-barin.ru/api.php/shop.product.search?access_token=$_apiToken&hash=category/156&limit=12&status=1&in_stock=1',
-          ),
+        _catalogProductSearchGet(
+          hash: 'category/156',
+          limit: 12,
+          offset: 0,
         ).catchError((e, st) {
           debugPrint("Discount search error (men): $e");
           if (kDebugMode) debugPrint("$st");
           return _SimpleHttpResponse.fromString("[]", 500);
         }),
-        _httpGet(
-          Uri.parse(
-            'https://hozyain-barin.ru/api.php/shop.product.search?access_token=$_apiToken&hash=category/157&limit=12&status=1&in_stock=1',
-          ),
+        _catalogProductSearchGet(
+          hash: 'category/157',
+          limit: 12,
+          offset: 0,
         ).catchError((e, st) {
           debugPrint("Discount search error (women): $e");
           if (kDebugMode) debugPrint("$st");
@@ -7328,13 +7586,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               List<String> images = [];
               try {
                 // Запрашиваем дополнительные фото
-                final imgRes = await _httpGet(
-                  Uri.parse(
-                    'https://hozyain-barin.ru/api.php/shop.product.images.getList?product_id=${p['id']}&access_token=$_apiToken',
-                  ),
+                final imgRes = await _catalogBridgeGet(
+                  action: 'product_images',
+                  queryParameters: {'product_id': p['id'].toString()},
                 );
                 if (imgRes.statusCode == 200) {
-                  final List<dynamic> imgData = json.decode(imgRes.body);
+                  final decoded = json.decode(imgRes.body);
+                  final imgData = _normalizeImageList(decoded);
                   for (var img in imgData) {
                     if (images.length >= 5) break;
                     // Формируем URL из thumb или собираем вручную по вашей логике
@@ -7516,17 +7774,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         int offset = 0;
         int guard = 0;
         while (guard < 20) {
-          final queryParts = <String>[
-            'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-            'limit=$limit',
-            'offset=$offset',
-            'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-            'status=1',
-            'in_stock=1',
-          ];
-          final url =
-              'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-          final response = await _httpGet(Uri.parse(url));
+          final response = await _catalogProductSearchGet(
+            hash: 'category/$categoryId',
+            limit: limit,
+            offset: offset,
+          );
           if (response.statusCode != 200) break;
           final decoded = json.decode(response.body);
           final products = _extractProductsFromSearchResponse(decoded);
@@ -7963,19 +8215,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
     int offset = 0;
     for (int page = 0; page < 6 && collected.length < safeLimit; page++) {
-      final queryParts = <String>[
-        'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-        'limit=$pageSize',
-        'offset=$offset',
-        'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-        'sort=create_datetime',
-        'order=desc',
-        'status=1',
-        'in_stock=1',
-      ];
-      final url =
-          'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-      final response = await _httpGet(Uri.parse(url));
+      final response = await _catalogProductSearchGet(
+        hash: 'category/$categoryId',
+        limit: pageSize,
+        offset: offset,
+        sort: 'create_datetime',
+        order: 'desc',
+      );
       if (response.statusCode != 200) break;
 
       final parsed = await compute(_parseNativeCategoryPayload, response.body);
@@ -8394,9 +8640,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   Future<void> _fetchDiscountConfig() async {
-    const urls = [
-      'https://hozyain-barin.ru/native/discounts_config.json',
-      'http://hozyain-barin.ru/public_html/native/discounts_config.json',
+    final urls = [
+      '${AppConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '')}/native/discounts_config.json',
     ];
     Map<dynamic, dynamic>? decoded;
     for (final url in urls) {
@@ -8984,69 +9229,63 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<List<Map<String, dynamic>>> _fetchMyOrders() async {
     if (!_isAuthorized) return const [];
-    final dio = _getAuthDio();
-    final contactId = (_authContactId ?? '').trim();
-    if (contactId.isEmpty) return const [];
-    final queries = <Map<String, String>>[
-      {'hash': 'contact/$contactId'},
-      {'hash': 'contact_id/$contactId'},
-      {'contact_id': contactId},
-    ];
-
-    final seenIds = <String>{};
-    final merged = <Map<String, dynamic>>[];
-
-    for (final query in queries) {
-      try {
-        final response = await dio.get(
-          '/api.php/shop.order.search',
-          queryParameters: {'access_token': _shopApiToken, ...query},
-        );
-        dynamic decoded = response.data;
-        if (decoded is String) decoded = json.decode(decoded);
-        final orders = _extractOrdersFromResponse(decoded);
-        for (final order in orders) {
-          final orderContactId =
-              (order['contact_id'] ?? order['contactId'] ?? '')
-                  .toString()
-                  .trim();
-          if (orderContactId.isNotEmpty && orderContactId != contactId) {
-            continue;
-          }
-          final id = (order['id'] ?? order['order_id'] ?? '').toString();
-          if (id.isEmpty || seenIds.contains(id)) continue;
-          seenIds.add(id);
-          merged.add(order);
-        }
-      } catch (_) {}
+    try {
+      final dio = _getAuthDio();
+      final response = await dio.get(
+        '/native/bridge/orders.php',
+        queryParameters: const {'action': 'list'},
+      );
+      final decoded = _parseAuthResponse(response.data);
+      if (decoded == null) return const [];
+      final status = decoded['status']?.toString().toLowerCase();
+      if (status != 'ok') {
+        debugPrint('Bridge orders returned status=$status');
+        return const [];
+      }
+      final orders = _extractOrdersFromResponse(
+        decoded['orders'] ?? decoded['data'] ?? decoded,
+      );
+      orders.sort((a, b) {
+        final da = (a['create_datetime'] ?? a['datetime'] ?? '').toString();
+        final db = (b['create_datetime'] ?? b['datetime'] ?? '').toString();
+        return db.compareTo(da);
+      });
+      debugPrint('Bridge orders count=${orders.length}');
+      return orders;
+    } catch (e) {
+      debugPrint('Bridge orders exception: $e');
+      return const [];
     }
-
-    merged.sort((a, b) {
-      final da = (a['create_datetime'] ?? a['datetime'] ?? '').toString();
-      final db = (b['create_datetime'] ?? b['datetime'] ?? '').toString();
-      return db.compareTo(da);
-    });
-    return merged;
   }
 
   Future<Map<String, dynamic>?> _fetchOrderDetails(String orderId) async {
     if (!_isAuthorized) return null;
     final cleanId = orderId.trim();
     if (cleanId.isEmpty) return null;
-    final dio = _getAuthDio();
-    final response = await dio.get(
-      '/api.php/shop.order.getInfo',
-      queryParameters: {'access_token': _shopApiToken, 'id': cleanId},
-    );
-    dynamic decoded = response.data;
-    if (decoded is String) decoded = json.decode(decoded);
     Map<String, dynamic>? order;
-    if (decoded is Map && decoded['data'] is Map) {
-      order = Map<String, dynamic>.from(decoded['data'] as Map);
-    } else if (decoded is Map) {
-      order = Map<String, dynamic>.from(decoded);
+    try {
+      final dio = _getAuthDio();
+      final response = await dio.get(
+        '/native/bridge/orders.php',
+        queryParameters: {'action': 'get', 'id': cleanId},
+      );
+      final decoded = _parseAuthResponse(response.data);
+      final status = decoded?['status']?.toString().toLowerCase();
+      if (status != 'ok') {
+        debugPrint('Bridge order details returned status=$status for $cleanId');
+        return null;
+      }
+      final rawOrder = decoded?['data'] ?? decoded?['order'] ?? decoded;
+      if (rawOrder is Map) {
+        order = Map<String, dynamic>.from(rawOrder);
+      }
+      if (order == null) {
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Bridge order details exception for $cleanId: $e');
+      return null;
     }
-    if (order == null) return null;
 
     String normalizeImageUrl(String raw) {
       final value = raw.trim();
@@ -9107,20 +9346,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     final productImageById = <String, String>{};
     for (final productId in productIds) {
       try {
-        final productResponse = await dio.get(
-          '/api.php/shop.product.getInfo',
-          queryParameters: {'access_token': _shopApiToken, 'id': productId},
-        );
-        dynamic productDecoded = productResponse.data;
-        if (productDecoded is String) {
-          productDecoded = json.decode(productDecoded);
-        }
-        Map<String, dynamic>? product;
-        if (productDecoded is Map && productDecoded['data'] is Map) {
-          product = Map<String, dynamic>.from(productDecoded['data'] as Map);
-        } else if (productDecoded is Map) {
-          product = Map<String, dynamic>.from(productDecoded);
-        }
+        final product = await _fetchProductInfoById(productId);
         if (product == null) continue;
         final image = pickImage(product);
         if (image.isNotEmpty) {
@@ -9279,6 +9505,121 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     };
   }
 
+  Future<void> _persistProductCollectionToPrefs(
+    String storageKey,
+    Set<String> ids,
+    Map<String, Map<String, dynamic>> productsById,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (ids.isEmpty) {
+      await prefs.remove(storageKey);
+      return;
+    }
+
+    final serializableProducts = <String, dynamic>{};
+    for (final id in ids) {
+      final product = productsById[id];
+      if (product == null) continue;
+      serializableProducts[id] = _cartProductForStorage(product);
+    }
+
+    final payload = <String, dynamic>{
+      'ids': ids.toList(growable: false),
+      'products': serializableProducts,
+    };
+    await prefs.setString(storageKey, json.encode(payload));
+  }
+
+  Future<({Set<String> ids, Map<String, Map<String, dynamic>> products})?>
+  _restoreProductCollectionFromPrefs(String storageKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(storageKey);
+    if (raw == null || raw.trim().isEmpty) return null;
+
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is! Map) return null;
+
+      final idsRaw = decoded['ids'];
+      final productsRaw = decoded['products'];
+      if (idsRaw is! List || productsRaw is! Map) return null;
+
+      final restoredIds = <String>{};
+      final restoredProducts = <String, Map<String, dynamic>>{};
+
+      for (final value in idsRaw) {
+        final id = value?.toString().trim() ?? '';
+        if (id.isEmpty) continue;
+        restoredIds.add(id);
+
+        final product = productsRaw[id];
+        if (product is Map) {
+          restoredProducts[id] = Map<String, dynamic>.from(product);
+        } else {
+          restoredProducts[id] = <String, dynamic>{'id': id};
+        }
+      }
+
+      if (restoredIds.isEmpty) return null;
+
+      return (ids: restoredIds, products: restoredProducts);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _persistFavoritesToPrefs() async {
+    await _persistProductCollectionToPrefs(
+      _prefsFavoritesStateKey,
+      _favoriteIds,
+      _favoriteProductsById,
+    );
+  }
+
+  Future<void> _restoreFavoritesFromPrefs() async {
+    final restored = await _restoreProductCollectionFromPrefs(
+      _prefsFavoritesStateKey,
+    );
+    if (restored == null) return;
+
+    _favoriteIds
+      ..clear()
+      ..addAll(restored.ids);
+    _favoriteProductsById
+      ..clear()
+      ..addAll(restored.products);
+    _wishCountNotifier.value = _favoriteIds.length;
+    _syncWishlistList();
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _persistCompareToPrefs() async {
+    await _persistProductCollectionToPrefs(
+      _prefsCompareStateKey,
+      _compareIds,
+      _compareProductsById,
+    );
+  }
+
+  Future<void> _restoreCompareFromPrefs() async {
+    final restored = await _restoreProductCollectionFromPrefs(
+      _prefsCompareStateKey,
+    );
+    if (restored == null) return;
+
+    _compareIds
+      ..clear()
+      ..addAll(restored.ids);
+    _compareProductsById
+      ..clear()
+      ..addAll(restored.products);
+    _compareCountNotifier.value = _compareIds.length;
+    _syncCompareList();
+
+    if (mounted) setState(() {});
+  }
+
   Future<void> _persistCartToPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (_cartQuantityByProductId.isEmpty) {
@@ -9358,7 +9699,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   }
 
   void _handleProfileNavTap() {
-    _reloadProfileData();
+    _reloadProfileCheckoutState();
     _navigateToSimple("Профиль", "/my/");
   }
 
@@ -9373,6 +9714,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (picked == null) return;
       _authPhotoUrl = picked.path;
       await _persistAuthSessionToPrefs();
+      _warmAuthAvatar();
       if (!mounted) return;
       setState(() {});
     } catch (_) {
@@ -9389,6 +9731,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       _adaptivePageRoute(builder: (_) => const AuthPage()),
     );
     if (ok == true && mounted) {
+      await _restoreProfileBonusFromPrefs();
       _reloadProfileData();
       setState(() {});
     }
@@ -9399,6 +9742,13 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _authUserName = null;
     _authPhone = null;
     _authPhotoUrl = null;
+    _profileBonusBalance = null;
+    _isProfileBonusLoading = false;
+    _profileBonusInFlight = null;
+    try {
+      await _authCookieJar.deleteAll();
+    } catch (_) {}
+    _authDio = null;
     await _persistAuthSessionToPrefs();
     _reloadProfileData();
     if (!mounted) return;
@@ -10275,11 +10625,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   Future<void> _fetchCategories() async {
     try {
-      final response = await _httpGet(
-        Uri.parse(
-          'https://hozyain-barin.ru/api.php/shop.category.getTree?access_token=$_apiToken',
-        ),
-      );
+      final response = await _catalogBridgeGet(action: 'category_tree');
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
         var rawData = (decoded is Map && decoded.containsKey('data'))
@@ -10413,17 +10759,11 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         int offset = 0;
         int guard = 0;
         while (guard < 20) {
-          final queryParts = <String>[
-            'access_token=${Uri.encodeQueryComponent(_apiToken)}',
-            'limit=$limit',
-            'offset=$offset',
-            'hash=${Uri.encodeQueryComponent('category/$categoryId')}',
-            'status=1',
-            'in_stock=1',
-          ];
-          final url =
-              'https://hozyain-barin.ru/api.php/shop.product.search?${queryParts.join('&')}';
-          final response = await _httpGet(Uri.parse(url));
+          final response = await _catalogProductSearchGet(
+            hash: 'category/$categoryId',
+            limit: limit,
+            offset: offset,
+          );
           if (response.statusCode != 200) break;
           final decoded = json.decode(response.body);
           final products = _extractProductsFromSearchResponse(decoded);
@@ -11428,6 +11768,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Stack(
+                          clipBehavior: Clip.none,
                           children: [
                             GestureDetector(
                               onTap: () => _openProductPage(item),
@@ -12486,6 +12827,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       if (notifier != null) notifier.value++;
     }
     _compareCountNotifier.value = _compareIds.length;
+    unawaited(_persistCompareToPrefs());
     _compareLeftIndexByGroup.remove(groupKey);
     _compareRightIndexByGroup.remove(groupKey);
     _compareCollapsedGroups.removeWhere((key) => key.startsWith("$groupKey::"));
@@ -15639,51 +15981,42 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
             ),
             if (_isAuthorized) ...[
               const SizedBox(width: 6),
-              FutureBuilder<double?>(
-                future: _fetchBonusPlusBalance(),
-                builder: (context, bonusSnapshot) {
-                  final bonus = bonusSnapshot.data;
-                  final bonusText = bonus == null
-                      ? 'Бонусы: 0'
-                      : 'Бонусы: ${_formatBonusBalance(bonus)}';
-                  return SizedBox(
-                    width: bonusChipWidth,
-                    child: InkWell(
-                      onTap: _handleProfileNavTap,
+              SizedBox(
+                width: bonusChipWidth,
+                child: InkWell(
+                  onTap: _handleProfileNavTap,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xCCFFFFFF),
                       borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 12,
+                          offset: Offset(0, 3),
                         ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xCCFFFFFF),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFE5E7EB)),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x14000000),
-                              blurRadius: 12,
-                              offset: Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Text(
-                          bonusText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF6B7280),
-                          ),
-                        ),
+                      ],
+                    ),
+                    child: Text(
+                      _profileBonusText(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF6B7280),
                       ),
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
             ],
             const SizedBox(width: 6),
@@ -17201,7 +17534,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF9800),
+                  color: Colors.black,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -17248,19 +17581,61 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       normalized['raw_compare_price'] = rawCompare;
       normalized['old_price'] = "${_formatPrice(rawCompare)} ₽";
     }
-
-    return _discountedProductCard(
-      normalized,
-      horizontalCardWidth: horizontalCardWidth,
-      priceNameGap: 8,
-      nameActionsGap: 12,
+    final productId = normalized['id']?.toString().trim() ?? '';
+    final cachedGallery = productId.isNotEmpty
+        ? _galleryCache[productId]
+        : null;
+    return _ProfileViewedProductCard(
+      productId: productId,
+      product: normalized,
+      images:
+          (cachedGallery != null && cachedGallery.isNotEmpty
+                  ? cachedGallery
+                  : images)
+              .take(5)
+              .toList(growable: false),
+      width: horizontalCardWidth ?? 150.0,
+      isNewProduct: _isNewProduct(normalized),
+      fetchGallery: productId.isNotEmpty
+          ? () async {
+              final cached = _galleryCache[productId];
+              if (cached != null && cached.isNotEmpty) {
+                return cached.take(5).toList(growable: false);
+              }
+              final fetched = await _fetchProductImagesFull(productId);
+              final limited = fetched.take(5).toList(growable: false);
+              if (limited.isNotEmpty) {
+                _putGalleryCache(productId, limited);
+              }
+              return limited;
+            }
+          : null,
+      onOpenProduct: () => _openProductPage(normalized),
+      onAddToCart: () => _addToCart(normalized),
+      onFavoriteTap: () => _toggleFavorite(normalized),
+      onCompareTap: () => _toggleCompare(normalized),
+      favoriteListenable: productId.isNotEmpty
+          ? _getFavoriteNotifier(productId)
+          : null,
+      isFavoriteResolver: productId.isNotEmpty
+          ? () => _isFavorite(productId)
+          : null,
+      compareListenable: productId.isNotEmpty
+          ? _getCompareNotifier(productId)
+          : null,
+      isCompareResolver: productId.isNotEmpty
+          ? () => _isCompared(productId)
+          : null,
+      cartListenable: productId.isNotEmpty ? _cartCountNotifier : null,
+      isInCartResolver: productId.isNotEmpty
+          ? () => (_cartQuantityByProductId[productId] ?? 0) > 0
+          : null,
     );
   }
 
   Widget _buildProfilePage() {
     final future = _profileCheckoutStateFuture ??=
         _restoreCheckoutStateFromPrefs(_authContactId);
-    final bonusFuture = _fetchBonusPlusBalance();
     return SliverToBoxAdapter(
       child: FutureBuilder<Map<String, dynamic>?>(
         future: future,
@@ -17278,14 +17653,17 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               : '';
           final viewedItems = _viewedProducts.take(8).toList();
           final profileName = (_authUserName ?? '').trim();
+          final avatarProvider = _authAvatarProvider(_authPhotoUrl);
+          final profileBonusText = _profileBonusText();
           const viewedCardGap = 10.0;
-          final baseViewedCardWidth =
-              ((MediaQuery.of(context).size.width - 20 - viewedCardGap) / 2)
+          const viewedVisibleCards = 2.1;
+          final viewedContentWidth =
+              MediaQuery.of(context).size.width - 20 - 24;
+          final viewedCardWidth =
+              ((viewedContentWidth - viewedCardGap * 2) / viewedVisibleCards)
+                  .clamp(138.0, 176.0)
                   .toDouble();
-          final viewedCardWidth = (baseViewedCardWidth / 1.35)
-              .clamp(112.0, 142.0)
-              .toDouble();
-          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 120;
+          final viewedCardsHeight = viewedCardWidth * 4 / 3 + 124;
           return Padding(
             padding: const EdgeInsets.fromLTRB(10, 12, 10, 22),
             child: Column(
@@ -17301,47 +17679,64 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     ),
                     child: Row(
                       children: [
-                        Stack(
-                          children: [
-                            CircleAvatar(
-                              radius: 30,
-                              backgroundColor: Colors.grey.shade100,
-                              backgroundImage: _authAvatarProvider(
-                                _authPhotoUrl,
+                        SizedBox(
+                          width: 72,
+                          height: 72,
+                          child: Stack(
+                            children: [
+                              const Positioned(
+                                left: 0,
+                                top: 0,
+                                child: SizedBox(width: 60, height: 60),
                               ),
-                              child:
-                                  (_authPhotoUrl == null ||
-                                      _authPhotoUrl!.isEmpty ||
-                                      _authAvatarProvider(_authPhotoUrl) ==
-                                          null)
-                                  ? const Icon(
-                                      Icons.person_outline,
-                                      color: Colors.black45,
-                                      size: 32,
-                                    )
-                                  : null,
-                            ),
-                            Positioned(
-                              right: -2,
-                              bottom: -2,
-                              child: Material(
-                                color: Colors.black,
-                                shape: const CircleBorder(),
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: _pickAndSaveProfileAvatar,
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(6),
-                                    child: Icon(
-                                      Icons.camera_alt_outlined,
-                                      size: 14,
-                                      color: Colors.white,
+                              Positioned(
+                                left: 0,
+                                top: 0,
+                                child: CircleAvatar(
+                                  radius: 30,
+                                  backgroundColor: Colors.grey.shade100,
+                                  backgroundImage: avatarProvider,
+                                  child:
+                                      (_authPhotoUrl == null ||
+                                          _authPhotoUrl!.isEmpty ||
+                                          avatarProvider == null)
+                                      ? const Icon(
+                                          Icons.person_outline,
+                                          color: Colors.black45,
+                                          size: 32,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Material(
+                                  color: Colors.black,
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: _pickAndSaveProfileAvatar,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white,
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.camera_alt_outlined,
+                                        size: 14,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
@@ -17395,43 +17790,34 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              FutureBuilder<double?>(
-                                future: bonusFuture,
-                                builder: (context, bonusSnapshot) {
-                                  final bonus = bonusSnapshot.data;
-                                  if (bonus == null) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF5F5F5),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.stars_outlined,
+                                      size: 16,
+                                      color: Colors.black87,
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF5F5F5),
-                                      borderRadius: BorderRadius.circular(20),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      profileBonusText,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.black87,
+                                      ),
                                     ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.stars_outlined,
-                                          size: 16,
-                                          color: Colors.black87,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Бонусы: ${_formatBonusBalance(bonus)}',
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -17451,15 +17837,31 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          "Получайте кэшбек, сохраняйте и отслеживайте заказы",
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            height: 1.2,
-                            color: Colors.black87,
-                          ),
+                        const Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "Получайте кэшбек, сохраняйте и отслеживайте заказы",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w400,
+                                  height: 1.2,
+                                  letterSpacing: 0,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Padding(
+                              padding: EdgeInsets.only(top: 1),
+                              child: Icon(
+                                Icons.info_outline,
+                                size: 18,
+                                color: Colors.black45,
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 14),
                         SizedBox(
@@ -20894,29 +21296,32 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   Future<Map<String, dynamic>?> _fetchCustomerInfoById(String contactId) async {
-    if (contactId.isEmpty) return null;
+    final requestedId = contactId.trim();
+    if (requestedId.isEmpty) return null;
     try {
       final dio = _getAuthDio();
+      final currentId = (_authContactId ?? '').trim();
+      final isCurrentUser = currentId.isNotEmpty && currentId == requestedId;
       final response = await dio.get(
-        '/api.php/shop.customer.search',
-        queryParameters: {
-          'hash': 'id/$contactId',
-          'access_token': _shopApiToken,
-        },
+        '/native/bridge/customer.php',
+        queryParameters: isCurrentUser
+            ? const {'action': 'me'}
+            : {'action': 'public_contact', 'id': requestedId},
       );
-      dynamic decoded = response.data;
-      if (decoded is String) decoded = json.decode(decoded);
-      dynamic data = decoded;
-      if (decoded is Map) {
-        if (decoded['data'] != null) data = decoded['data'];
-        if (decoded['contacts'] != null) data = decoded['contacts'];
-        if (decoded['customers'] != null) data = decoded['customers'];
+      final decoded = _parseAuthResponse(response.data);
+      final status = decoded?['status']?.toString().toLowerCase();
+      if (status != 'ok') return null;
+      dynamic raw = decoded?['data'];
+      if (raw is Map) {
+        if (raw['data'] != null) raw = raw['data'];
+        if (raw['contacts'] != null) raw = raw['contacts'];
+        if (raw['customers'] != null) raw = raw['customers'];
       }
       Map? contact;
-      if (data is List && data.isNotEmpty && data.first is Map) {
-        contact = data.first as Map;
-      } else if (data is Map) {
-        contact = data;
+      if (raw is List && raw.isNotEmpty && raw.first is Map) {
+        contact = raw.first as Map;
+      } else if (raw is Map) {
+        contact = raw;
       }
       if (contact == null) return null;
       final contactMap = Map<String, dynamic>.from(contact);
@@ -20936,10 +21341,11 @@ class _AuthPageState extends State<AuthPage> {
         photo = "";
       }
       return {
-        'id':
-            contactMap['id']?.toString() ??
-            contactMap['contact_id']?.toString() ??
-            "",
+        'id': contactMap['id']?.toString().trim().isNotEmpty == true
+            ? contactMap['id'].toString().trim()
+            : (contactMap['contact_id']?.toString().trim().isNotEmpty == true
+                  ? contactMap['contact_id'].toString().trim()
+                  : requestedId),
         if (name.isNotEmpty) 'name': name,
         if (photo.isNotEmpty) 'photo_url': photo,
       };
@@ -20951,49 +21357,7 @@ class _AuthPageState extends State<AuthPage> {
   Future<Map<String, dynamic>?> _fetchCustomerInfoByPhone(
     String phoneDigits,
   ) async {
-    if (phoneDigits.isEmpty) return null;
-    try {
-      final dio = _getAuthDio();
-      final response = await dio.get(
-        '/api.php/shop.customer.search',
-        queryParameters: {
-          'hash': 'phone/$phoneDigits',
-          'access_token': _shopApiToken,
-        },
-      );
-      dynamic decoded = response.data;
-      if (decoded is String) decoded = json.decode(decoded);
-      dynamic data = decoded;
-      if (decoded is Map) {
-        if (decoded['data'] != null) data = decoded['data'];
-        if (decoded['contacts'] != null) data = decoded['contacts'];
-        if (decoded['customers'] != null) data = decoded['customers'];
-      }
-      if (data is List && data.isNotEmpty && data.first is Map) {
-        final map = Map<String, dynamic>.from(data.first as Map);
-        final name = _extractName(map);
-        final photoRaw =
-            map['photo_url'] ??
-            map['photo_url_200'] ??
-            map['photo_url_96'] ??
-            map['photo_url_40'] ??
-            map['photo'] ??
-            map['userpic'] ??
-            map['userpic_url'];
-        var photo = photoRaw != null
-            ? _normalizePhotoUrl(photoRaw.toString())
-            : "";
-        if (photo.isNotEmpty && _isDefaultUserpic(photo)) photo = "";
-        return {
-          'id': map['id']?.toString() ?? map['contact_id']?.toString() ?? "",
-          if (name.isNotEmpty) 'name': name,
-          if (photo.isNotEmpty) 'photo_url': photo,
-        };
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
+    return null;
   }
 
   Future<void> _verifySmsCode() async {
@@ -32734,43 +33098,125 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     return DateTime.tryParse(tryIso);
   }
 
+  String _extractReviewPersonName(dynamic raw) {
+    if (raw == null) return "";
+    if (raw is String) return raw.trim();
+    if (raw is! Map) return "";
+
+    String pickAny(Iterable<String> keys) {
+      for (final key in keys) {
+        final value = raw[key];
+        if (value == null || value is Map || value is List) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      return "";
+    }
+
+    final direct = pickAny([
+      'name',
+      'contact_name',
+      'author',
+      'fullname',
+      'full_name',
+      'display_name',
+      'username',
+      'login',
+      'nick',
+      'nickname',
+    ]);
+    if (direct.isNotEmpty) return direct;
+
+    final parts =
+        [
+              raw['firstname'],
+              raw['first_name'],
+              raw['middlename'],
+              raw['middle_name'],
+              raw['lastname'],
+              raw['last_name'],
+            ]
+            .map((e) => e?.toString().trim() ?? "")
+            .where((e) => e.isNotEmpty)
+            .toList();
+    if (parts.isNotEmpty) return parts.join(" ");
+
+    return "";
+  }
+
+  String _extractReviewPersonId(dynamic raw) {
+    if (raw == null) return "";
+    if (raw is! Map) return "";
+    for (final key in const [
+      'id',
+      'contact_id',
+      'contactId',
+      'author_id',
+      'user_id',
+      'customer_id',
+    ]) {
+      final value = raw[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return "";
+  }
+
+  String _extractReviewPersonAvatar(dynamic raw) {
+    if (raw == null) return "";
+    if (raw is String) return raw.trim();
+    if (raw is! Map) return "";
+    for (final key in const [
+      'avatar',
+      'avatar_url',
+      'photo_url',
+      'photo_url_200',
+      'photo_url_96',
+      'photo_url_40',
+      'photo',
+      'userpic',
+      'userpic_url',
+      'image',
+      'image_url',
+      'img',
+      'src',
+      'url',
+    ]) {
+      final value = raw[key];
+      if (value == null || value is Map || value is List) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return "";
+  }
+
   String _resolveReviewAuthor(Map review) {
-    final author =
-        (review['name'] ??
-                review['author'] ??
-                review['contact_name'] ??
-                (review['contact'] is Map ? review['contact']['name'] : null))
-            ?.toString()
-            .trim() ??
-        "";
-    return author;
+    final direct = _extractReviewPersonName(review);
+    if (direct.isNotEmpty) return direct;
+    for (final candidate in [
+      review['contact'],
+      review['author'],
+      review['customer'],
+      review['user'],
+    ]) {
+      final nested = _extractReviewPersonName(candidate);
+      if (nested.isNotEmpty) return nested;
+    }
+    return "";
   }
 
   String _resolveReviewAvatarUrl(Map review) {
-    final direct =
-        review['photo_url'] ??
-        review['photo'] ??
-        review['userpic'] ??
-        review['userpic_url'] ??
-        review['contact_photo_url'] ??
-        review['contact_photo'] ??
-        review['photo_url_96'] ??
-        review['photo_url_40'];
-    if (direct != null && direct.toString().trim().isNotEmpty) {
-      return direct.toString();
-    }
-    final contact = review['contact'];
-    if (contact is Map) {
-      final c =
-          contact['photo_url'] ??
-          contact['photo'] ??
-          contact['userpic'] ??
-          contact['userpic_url'] ??
-          contact['photo_url_96'] ??
-          contact['photo_url_40'];
-      if (c != null && c.toString().trim().isNotEmpty) {
-        return c.toString();
-      }
+    final direct = _extractReviewPersonAvatar(review);
+    if (direct.isNotEmpty) return direct;
+    for (final candidate in [
+      review['contact'],
+      review['author'],
+      review['customer'],
+      review['user'],
+    ]) {
+      final nested = _extractReviewPersonAvatar(candidate);
+      if (nested.isNotEmpty) return nested;
     }
     return "";
   }
@@ -32917,14 +33363,25 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
       final avatarUrl = _resolveReviewAvatarUrl(review);
       final images = _extractReviewImages(review);
       final imagesFull = _extractReviewImages(review, preferFull: true);
-      final contactId =
+      final directContactId =
           (review['contact_id'] ??
                   review['contactId'] ??
                   review['author_id'] ??
                   review['user_id'] ??
                   review['customer_id'])
-              ?.toString() ??
+              ?.toString()
+              .trim() ??
           "";
+      final contactIdCandidates = [
+        directContactId,
+        _extractReviewPersonId(review['contact']),
+        _extractReviewPersonId(review['author']),
+        _extractReviewPersonId(review['customer']),
+        _extractReviewPersonId(review['user']),
+      ].where((value) => value.isNotEmpty);
+      final contactId = contactIdCandidates.isEmpty
+          ? ""
+          : contactIdCandidates.first;
       final authProvider = review['auth_provider']?.toString() ?? "";
       if (title.isEmpty && text.isEmpty && author.isEmpty && rating <= 0) {
         // keep empty comments out of the list
@@ -32949,6 +33406,10 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
         for (final item in comments) {
           if (item is Map) walk(item, depth + 1);
         }
+      } else if (comments is Map) {
+        for (final item in comments.values) {
+          if (item is Map) walk(item, depth + 1);
+        }
       }
     }
 
@@ -32956,9 +33417,41 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
     if (raw is Map) {
       if (raw['data'] is List) data = raw['data'];
       if (raw['reviews'] is List) data = raw['reviews'];
+      if (raw['data'] is Map) data = raw['data'];
+      if (raw['reviews'] is Map) data = raw['reviews'];
     }
     if (data is List) {
       final roots = data.whereType<Map>().toList();
+      roots.sort((a, b) {
+        final adRaw =
+            (a['datetime'] ??
+                    a['date'] ??
+                    a['created_at'] ??
+                    a['created'] ??
+                    a['time'])
+                ?.toString() ??
+            "";
+        final bdRaw =
+            (b['datetime'] ??
+                    b['date'] ??
+                    b['created_at'] ??
+                    b['created'] ??
+                    b['time'])
+                ?.toString() ??
+            "";
+        final ad =
+            _parseReviewDateTime(adRaw) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bd =
+            _parseReviewDateTime(bdRaw) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return bd.compareTo(ad);
+      });
+      for (final item in roots) {
+        walk(item, 0);
+      }
+    } else if (data is Map) {
+      final roots = data.values.whereType<Map>().toList();
       roots.sort((a, b) {
         final adRaw =
             (a['datetime'] ??
@@ -36307,6 +36800,633 @@ class NativeProductCard extends StatefulWidget {
   State<NativeProductCard> createState() => _NativeProductCardState();
 }
 
+class _ProfileViewedProductCard extends StatefulWidget {
+  final String productId;
+  final Map<String, dynamic> product;
+  final List<String> images;
+  final double width;
+  final bool isNewProduct;
+  final Future<List<String>> Function()? fetchGallery;
+  final VoidCallback onOpenProduct;
+  final VoidCallback onAddToCart;
+  final VoidCallback onFavoriteTap;
+  final VoidCallback onCompareTap;
+  final ValueListenable<int>? favoriteListenable;
+  final bool Function()? isFavoriteResolver;
+  final ValueListenable<int>? compareListenable;
+  final bool Function()? isCompareResolver;
+  final ValueListenable<int>? cartListenable;
+  final bool Function()? isInCartResolver;
+
+  const _ProfileViewedProductCard({
+    required this.productId,
+    required this.product,
+    required this.images,
+    required this.width,
+    required this.isNewProduct,
+    this.fetchGallery,
+    required this.onOpenProduct,
+    required this.onAddToCart,
+    required this.onFavoriteTap,
+    required this.onCompareTap,
+    this.favoriteListenable,
+    this.isFavoriteResolver,
+    this.compareListenable,
+    this.isCompareResolver,
+    this.cartListenable,
+    this.isInCartResolver,
+  });
+
+  @override
+  State<_ProfileViewedProductCard> createState() =>
+      _ProfileViewedProductCardState();
+}
+
+class _ProfileViewedProductCardState extends State<_ProfileViewedProductCard> {
+  static const int _loopSeed = 1000;
+  static final RegExp _sizeTokenRegex = RegExp(r'\.0x\d+\.');
+  static final RegExp _sizeAltRegex = RegExp(r'\.\d+x\d+\.');
+
+  PageController? _pageController;
+  int _currentImage = 0;
+  int _maxGalleryIndex = 2;
+  bool _pendingLoopRecenter = false;
+  List<String> _galleryImages = const <String>[];
+  Future<void>? _galleryLoadFuture;
+
+  List<String> _seedGalleryImages() {
+    final base = widget.images
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .take(5)
+        .toList(growable: false);
+    if (base.isNotEmpty) return base;
+
+    final fallback =
+        (widget.product['image'] ?? widget.product['image_url'])
+            ?.toString()
+            .trim() ??
+        '';
+    return fallback.isEmpty ? const <String>[] : <String>[fallback];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _applyGallery(_seedGalleryImages(), resetIndex: true);
+    _schedulePrefetchAround(0);
+    unawaited(_ensureGalleryLoaded());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileViewedProductCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.productId != widget.productId ||
+        !listEquals(oldWidget.images, widget.images)) {
+      _galleryLoadFuture = null;
+      _applyGallery(_seedGalleryImages(), resetIndex: true);
+      _schedulePrefetchAround(0);
+      unawaited(_ensureGalleryLoaded());
+    }
+  }
+
+  void _applyGallery(List<String> images, {required bool resetIndex}) {
+    final normalized = images
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .take(5)
+        .toList(growable: false);
+    final nextIndex = normalized.isEmpty
+        ? 0
+        : (resetIndex ? 0 : _currentImage.clamp(0, normalized.length - 1));
+    _pageController?.dispose();
+    _galleryImages = normalized;
+    _currentImage = nextIndex;
+    _maxGalleryIndex = normalized.length > 2
+        ? 2
+        : (normalized.length > 1 ? 1 : 0);
+    _pageController = normalized.length > 1
+        ? PageController(
+            initialPage: _loopInitialPage(
+              normalized.length,
+              currentIndex: nextIndex,
+            ),
+            keepPage: false,
+          )
+        : null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pageController == null || !_pageController!.hasClients) {
+        return;
+      }
+      final targetPage = _loopInitialPage(
+        normalized.length,
+        currentIndex: _currentImage,
+      );
+      final currentPage =
+          _pageController!.page?.round() ?? _pageController!.initialPage;
+      if (currentPage != targetPage) {
+        _pageController!.jumpToPage(targetPage);
+      }
+    });
+  }
+
+  Future<void> _ensureGalleryLoaded() async {
+    if (widget.fetchGallery == null || widget.productId.isEmpty) return;
+    if (_galleryLoadFuture != null) {
+      await _galleryLoadFuture;
+      return;
+    }
+    if (_galleryImages.length >= 5) return;
+
+    final future =
+        () async {
+          final fetched = await widget.fetchGallery!.call();
+          if (!mounted || fetched.isEmpty) return;
+          final normalized = fetched
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .take(5)
+              .toList(growable: false);
+          if (normalized.isEmpty) return;
+          if (!listEquals(normalized, _galleryImages)) {
+            setState(() {
+              _applyGallery(normalized, resetIndex: false);
+            });
+          }
+          _schedulePrefetchAround(_currentImage);
+        }().whenComplete(() {
+          _galleryLoadFuture = null;
+        });
+
+    _galleryLoadFuture = future;
+    await future;
+  }
+
+  void _schedulePrefetchAround(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _prefetchAround(index);
+    });
+  }
+
+  void _prefetchAround(int index) {
+    if (_galleryImages.isEmpty) return;
+    final start = math.max(0, index - 1);
+    final end = math.min(_galleryImages.length - 1, index + 1);
+    for (int i = start; i <= end; i++) {
+      final url = _galleryImages[i];
+      if (url.isEmpty) continue;
+      unawaited(
+        precacheImage(
+          CachedNetworkImageProvider(url),
+          context,
+        ).catchError((_) {}),
+      );
+    }
+  }
+
+  int _loopInitialPage(int imageCount, {int currentIndex = 0}) {
+    if (imageCount <= 1) return 0;
+    final safeIndex = currentIndex.clamp(0, imageCount - 1);
+    return imageCount * _loopSeed + safeIndex;
+  }
+
+  int _loopPageToImageIndex(int pageIndex, int imageCount) {
+    if (imageCount <= 1) return 0;
+    return pageIndex % imageCount;
+  }
+
+  void _scheduleLoopRecenter(int imageCount) {
+    if (imageCount <= 1 || _pendingLoopRecenter) return;
+    _pendingLoopRecenter = true;
+    final targetPage = _loopInitialPage(
+      imageCount,
+      currentIndex: _currentImage.clamp(0, imageCount - 1),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingLoopRecenter = false;
+      if (!mounted || _pageController == null || !_pageController!.hasClients) {
+        return;
+      }
+      final currentPage =
+          _pageController!.page?.round() ?? _pageController!.initialPage;
+      if (currentPage != targetPage) {
+        _pageController!.jumpToPage(targetPage);
+      }
+    });
+  }
+
+  void _handleLoopPageChanged(int pageIndex, int imageCount) {
+    if (!mounted || imageCount <= 1) return;
+    final actualIndex = _loopPageToImageIndex(pageIndex, imageCount);
+    final nextMax = (actualIndex + 1).clamp(0, imageCount - 1);
+    if (_currentImage != actualIndex || nextMax > _maxGalleryIndex) {
+      setState(() {
+        _currentImage = actualIndex;
+        if (nextMax > _maxGalleryIndex) {
+          _maxGalleryIndex = nextMax;
+        }
+      });
+    }
+    _schedulePrefetchAround(actualIndex);
+    _scheduleLoopRecenter(imageCount);
+  }
+
+  String _toThumbUrl(String url) {
+    if (url.isEmpty) return url;
+    if (_sizeTokenRegex.hasMatch(url)) {
+      return url.replaceAll(_sizeTokenRegex, '.0x200.');
+    }
+    if (_sizeAltRegex.hasMatch(url)) {
+      return url.replaceAll(_sizeAltRegex, '.0x200.');
+    }
+    return url;
+  }
+
+  Widget _overlayBadge(
+    String text,
+    Color color, {
+    Color textColor = Colors.black,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            offset: Offset(0, 3.2),
+            blurRadius: 18,
+            spreadRadius: -5.6,
+          ),
+        ],
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontFamily: 'Roboto',
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          color: textColor,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGalleryImage(
+    String imageUrl, {
+    required int cacheWidth,
+    required int cacheHeight,
+  }) {
+    if (imageUrl.isEmpty) {
+      return Container(
+        color: Colors.grey.shade50,
+        alignment: Alignment.center,
+        child: const Icon(
+          Icons.image_not_supported_outlined,
+          color: Colors.black26,
+          size: 22,
+        ),
+      );
+    }
+
+    final thumbUrl = _toThumbUrl(imageUrl);
+    final showThumb = thumbUrl.isNotEmpty && thumbUrl != imageUrl;
+
+    return CachedNetworkImage(
+      imageUrl: imageUrl,
+      fit: BoxFit.cover,
+      memCacheHeight: cacheHeight,
+      memCacheWidth: cacheWidth,
+      filterQuality: FilterQuality.low,
+      fadeInDuration: const Duration(milliseconds: 200),
+      fadeOutDuration: const Duration(milliseconds: 120),
+      useOldImageOnUrlChange: true,
+      placeholder: (_, __) {
+        if (showThumb) {
+          return Image(
+            image: CachedNetworkImageProvider(thumbUrl),
+            fit: BoxFit.cover,
+          );
+        }
+        return Container(color: Colors.grey.shade50);
+      },
+      errorWidget: (_, __, ___) => Container(
+        color: Colors.grey.shade50,
+        alignment: Alignment.center,
+        child: const Icon(
+          Icons.broken_image_outlined,
+          color: Colors.black26,
+          size: 22,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIndicators(bool useGallery) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(5, (index) {
+          final isActive = useGallery
+              ? index == _currentImage.clamp(0, 4)
+              : (_galleryImages.isNotEmpty && index == 0);
+          return Container(
+            width: 14,
+            height: 2,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            decoration: BoxDecoration(
+              color: isActive ? Colors.black : Colors.black12,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildCard({
+    required bool isFavorite,
+    required bool isCompared,
+    required bool isInCart,
+  }) {
+    final product = widget.product;
+    final images = _galleryImages;
+    final useGallery = images.length > 1 && _pageController != null;
+    final imageHeight = widget.width * 4 / 3;
+    final cardHeight = imageHeight + 124;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cacheWidth = (widget.width * dpr).round().clamp(1, 2000).toInt();
+    final cacheHeight = (imageHeight * dpr).round().clamp(1, 2000).toInt();
+    final fallbackImage = images.isNotEmpty ? images.first : '';
+    final priceText = product['price']?.toString().trim() ?? '';
+    final oldPriceText = product['old_price']?.toString().trim() ?? '';
+    final discountText = product['discount']?.toString().trim() ?? '';
+    final benefitText = product['benefit']?.toString().trim() ?? '';
+
+    return SizedBox(
+      width: widget.width,
+      height: cardHeight,
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: imageHeight,
+                width: double.infinity,
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(8),
+                      ),
+                      child: useGallery
+                          ? PageView.builder(
+                              key: ValueKey('pv_${widget.productId}'),
+                              controller: _pageController,
+                              itemCount: null,
+                              onPageChanged: (index) {
+                                _handleLoopPageChanged(index, images.length);
+                              },
+                              itemBuilder: (context, pageIndex) {
+                                final imageIndex = _loopPageToImageIndex(
+                                  pageIndex,
+                                  images.length,
+                                );
+                                final imageUrl = images[imageIndex];
+                                final allowLoad =
+                                    imageIndex <= _maxGalleryIndex;
+                                return GestureDetector(
+                                  onTap: widget.onOpenProduct,
+                                  child: _buildGalleryImage(
+                                    allowLoad ? imageUrl : fallbackImage,
+                                    cacheWidth: cacheWidth,
+                                    cacheHeight: cacheHeight,
+                                  ),
+                                );
+                              },
+                            )
+                          : GestureDetector(
+                              onTap: widget.onOpenProduct,
+                              child: _buildGalleryImage(
+                                fallbackImage,
+                                cacheWidth: cacheWidth,
+                                cacheHeight: cacheHeight,
+                              ),
+                            ),
+                    ),
+                    if (widget.isNewProduct ||
+                        discountText.isNotEmpty ||
+                        benefitText.isNotEmpty)
+                      Positioned(
+                        top: 10,
+                        left: 10,
+                        right: 10,
+                        child: Wrap(
+                          spacing: 4,
+                          runSpacing: 5,
+                          children: [
+                            if (widget.isNewProduct)
+                              _overlayBadge(
+                                'НОВИНКА',
+                                const Color(0xFF42BA96),
+                                textColor: Colors.white,
+                              ),
+                            if (discountText.isNotEmpty)
+                              _overlayBadge(
+                                discountText,
+                                const Color(0xFFFAD776),
+                              ),
+                            if (benefitText.isNotEmpty)
+                              _overlayBadge(
+                                benefitText,
+                                const Color(0xFFFAD776),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              _buildIndicators(useGallery),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Text(
+                                priceText,
+                                style: _cardPriceStyle.copyWith(fontSize: 15),
+                              ),
+                              if (oldPriceText.isNotEmpty) ...[
+                                const SizedBox(width: 5),
+                                Text(
+                                  oldPriceText,
+                                  style: _cardOldPriceStyle.copyWith(
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onOpenProduct,
+                        child: Text(
+                          product['name']?.toString() ?? '',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: _cardNameStyle.copyWith(
+                            fontSize: 12,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: widget.onAddToCart,
+                              child: Container(
+                                height: 28,
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isInCart ? Colors.white : Colors.black,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: isInCart
+                                      ? Border.all(
+                                          color: Colors.black,
+                                          width: 1,
+                                        )
+                                      : null,
+                                ),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    isInCart ? 'В корзине' : 'В корзину',
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontFamily: 'Roboto',
+                                      fontSize: isInCart ? 10.5 : 11.5,
+                                      fontWeight: FontWeight.w500,
+                                      color: isInCart
+                                          ? Colors.black
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: widget.onFavoriteTap,
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Icon(
+                                Icons.favorite_border,
+                                size: 20,
+                                color: isFavorite
+                                    ? Colors.black
+                                    : Colors.black26,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: widget.onCompareTap,
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Icon(
+                                Icons.bar_chart_outlined,
+                                size: 20,
+                                color: isCompared
+                                    ? Colors.black
+                                    : Colors.black26,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final listenables = <Listenable>[];
+    if (widget.favoriteListenable != null) {
+      listenables.add(widget.favoriteListenable!);
+    }
+    if (widget.compareListenable != null) {
+      listenables.add(widget.compareListenable!);
+    }
+    if (widget.cartListenable != null) {
+      listenables.add(widget.cartListenable!);
+    }
+
+    Widget buildWithState() {
+      return _buildCard(
+        isFavorite: widget.isFavoriteResolver?.call() ?? false,
+        isCompared: widget.isCompareResolver?.call() ?? false,
+        isInCart: widget.isInCartResolver?.call() ?? false,
+      );
+    }
+
+    if (listenables.isEmpty) return buildWithState();
+
+    return AnimatedBuilder(
+      animation: Listenable.merge(listenables),
+      builder: (context, _) => buildWithState(),
+    );
+  }
+}
+
 class _MyOrdersPage extends StatelessWidget {
   final Future<List<Map<String, dynamic>>> ordersFuture;
   final Future<Map<String, dynamic>?> Function(String orderId) loadOrderDetails;
@@ -36823,6 +37943,10 @@ class _NativeProductCardState extends State<NativeProductCard>
   static const int _deferHighResMs = 460;
   int _currentIdx = 0;
   int _maxGalleryIndex = 2;
+  double _galleryHorizontalDragDx = 0.0;
+  bool _galleryActivated = false;
+  String _trackedMainImageUrl = "";
+  bool _mainImageReady = false;
   final ValueNotifier<int> _currentIndexNotifier = ValueNotifier<int>(0);
   PageController? _controller;
   bool _wasScrolling = false;
@@ -36923,6 +38047,12 @@ class _NativeProductCardState extends State<NativeProductCard>
 
   String _toLargeUrl(String url) {
     if (url.isEmpty) return url;
+    // Для карточек категорий не повышаем размер URL до 0x700:
+    // у части изображений сервер отдаёт другую кадрировку, из-за чего
+    // во время скролла фото визуально "прыгает".
+    if (widget.deferHighRes) {
+      return url;
+    }
     if (_sizeTokenRegex.hasMatch(url)) {
       return url.replaceAll(_sizeTokenRegex, '.0x700.');
     }
@@ -36978,6 +38108,123 @@ class _NativeProductCardState extends State<NativeProductCard>
     }
   }
 
+  void _markMainImageReady(String imageUrl) {
+    if (imageUrl.isEmpty) return;
+    if (_trackedMainImageUrl != imageUrl || _mainImageReady) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_trackedMainImageUrl != imageUrl || _mainImageReady) return;
+      setState(() {
+        _mainImageReady = true;
+      });
+    });
+  }
+
+  void _activateGalleryForInteraction(int imageCount) {
+    if (_galleryActivated ||
+        widget.scrollMainImageListenable == null ||
+        imageCount <= 1) {
+      return;
+    }
+    _deferHighResTimer?.cancel();
+    setState(() {
+      _galleryActivated = true;
+      _mainImageReady = true;
+      _preferThumb = false;
+      _maxGalleryIndex = imageCount > 2 ? 2 : (imageCount > 1 ? 1 : 0);
+    });
+  }
+
+  void _runWhenGalleryControllerReady(VoidCallback action, {int attempts = 3}) {
+    if (!mounted || attempts <= 0) return;
+    if (_controller != null && _controller!.hasClients) {
+      action();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _runWhenGalleryControllerReady(action, attempts: attempts - 1);
+    });
+  }
+
+  void _animateGalleryRelative(int delta, int imageCount) {
+    if (_controller == null || !_controller!.hasClients || imageCount <= 1) {
+      return;
+    }
+    final int currentPage =
+        _controller!.page?.round() ?? _controller!.initialPage;
+    final int targetPage = currentPage + delta;
+    final int targetIndex = _loopPageToImageIndex(targetPage, imageCount);
+    final int nextMax = (targetIndex + 1).clamp(0, imageCount - 1);
+    if (nextMax > _maxGalleryIndex) {
+      setState(() {
+        _maxGalleryIndex = nextMax;
+      });
+    }
+    _controller!.animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _handleGalleryHorizontalDragEnd(
+    DragEndDetails details,
+    int imageCount,
+    double cardWidth,
+  ) {
+    final double dragDx = _galleryHorizontalDragDx;
+    _galleryHorizontalDragDx = 0.0;
+    if (imageCount <= 1) return;
+
+    final double velocity =
+        details.primaryVelocity ?? details.velocity.pixelsPerSecond.dx;
+    final double dragThreshold = (cardWidth * 0.12).clamp(18.0, 56.0);
+    final bool goNext = dragDx <= -dragThreshold || velocity <= -480;
+    final bool goPrev = dragDx >= dragThreshold || velocity >= 480;
+
+    if (goNext) {
+      if (!_galleryActivated && widget.scrollMainImageListenable != null) {
+        _activateGalleryForInteraction(imageCount);
+        _runWhenGalleryControllerReady(() {
+          _animateGalleryRelative(1, imageCount);
+        });
+        return;
+      }
+      if (_controller == null || !_controller!.hasClients) {
+        _runWhenGalleryControllerReady(() {
+          _animateGalleryRelative(1, imageCount);
+        });
+        return;
+      }
+      _animateGalleryRelative(1, imageCount);
+      return;
+    }
+    if (goPrev) {
+      if (!_galleryActivated && widget.scrollMainImageListenable != null) {
+        _activateGalleryForInteraction(imageCount);
+        _runWhenGalleryControllerReady(() {
+          _animateGalleryRelative(-1, imageCount);
+        });
+        return;
+      }
+      if (_controller == null || !_controller!.hasClients) {
+        _runWhenGalleryControllerReady(() {
+          _animateGalleryRelative(-1, imageCount);
+        });
+        return;
+      }
+      _animateGalleryRelative(-1, imageCount);
+      return;
+    }
+    if (_controller == null || !_controller!.hasClients) {
+      _runWhenGalleryControllerReady(() {
+        _scheduleLoopRecenter(imageCount);
+      });
+      return;
+    }
+    _scheduleLoopRecenter(imageCount);
+  }
+
   @override
   void didUpdateWidget(NativeProductCard oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -37007,6 +38254,9 @@ class _NativeProductCardState extends State<NativeProductCard>
         "oldLen=${oldImages.length} newLen=${newImages.length} "
         "oldFirst=$oldFirst newFirst=$newFirst",
       );
+      _galleryActivated = false;
+      _trackedMainImageUrl = "";
+      _mainImageReady = false;
       _maxGalleryIndex = 2;
       _resetController();
     }
@@ -37030,10 +38280,32 @@ class _NativeProductCardState extends State<NativeProductCard>
     super.dispose();
   }
 
-  Widget _buildCard(BuildContext context, {required bool isScrolling}) {
-    final p = widget.product;
-    final String productId = p['id']?.toString() ?? "";
-    final bool isNewProduct = widget.isNew;
+  Listenable? _buildCardMediaAnimation() {
+    final listenables = <Listenable>[];
+    if (widget.galleryListenable != null) {
+      listenables.add(widget.galleryListenable!);
+    }
+    if (widget.scrollListenable != null) {
+      listenables.add(widget.scrollListenable!);
+    }
+    if (widget.scrollMainImageListenable != null) {
+      listenables.add(widget.scrollMainImageListenable!);
+    }
+    if (listenables.isEmpty) return null;
+    return Listenable.merge(listenables);
+  }
+
+  Widget _buildCardMediaSection({
+    required dynamic p,
+    required String productId,
+    required bool isNewProduct,
+    required double cardWidth,
+    required int cacheWidth,
+    required int cacheHeight,
+    required int mainCacheWidth,
+    required int mainCacheHeight,
+  }) {
+    final bool isScrolling = widget.scrollListenable?.value ?? false;
     List<String> images = List<String>.from(p['images'] ?? []);
     if (images.isEmpty && p['image'] != null) images = [p['image']];
     String mainImage = images.isNotEmpty ? images.first : "";
@@ -37054,20 +38326,32 @@ class _NativeProductCardState extends State<NativeProductCard>
     final bool hasGallery = displayImages.length > 1;
     final Set<String> allowedIds =
         widget.scrollMainImageListenable?.value ?? const <String>{};
+    final bool galleryInteractionOverride = _galleryActivated;
     final bool allowGallery = widget.scrollMainImageListenable == null
         ? true
-        : (productId.isNotEmpty && allowedIds.contains(productId));
+        : (productId.isNotEmpty &&
+              (allowedIds.contains(productId) || galleryInteractionOverride));
     final bool allowHighResMain = widget.scrollMainImageListenable == null
         ? true
-        : (productId.isNotEmpty && allowedIds.contains(productId));
+        : (productId.isNotEmpty &&
+              (allowedIds.contains(productId) || galleryInteractionOverride));
     final bool useThumbForMain =
-        (widget.deferHighRes && (_preferThumb || isScrolling)) ||
-        !allowHighResMain;
-    final bool useGallery =
-        hasGallery &&
-        !isScrolling &&
+        (widget.deferHighRes && _preferThumb) || !allowHighResMain;
+    final bool categoryRequiresGalleryActivation =
+        widget.scrollMainImageListenable != null;
+    if (_trackedMainImageUrl != mainImage) {
+      _trackedMainImageUrl = mainImage;
+      _mainImageReady = mainImage.isEmpty;
+    }
+    final bool canActivateGallery = hasGallery;
+    final bool canUseGallery =
+        canActivateGallery &&
         allowGallery &&
-        !(widget.deferHighRes && _preferThumb);
+        (!(widget.deferHighRes && _preferThumb) || _galleryActivated);
+    final bool useGallery =
+        canUseGallery &&
+        (!categoryRequiresGalleryActivation ||
+            (_galleryActivated && _mainImageReady));
     if (_lastLoopImageCount != displayImages.length) {
       _lastLoopImageCount = displayImages.length;
       if (useGallery && displayImages.length > 1) {
@@ -37086,15 +38370,9 @@ class _NativeProductCardState extends State<NativeProductCard>
         (useThumbForMain && mainImageThumb.isNotEmpty)
         ? mainImageThumb
         : mainImageFull;
-    final String mainImageFallback = mainImageThumb.isNotEmpty
-        ? mainImageThumb
-        : mainImageFull;
     final int maxGalleryIndex = displayImages.isEmpty
         ? 0
-        : (isScrolling ? 0 : _maxGalleryIndex).clamp(
-            0,
-            displayImages.length - 1,
-          );
+        : _maxGalleryIndex.clamp(0, displayImages.length - 1);
     final String firstImageSafe = mainImage;
     if (_lastLoggedImagesLen != displayImages.length ||
         _lastLoggedFirstImage != firstImageSafe) {
@@ -37113,7 +38391,6 @@ class _NativeProductCardState extends State<NativeProductCard>
     final bool allowMainImage = mainImage.isNotEmpty;
     if (isScrolling && !_wasScrolling) {
       _cardLog("SCROLL_START id=${p['id']}");
-      _setCurrentIndex(0);
     }
     if (_wasScrolling && !isScrolling && hasGallery) {
       _cardLog("SCROLL_STOP id=${p['id']}");
@@ -37136,48 +38413,47 @@ class _NativeProductCardState extends State<NativeProductCard>
       displayImages.length,
       currentIndex: _currentIdx,
     );
-    _ensureControllerForGallery(
-      hasGallery && !isScrolling,
-      initialPage: loopInitialPage,
-    );
-
-    final double screenWidth = MediaQuery.of(context).size.width;
-    final double dpr = MediaQuery.of(context).devicePixelRatio;
-    final double cardWidth = widget.isHorizontal
-        ? (widget.horizontalCardWidth ?? (screenWidth - 44) / 2)
-        : (screenWidth - 8 - 8) / 2;
-    final double imageHeight = cardWidth * 4 / 3;
-    final int cacheWidth = (cardWidth * dpr).round().clamp(1, 2000).toInt();
-    final int cacheHeight = (imageHeight * dpr).round().clamp(1, 2000).toInt();
-    final int mainCacheWidth = cacheWidth;
-    final int mainCacheHeight = cacheHeight;
-    return Container(
-      width: widget.isHorizontal ? cardWidth : null,
-      margin: widget.isHorizontal
-          ? const EdgeInsets.symmetric(vertical: 5)
-          : null,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.grey.shade200,
-        ), // Обводка чуть темнее фона
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AspectRatio(
-            aspectRatio: 3 / 4,
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(8),
-                  ),
-                  child: useGallery
-                      ? PageView.builder(
+    _ensureControllerForGallery(useGallery, initialPage: loopInitialPage);
+    final bool stableCategoryImageLoading =
+        widget.scrollMainImageListenable != null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AspectRatio(
+          aspectRatio: 3 / 4,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(8),
+                ),
+                child: useGallery
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onTap,
+                        onHorizontalDragStart: (_) {
+                          _galleryHorizontalDragDx = 0.0;
+                        },
+                        onHorizontalDragUpdate: (details) {
+                          _galleryHorizontalDragDx +=
+                              details.primaryDelta ?? details.delta.dx;
+                        },
+                        onHorizontalDragCancel: () {
+                          _galleryHorizontalDragDx = 0.0;
+                          _scheduleLoopRecenter(displayImages.length);
+                        },
+                        onHorizontalDragEnd: (details) {
+                          _handleGalleryHorizontalDragEnd(
+                            details,
+                            displayImages.length,
+                            cardWidth,
+                          );
+                        },
+                        child: PageView.builder(
                           key: ValueKey("pv_${p['id']}"),
                           controller: _controller!,
+                          physics: const NeverScrollableScrollPhysics(),
                           itemCount: null,
                           onPageChanged: (idx) {
                             _handleLoopPageChanged(idx, displayImages.length);
@@ -37194,44 +38470,136 @@ class _NativeProductCardState extends State<NativeProductCard>
                             final bool allowLoad =
                                 imageIndex <= maxGalleryIndex;
                             if (!allowLoad) {
-                              return GestureDetector(
-                                onTap: widget.onTap,
-                                child: mainImageFallback.isNotEmpty
-                                    ? Image(
+                              final String previewUrl = showThumb
+                                  ? thumbUrl
+                                  : imageUrl;
+                              return previewUrl.isNotEmpty
+                                  ? SizedBox.expand(
+                                      child: Image(
                                         image: ResizeImage(
                                           CachedNetworkImageProvider(
-                                            mainImageFallback,
+                                            previewUrl,
                                           ),
                                           width: cacheWidth,
                                           height: cacheHeight,
                                         ),
+                                        width: double.infinity,
+                                        height: double.infinity,
                                         fit: BoxFit.cover,
-                                      )
-                                    : Container(color: Colors.grey.shade50),
-                              );
+                                      ),
+                                    )
+                                  : Container(color: Colors.grey.shade50);
                             }
-                            return GestureDetector(
-                              onTap: widget.onTap,
-                              child: CachedNetworkImage(
-                                imageUrl: imageUrl,
-                                fit: BoxFit.cover,
-                                memCacheHeight: cacheHeight,
-                                memCacheWidth: cacheWidth,
-                                filterQuality: FilterQuality.low,
-                                fadeInDuration: const Duration(
-                                  milliseconds: 200,
-                                ),
-                                fadeOutDuration: const Duration(
-                                  milliseconds: 120,
-                                ),
-                                useOldImageOnUrlChange: true,
-                                placeholder: (context, url) {
-                                  if (showThumb) {
-                                    return Image(
+                            return CachedNetworkImage(
+                              imageUrl: imageUrl,
+                              fit: BoxFit.cover,
+                              memCacheHeight: cacheHeight,
+                              memCacheWidth: cacheWidth,
+                              filterQuality: FilterQuality.low,
+                              fadeInDuration: stableCategoryImageLoading
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 200),
+                              fadeOutDuration: stableCategoryImageLoading
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 120),
+                              useOldImageOnUrlChange: true,
+                              placeholder: (context, url) {
+                                if (stableCategoryImageLoading) {
+                                  return Container(color: Colors.grey.shade50);
+                                }
+                                if (showThumb) {
+                                  return SizedBox.expand(
+                                    child: Image(
                                       image: CachedNetworkImageProvider(
                                         thumbUrl,
                                       ),
+                                      width: double.infinity,
+                                      height: double.infinity,
                                       fit: BoxFit.cover,
+                                    ),
+                                  );
+                                }
+                                return Container(color: Colors.grey.shade50);
+                              },
+                              errorWidget: (context, url, error) =>
+                                  const Icon(Icons.broken_image),
+                            );
+                          },
+                        ),
+                      )
+                    : GestureDetector(
+                        onTap: widget.onTap,
+                        onHorizontalDragStart: canActivateGallery
+                            ? (_) {
+                                _activateGalleryForInteraction(
+                                  displayImages.length,
+                                );
+                                _galleryHorizontalDragDx = 0.0;
+                              }
+                            : null,
+                        onHorizontalDragUpdate: canActivateGallery
+                            ? (details) {
+                                _galleryHorizontalDragDx +=
+                                    details.primaryDelta ?? details.delta.dx;
+                              }
+                            : null,
+                        onHorizontalDragCancel: canActivateGallery
+                            ? () {
+                                _galleryHorizontalDragDx = 0.0;
+                              }
+                            : null,
+                        onHorizontalDragEnd: canActivateGallery
+                            ? (details) {
+                                _handleGalleryHorizontalDragEnd(
+                                  details,
+                                  displayImages.length,
+                                  cardWidth,
+                                );
+                              }
+                            : null,
+                        child: (!allowMainImage || mainImage.isEmpty)
+                            ? Container(color: Colors.grey.shade50)
+                            : CachedNetworkImage(
+                                imageUrl: mainImageToRender,
+                                imageBuilder: (context, imageProvider) {
+                                  _markMainImageReady(mainImage);
+                                  return SizedBox.expand(
+                                    child: Image(
+                                      image: imageProvider,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      fit: BoxFit.cover,
+                                      filterQuality: FilterQuality.low,
+                                    ),
+                                  );
+                                },
+                                fit: BoxFit.cover,
+                                memCacheHeight: mainCacheHeight,
+                                memCacheWidth: mainCacheWidth,
+                                filterQuality: FilterQuality.low,
+                                fadeInDuration: stableCategoryImageLoading
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 200),
+                                fadeOutDuration: stableCategoryImageLoading
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 120),
+                                useOldImageOnUrlChange: true,
+                                placeholder: (context, url) {
+                                  if (stableCategoryImageLoading) {
+                                    return Container(
+                                      color: Colors.grey.shade50,
+                                    );
+                                  }
+                                  if (showThumbPlaceholder) {
+                                    return SizedBox.expand(
+                                      child: Image(
+                                        image: CachedNetworkImageProvider(
+                                          mainImageThumb,
+                                        ),
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                        fit: BoxFit.cover,
+                                      ),
                                     );
                                   }
                                   return Container(color: Colors.grey.shade50);
@@ -37239,159 +38607,179 @@ class _NativeProductCardState extends State<NativeProductCard>
                                 errorWidget: (context, url, error) =>
                                     const Icon(Icons.broken_image),
                               ),
-                            );
-                          },
-                        )
-                      : GestureDetector(
-                          onTap: widget.onTap,
-                          child: (!allowMainImage || mainImage.isEmpty)
-                              ? Container(color: Colors.grey.shade50)
-                              : CachedNetworkImage(
-                                  imageUrl: mainImageToRender,
-                                  fit: BoxFit.cover,
-                                  memCacheHeight: mainCacheHeight,
-                                  memCacheWidth: mainCacheWidth,
-                                  filterQuality: FilterQuality.low,
-                                  fadeInDuration: const Duration(
-                                    milliseconds: 200,
-                                  ),
-                                  fadeOutDuration: const Duration(
-                                    milliseconds: 120,
-                                  ),
-                                  useOldImageOnUrlChange: true,
-                                  placeholder: (context, url) {
-                                    if (showThumbPlaceholder) {
-                                      return Image(
-                                        image: CachedNetworkImageProvider(
-                                          mainImageThumb,
-                                        ),
-                                        fit: BoxFit.cover,
-                                      );
-                                    }
-                                    return Container(
-                                      color: Colors.grey.shade50,
-                                    );
-                                  },
-                                  errorWidget: (context, url, error) =>
-                                      const Icon(Icons.broken_image),
-                                ),
-                        ),
-                ),
-                // Бейджи (скидка и выгода) - перенес наверх
-                Positioned(
-                  top: 10,
-                  left: 10,
-                  right: 10,
-                  child: Wrap(
-                    spacing: 4,
-                    runSpacing: 5,
-                    children: [
-                      if (isNewProduct)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            right:
-                                (p['discount'] != null || p['benefit'] != null)
-                                ? 6
-                                : 0,
-                          ),
-                          child: _badge(
-                            "НОВИНКА",
-                            const Color(0xFF42BA96),
-                            textColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 3,
-                            ),
-                            letterSpacing: 1.0,
-                            fontFamily: "Roboto",
-                            fontWeight: FontWeight.w500,
-                            fontSize: 10,
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x33000000),
-                                offset: Offset(0, 3.2),
-                                blurRadius: 18,
-                                spreadRadius: -5.6,
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (p['discount'] != null)
-                        _badge(
-                          p['discount'],
-                          const Color(0xFFFAD776),
-                          textColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 3,
-                          ),
-                          letterSpacing: 1.0,
-                          fontFamily: "Roboto",
-                          fontWeight: FontWeight.w500,
-                          fontSize: 10,
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x33000000),
-                              offset: Offset(0, 3.2),
-                              blurRadius: 18,
-                              spreadRadius: -5.6,
-                            ),
-                          ],
-                        ),
-                      if (p['benefit'] != null)
-                        _badge(
-                          p['benefit'],
-                          const Color(0xFFFAD776),
-                          textColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 3,
-                          ),
-                          letterSpacing: 1.0,
-                          fontFamily: "Roboto",
-                          fontWeight: FontWeight.w500,
-                          fontSize: 10,
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x33000000),
-                              offset: Offset(0, 3.2),
-                              blurRadius: 18,
-                              spreadRadius: -5.6,
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Индикаторы-полоски (ленивые, всегда видимы)
-          Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 4),
-            child: ValueListenableBuilder<int>(
-              valueListenable: _currentIndexNotifier,
-              builder: (context, currentIdx, _) {
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(5, (index) {
-                    final bool isActive = useGallery
-                        ? index == currentIdx.clamp(0, 4)
-                        : (displayImages.isNotEmpty && index == 0);
-                    return Container(
-                      width: 14,
-                      height: 2,
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      decoration: BoxDecoration(
-                        color: isActive ? Colors.black : Colors.black12,
-                        borderRadius: BorderRadius.circular(2),
                       ),
-                    );
-                  }),
-                );
-              },
-            ),
+              ),
+              Positioned(
+                top: 10,
+                left: 10,
+                right: 10,
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 5,
+                  children: [
+                    if (isNewProduct)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          right: (p['discount'] != null || p['benefit'] != null)
+                              ? 6
+                              : 0,
+                        ),
+                        child: _badge(
+                          "НОВИНКА",
+                          const Color(0xFF42BA96),
+                          textColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 3,
+                          ),
+                          letterSpacing: 1.0,
+                          fontFamily: "Roboto",
+                          fontWeight: FontWeight.w500,
+                          fontSize: 10,
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x33000000),
+                              offset: Offset(0, 3.2),
+                              blurRadius: 18,
+                              spreadRadius: -5.6,
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (p['discount'] != null)
+                      _badge(
+                        p['discount'],
+                        const Color(0xFFFAD776),
+                        textColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 3,
+                        ),
+                        letterSpacing: 1.0,
+                        fontFamily: "Roboto",
+                        fontWeight: FontWeight.w500,
+                        fontSize: 10,
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x33000000),
+                            offset: Offset(0, 3.2),
+                            blurRadius: 18,
+                            spreadRadius: -5.6,
+                          ),
+                        ],
+                      ),
+                    if (p['benefit'] != null)
+                      _badge(
+                        p['benefit'],
+                        const Color(0xFFFAD776),
+                        textColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 3,
+                        ),
+                        letterSpacing: 1.0,
+                        fontFamily: "Roboto",
+                        fontWeight: FontWeight.w500,
+                        fontSize: 10,
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x33000000),
+                            offset: Offset(0, 3.2),
+                            blurRadius: 18,
+                            spreadRadius: -5.6,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: ValueListenableBuilder<int>(
+            valueListenable: _currentIndexNotifier,
+            builder: (context, currentIdx, _) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  final bool isActive = useGallery
+                      ? index == currentIdx.clamp(0, 4)
+                      : (displayImages.isNotEmpty && index == 0);
+                  return Container(
+                    width: 14,
+                    height: 2,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: isActive ? Colors.black : Colors.black12,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCard(BuildContext context) {
+    final p = widget.product;
+    final String productId = p['id']?.toString() ?? "";
+    final bool isNewProduct = widget.isNew;
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double dpr = MediaQuery.of(context).devicePixelRatio;
+    final double cardWidth = widget.isHorizontal
+        ? (widget.horizontalCardWidth ?? (screenWidth - 44) / 2)
+        : (screenWidth - 8 - 8) / 2;
+    final double imageHeight = cardWidth * 4 / 3;
+    final int cacheWidth = (cardWidth * dpr).round().clamp(1, 2000).toInt();
+    final int cacheHeight = (imageHeight * dpr).round().clamp(1, 2000).toInt();
+    final int mainCacheWidth = cacheWidth;
+    final int mainCacheHeight = cacheHeight;
+    final Listenable? cardMediaAnimation = _buildCardMediaAnimation();
+    final Widget mediaSection = cardMediaAnimation == null
+        ? _buildCardMediaSection(
+            p: p,
+            productId: productId,
+            isNewProduct: isNewProduct,
+            cardWidth: cardWidth,
+            cacheWidth: cacheWidth,
+            cacheHeight: cacheHeight,
+            mainCacheWidth: mainCacheWidth,
+            mainCacheHeight: mainCacheHeight,
+          )
+        : AnimatedBuilder(
+            animation: cardMediaAnimation,
+            builder: (context, _) {
+              return _buildCardMediaSection(
+                p: p,
+                productId: productId,
+                isNewProduct: isNewProduct,
+                cardWidth: cardWidth,
+                cacheWidth: cacheWidth,
+                cacheHeight: cacheHeight,
+                mainCacheWidth: mainCacheWidth,
+                mainCacheHeight: mainCacheHeight,
+              );
+            },
+          );
+    return Container(
+      width: widget.isHorizontal ? cardWidth : null,
+      margin: widget.isHorizontal
+          ? const EdgeInsets.symmetric(vertical: 5)
+          : null,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RepaintBoundary(child: mediaSection),
           Expanded(
             child: Padding(
               padding:
@@ -37400,12 +38788,11 @@ class _NativeProductCardState extends State<NativeProductCard>
                     widget.isHorizontal ? 12 : 8,
                     6,
                     widget.isHorizontal ? 12 : 8,
-                    15, // отступ снизу
+                    15,
                   ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Цены в один ряд
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
@@ -37424,7 +38811,6 @@ class _NativeProductCardState extends State<NativeProductCard>
                     ],
                   ),
                   SizedBox(height: widget.priceNameGap ?? 10),
-                  // Название товара (полное)
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: widget.onTap,
@@ -37435,10 +38821,7 @@ class _NativeProductCardState extends State<NativeProductCard>
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  SizedBox(
-                    height: widget.nameActionsGap ?? 15,
-                  ), // Отступ над кнопкой
-                  // Нижняя панель: Кнопка + иконки
+                  SizedBox(height: widget.nameActionsGap ?? 15),
                   Row(
                     children: [
                       Expanded(
@@ -37526,12 +38909,7 @@ class _NativeProductCardState extends State<NativeProductCard>
     );
   }
 
-  Widget _buildCartButton(String productId, {bool compact = false}) {
-    final inCart =
-        widget.cartListenable != null && widget.isInCartResolver != null
-        ? widget.isInCartResolver!(productId)
-        : false;
-    final bool isInCart = inCart;
+  Widget _buildCartButtonBody(bool isInCart, {bool compact = false}) {
     return GestureDetector(
       onTap: widget.onAddToCart ?? widget.onTap,
       child: Container(
@@ -37560,33 +38938,26 @@ class _NativeProductCardState extends State<NativeProductCard>
     );
   }
 
+  Widget _buildCartButton(String productId, {bool compact = false}) {
+    Widget buildForState() {
+      final bool isInCart = widget.isInCartResolver?.call(productId) ?? false;
+      return _buildCartButtonBody(isInCart, compact: compact);
+    }
+
+    if (widget.cartListenable == null) {
+      return buildForState();
+    }
+
+    return ValueListenableBuilder<int>(
+      valueListenable: widget.cartListenable!,
+      builder: (context, _, __) => buildForState(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final listenables = <Listenable>[];
-    if (widget.galleryListenable != null) {
-      listenables.add(widget.galleryListenable!);
-    }
-    if (widget.scrollListenable != null) {
-      listenables.add(widget.scrollListenable!);
-    }
-    if (widget.scrollMainImageListenable != null) {
-      listenables.add(widget.scrollMainImageListenable!);
-    }
-    if (widget.cartListenable != null) {
-      listenables.add(widget.cartListenable!);
-    }
-    // favoriteListenable/compareListenable handled by ValueListenableBuilder in icon
-    if (listenables.isEmpty) {
-      return _buildCard(context, isScrolling: false);
-    }
-    return AnimatedBuilder(
-      animation: Listenable.merge(listenables),
-      builder: (context, _) {
-        final isScrolling = widget.scrollListenable?.value ?? false;
-        return _buildCard(context, isScrolling: isScrolling);
-      },
-    );
+    return _buildCard(context);
   }
 
   Widget _badge(

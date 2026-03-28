@@ -2,38 +2,44 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
+import '../config/app_config.dart';
 import '../models/manticore_category.dart';
 import '../models/manticore_product.dart';
 import '../models/manticore_search_result.dart';
 
 class ManticoreSearchService {
-  static const String _defaultEndpoint = 'http://212.8.229.227:9308/sql';
-  static const String _defaultSuggestEndpoint =
-      'http://212.8.229.227:9308/cli_json';
   static const bool _logRawManticoreResponse = false;
 
   final Dio _dio;
   final String endpoint;
   final String suggestEndpoint;
 
-  ManticoreSearchService({
-    Dio? dio,
-    this.endpoint = _defaultEndpoint,
-    String? suggestEndpoint,
-  }) : suggestEndpoint = suggestEndpoint ?? _deriveSuggestEndpoint(endpoint),
-       _dio =
-           dio ??
-           Dio(
-             BaseOptions(
-               connectTimeout: const Duration(seconds: 5),
-               receiveTimeout: const Duration(seconds: 8),
-               sendTimeout: const Duration(seconds: 5),
-               headers: const <String, String>{
-                 'Accept': 'application/json',
-                 'Content-Type': 'application/json',
-               },
-             ),
-           );
+  static String get _defaultEndpoint =>
+      '${AppConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '')}/native/bridge/manticore_sql.php';
+
+  static String get _defaultSuggestEndpoint =>
+      '${AppConfig.apiBaseUrl.replaceFirst(RegExp(r'/$'), '')}/native/bridge/manticore_cli_json.php';
+
+  ManticoreSearchService({Dio? dio, String? endpoint, String? suggestEndpoint})
+    : endpoint = endpoint ?? _defaultEndpoint,
+      suggestEndpoint =
+          suggestEndpoint ??
+          (endpoint == null
+              ? _defaultSuggestEndpoint
+              : _deriveSuggestEndpoint(endpoint)),
+      _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 5),
+              receiveTimeout: const Duration(seconds: 8),
+              sendTimeout: const Duration(seconds: 5),
+              headers: const <String, String>{
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+              },
+            ),
+          );
 
   Future<ManticoreSearchResult> search({
     required String query,
@@ -710,6 +716,11 @@ class ManticoreSearchService {
       final uri = Uri.parse(endpoint);
       final nextPath = uri.path.endsWith('/sql')
           ? uri.path.replaceFirst(RegExp(r'/sql$'), '/cli_json')
+          : uri.path.endsWith('/manticore_sql.php')
+          ? uri.path.replaceFirst(
+              RegExp(r'/manticore_sql\.php$'),
+              '/manticore_cli_json.php',
+            )
           : '/cli_json';
       return uri.replace(path: nextPath).toString();
     } catch (_) {

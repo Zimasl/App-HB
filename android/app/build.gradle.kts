@@ -15,10 +15,21 @@ if (localPropertiesFile.exists()) {
 
 val flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+val yandexMapKitApiKey =
+    localProperties.getProperty("YANDEX_MAPKIT_API_KEY")
+        ?: providers.environmentVariable("YANDEX_MAPKIT_API_KEY").orNull
+        ?: ""
+val escapedYandexMapKitApiKey = yandexMapKitApiKey
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.example.hozyain_barin"
     compileSdk = flutter.compileSdkVersion
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -39,6 +50,12 @@ android {
 
         // Scheme for YooKassa/SBP return-to-app flows (used by YooKassa SDK)
         resValue("string", "ym_app_scheme", "yookassapaymentsflutter")
+        manifestPlaceholders["YANDEX_MAPKIT_API_KEY"] = yandexMapKitApiKey
+        buildConfigField(
+            "String",
+            "YANDEX_MAPKIT_API_KEY",
+            "\"$escapedYandexMapKitApiKey\""
+        )
     }
 
     buildTypes {

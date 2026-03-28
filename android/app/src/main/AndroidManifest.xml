@@ -12,11 +12,10 @@
     <application
         android:label="Хозяин Барин"
         android:name=".MainApplication"
-        android:icon="@mipmap/launcher_icon"
-        android:usesCleartextTraffic="true">
+        android:icon="@mipmap/launcher_icon">
         <meta-data
             android:name="com.yandex.maps.api_key"
-            android:value="d8fdb4b0-7698-4e1d-bdb5-978a25275ba9" />
+            android:value="${YANDEX_MAPKIT_API_KEY}" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

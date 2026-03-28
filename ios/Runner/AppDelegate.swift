@@ -140,7 +140,8 @@ private final class LocationPermissionBridge: NSObject, CLLocationManagerDelegat
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     if let apiKey = Bundle.main.object(forInfoDictionaryKey: "YANDEX_MAPKIT_API_KEY") as? String,
-       !apiKey.isEmpty {
+       !apiKey.isEmpty,
+       !apiKey.contains("$(") {
       YMKMapKit.setApiKey(apiKey)
     }
 
