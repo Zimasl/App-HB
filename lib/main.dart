@@ -92,6 +92,9 @@ const double _mapPlacemarkOpacity = 0.86;
 const MethodChannel _iosLocationPermissionChannel = MethodChannel(
   'hozyain/location_permission',
 );
+const MethodChannel _appRuntimeConfigChannel = MethodChannel(
+  'hozyain/runtime_config',
+);
 const TextStyle _cardPriceStyle = TextStyle(
   fontFamily: 'Roboto',
   fontSize: 17,
@@ -127,7 +130,37 @@ const int _maxNativeCategoryHistoryDepth = 40;
 /// Ключ для подсказок и геокодера. Варианты в кабинете:
 /// — «JavaScript API и HTTP Геокодер» (рекомендуется для suggest-geo);
 /// — «API Геосаджеста» для v1/suggest.
-const String _yandexSuggestApiKey = AppConfig.yandexSuggestApiKey;
+String _yandexSuggestApiKey = AppConfig.yandexSuggestApiKey.trim();
+Future<void>? _yandexSuggestApiKeyLoadFuture;
+
+Future<void> _ensureYandexSuggestApiKeyLoaded() async {
+  if (_yandexSuggestApiKey.isNotEmpty) return;
+  if (_yandexSuggestApiKeyLoadFuture != null) {
+    await _yandexSuggestApiKeyLoadFuture;
+    return;
+  }
+  final future = _loadYandexSuggestApiKeyFromNative();
+  _yandexSuggestApiKeyLoadFuture = future;
+  try {
+    await future;
+  } finally {
+    if (identical(_yandexSuggestApiKeyLoadFuture, future)) {
+      _yandexSuggestApiKeyLoadFuture = null;
+    }
+  }
+}
+
+Future<void> _loadYandexSuggestApiKeyFromNative() async {
+  try {
+    final key = await _appRuntimeConfigChannel.invokeMethod<String>(
+      'getYandexSuggestApiKey',
+    );
+    final trimmed = key?.trim() ?? '';
+    if (trimmed.isNotEmpty) {
+      _yandexSuggestApiKey = trimmed;
+    }
+  } catch (_) {}
+}
 
 Widget _buildBottomSheetHandle() {
   return Center(
@@ -1473,6 +1506,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startNativeSplashFallbackTimer();
+    unawaited(_ensureYandexSuggestApiKeyLoaded());
     unawaited(_bootstrapHomeAboveFold());
     _startHeroBannerRotationTimer();
     unawaited(_restoreHeaderCityFromPrefs());
@@ -1964,6 +1998,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required double latitude,
     required double longitude,
   }) async {
+    await _ensureYandexSuggestApiKeyLoaded();
     if (_yandexSuggestApiKey.isEmpty) return null;
     final uri = Uri.parse(
       'https://geocode-maps.yandex.ru/1.x/'
@@ -2111,6 +2146,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
   Future<List<Map<String, dynamic>>> _fetchHeaderCitySuggestions(
     String query,
   ) async {
+    await _ensureYandexSuggestApiKeyLoaded();
     if (_yandexSuggestApiKey.isEmpty) return const [];
     final normalizedQuery = query.trim();
     if (normalizedQuery.length < 2) return const [];
@@ -28711,7 +28747,6 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   void _onSearchTextChanged() {
     if (!mounted) return;
     setState(() {});
-    if (_yandexSuggestApiKey.isEmpty) return;
     final query = _searchController.text.trim();
     if (query.length < 2) {
       _suggestDebounce?.cancel();
@@ -28736,6 +28771,16 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
       _suggestionsMessage = null;
     });
     try {
+      await _ensureYandexSuggestApiKeyLoaded();
+      if (!mounted || requestId != _suggestRequestId) return;
+      if (_yandexSuggestApiKey.isEmpty) {
+        setState(() {
+          _suggestions = [];
+          _suggestionsLoading = false;
+          _suggestionsMessage = null;
+        });
+        return;
+      }
       // Сначала пробуем v1/suggest (ключ «API Геосаджеста») — стабильный формат с results[].title.text и uri
       final v1Uri = Uri.parse(
         'https://suggest-maps.yandex.ru/v1/suggest'
@@ -28998,6 +29043,8 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
     required String addressText,
   }) async {
     try {
+      await _ensureYandexSuggestApiKeyLoaded();
+      if (_yandexSuggestApiKey.isEmpty) return null;
       final uri = Uri.parse(
         uriStr != null
             ? 'https://geocode-maps.yandex.ru/1.x/'
@@ -29056,6 +29103,8 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
 
   Future<String?> _reverseGeocode(Point point) async {
     try {
+      await _ensureYandexSuggestApiKeyLoaded();
+      if (_yandexSuggestApiKey.isEmpty) return null;
       final uri = Uri.parse(
         'https://geocode-maps.yandex.ru/1.x/'
         '?apikey=$_yandexSuggestApiKey'
@@ -29670,7 +29719,6 @@ class PickupPoint {
 class _PickupPointsPageState extends State<PickupPointsPage>
     with WidgetsBindingObserver {
   static const String _pointsUrl = '/native/get_points.php';
-  static const double _sheetInitialChildSize = _sheetMinChildSize;
   static const double _sheetMinChildSize = 0.17;
   static const double _sheetMaxChildSize = 1.0;
   static const double _sheetTopFlatExtent = _sheetMaxChildSize - 0.002;
@@ -31171,6 +31219,15 @@ class _PickupPointsPageState extends State<PickupPointsPage>
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final bottomSystemInset = mediaQuery.viewPadding.bottom;
+    final screenHeight = mediaQuery.size.height <= 0
+        ? 1.0
+        : mediaQuery.size.height;
+    final double collapsedSheetChildSize =
+        (_sheetMinChildSize + (bottomSystemInset / screenHeight))
+            .clamp(_sheetMinChildSize, _sheetMaxChildSize)
+            .toDouble();
     final points = _filteredPoints;
     final visiblePoints = _resolveVisiblePoints(points);
     final isFocusedPointMode = _isFocusedPointMode;
@@ -31179,207 +31236,182 @@ class _PickupPointsPageState extends State<PickupPointsPage>
         ? visiblePoints.first
         : null;
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.white,
-        automaticallyImplyLeading: false,
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            IconButton(
-              icon: const Icon(
-                Icons.arrow_back_ios_new,
-                color: Colors.black,
-                size: 20,
-              ),
-              onPressed: () => Navigator.pop(context),
-            ),
-            const Expanded(
-              child: Text(
-                "Выбрать пункт самовывоза",
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  color: Colors.black,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 48),
-          ],
-        ),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.white,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarDividerColor: Colors.white,
+        systemNavigationBarContrastEnforced: false,
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
-            child: SizedBox(
-              height: 34,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final isPickup = _deliveryMethod == 1;
-                  final indicatorWidth = (constraints.maxWidth - 4) / 2;
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F6),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Stack(
-                      children: [
-                        AnimatedPositioned(
-                          duration: const Duration(milliseconds: 180),
-                          curve: Curves.easeOutCubic,
-                          left: isPickup ? 2 : 2 + indicatorWidth,
-                          top: 2,
-                          bottom: 2,
-                          width: indicatorWidth,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.white,
+          automaticallyImplyLeading: false,
+          titleSpacing: 0,
+          title: Row(
+            children: [
+              IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_ios_new,
+                  color: Colors.black,
+                  size: 20,
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+              const Expanded(
+                child: Text(
+                  "Выбрать пункт самовывоза",
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    color: Colors.black,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 48),
+            ],
+          ),
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
+              child: SizedBox(
+                height: 34,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isPickup = _deliveryMethod == 1;
+                    final indicatorWidth = (constraints.maxWidth - 4) / 2;
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F6),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Stack(
+                        children: [
+                          AnimatedPositioned(
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOutCubic,
+                            left: isPickup ? 2 : 2 + indicatorWidth,
+                            top: 2,
+                            bottom: 2,
+                            width: indicatorWidth,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                             ),
                           ),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(16),
-                                onTap: () =>
-                                    setState(() => _deliveryMethod = 1),
-                                child: Center(
-                                  child: Text(
-                                    "Самовывоз",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: isPickup
-                                          ? Colors.black
-                                          : Colors.black54,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(16),
-                                onTap: () async {
-                                  if (widget.onSwitchToDelivery != null) {
-                                    widget.onSwitchToDelivery!();
-                                  } else {
-                                    await Navigator.pushReplacement(
-                                      context,
-                                      _adaptivePageRoute(
-                                        builder: (_) =>
-                                            const DeliveryAddressPage(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(16),
+                                  onTap: () =>
+                                      setState(() => _deliveryMethod = 1),
+                                  child: Center(
+                                    child: Text(
+                                      "Самовывоз",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: isPickup
+                                            ? Colors.black
+                                            : Colors.black54,
                                       ),
-                                    );
-                                  }
-                                },
-                                child: Center(
-                                  child: Text(
-                                    "Доставка",
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: !isPickup
-                                          ? Colors.black
-                                          : Colors.black54,
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                              Expanded(
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(16),
+                                  onTap: () async {
+                                    if (widget.onSwitchToDelivery != null) {
+                                      widget.onSwitchToDelivery!();
+                                    } else {
+                                      await Navigator.pushReplacement(
+                                        context,
+                                        _adaptivePageRoute(
+                                          builder: (_) =>
+                                              const DeliveryAddressPage(),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  child: Center(
+                                    child: Text(
+                                      "Доставка",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: !isPickup
+                                            ? Colors.black
+                                            : Colors.black54,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: _isCheckingLocationPermission
-                      ? const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : (_canShowMap
-                            ? Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  YandexMap(
-                                    tiltGesturesEnabled: false,
-                                    rotateGesturesEnabled: false,
-                                    zoomGesturesEnabled: true,
-                                    scrollGesturesEnabled: true,
-                                    mode2DEnabled: true,
-                                    onMapCreated: (controller) async {
-                                      _mapController = controller;
-                                      if (_didInitialMapCameraSetup) return;
-                                      _didInitialMapCameraSetup = true;
-                                      if (_hasLocationPermission &&
-                                          !_didInitialLocationAttempt) {
-                                        await Future.delayed(
-                                          const Duration(milliseconds: 220),
-                                        );
-                                        await _enableUserLocationLayerAndCenter();
-                                        if (_didCenterToUser) {
-                                          return;
-                                        }
-                                      }
-                                      if (_selectedPoint != null) {
-                                        await Future.delayed(
-                                          const Duration(milliseconds: 180),
-                                        );
-                                        await controller.moveCamera(
-                                          CameraUpdate.newCameraPosition(
-                                            CameraPosition(
-                                              target: _mapCenter,
-                                              zoom: _initialMapZoom,
-                                            ),
-                                          ),
-                                          animation: const MapAnimation(
-                                            type: MapAnimationType.smooth,
-                                            duration: 0.9,
-                                          ),
-                                        );
-                                        if (_hasLocationPermission) {
-                                          unawaited(() async {
-                                            await Future.delayed(
-                                              const Duration(milliseconds: 180),
-                                            );
-                                            await _prewarmUserLocationLayer();
-                                          }());
-                                        }
-                                      } else {
-                                        if (_userLocationPoint != null) {
-                                          await controller.moveCamera(
-                                            CameraUpdate.newCameraPosition(
-                                              CameraPosition(
-                                                target: _userLocationPoint!,
-                                                zoom: _focusUserZoom,
-                                              ),
-                                            ),
-                                            animation: const MapAnimation(
-                                              type: MapAnimationType.smooth,
-                                              duration: 0.7,
-                                            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: _isCheckingLocationPermission
+                        ? const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : (_canShowMap
+                              ? Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    YandexMap(
+                                      tiltGesturesEnabled: false,
+                                      rotateGesturesEnabled: false,
+                                      zoomGesturesEnabled: true,
+                                      scrollGesturesEnabled: true,
+                                      mode2DEnabled: true,
+                                      onMapCreated: (controller) async {
+                                        _mapController = controller;
+                                        if (_didInitialMapCameraSetup) return;
+                                        _didInitialMapCameraSetup = true;
+                                        if (_hasLocationPermission &&
+                                            !_didInitialLocationAttempt) {
+                                          await Future.delayed(
+                                            const Duration(milliseconds: 220),
                                           );
-                                        } else {
+                                          await _enableUserLocationLayerAndCenter();
+                                          if (_didCenterToUser) {
+                                            return;
+                                          }
+                                        }
+                                        if (_selectedPoint != null) {
+                                          await Future.delayed(
+                                            const Duration(milliseconds: 180),
+                                          );
                                           await controller.moveCamera(
                                             CameraUpdate.newCameraPosition(
                                               CameraPosition(
@@ -31389,337 +31421,382 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                             ),
                                             animation: const MapAnimation(
                                               type: MapAnimationType.smooth,
-                                              duration: 0.7,
+                                              duration: 0.9,
                                             ),
                                           );
+                                          if (_hasLocationPermission) {
+                                            unawaited(() async {
+                                              await Future.delayed(
+                                                const Duration(
+                                                  milliseconds: 180,
+                                                ),
+                                              );
+                                              await _prewarmUserLocationLayer();
+                                            }());
+                                          }
+                                        } else {
+                                          if (_userLocationPoint != null) {
+                                            await controller.moveCamera(
+                                              CameraUpdate.newCameraPosition(
+                                                CameraPosition(
+                                                  target: _userLocationPoint!,
+                                                  zoom: _focusUserZoom,
+                                                ),
+                                              ),
+                                              animation: const MapAnimation(
+                                                type: MapAnimationType.smooth,
+                                                duration: 0.7,
+                                              ),
+                                            );
+                                          } else {
+                                            await controller.moveCamera(
+                                              CameraUpdate.newCameraPosition(
+                                                CameraPosition(
+                                                  target: _mapCenter,
+                                                  zoom: _initialMapZoom,
+                                                ),
+                                              ),
+                                              animation: const MapAnimation(
+                                                type: MapAnimationType.smooth,
+                                                duration: 0.7,
+                                              ),
+                                            );
+                                          }
                                         }
-                                      }
-                                    },
-                                    mapObjects: _pickupMapObjects,
-                                  ),
-                                  ValueListenableBuilder<bool>(
-                                    valueListenable:
-                                        _isMapPausedBySheetNotifier,
-                                    builder: (context, paused, _) {
-                                      if (!paused) {
-                                        return const SizedBox.shrink();
-                                      }
-                                      return const AbsorbPointer(
-                                        absorbing: true,
-                                        child: SizedBox.expand(),
-                                      );
-                                    },
-                                  ),
-                                  if (!_hasLocationPermission)
-                                    Positioned(
-                                      left: 12,
-                                      right: 12,
-                                      top: 12,
-                                      child: Material(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(12),
-                                        elevation: 2,
-                                        child: Padding(
-                                          padding: const EdgeInsets.fromLTRB(
+                                      },
+                                      mapObjects: _pickupMapObjects,
+                                    ),
+                                    ValueListenableBuilder<bool>(
+                                      valueListenable:
+                                          _isMapPausedBySheetNotifier,
+                                      builder: (context, paused, _) {
+                                        if (!paused) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return const AbsorbPointer(
+                                          absorbing: true,
+                                          child: SizedBox.expand(),
+                                        );
+                                      },
+                                    ),
+                                    if (!_hasLocationPermission)
+                                      Positioned(
+                                        left: 12,
+                                        right: 12,
+                                        top: 12,
+                                        child: Material(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(
                                             12,
-                                            10,
-                                            12,
-                                            10,
                                           ),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                _locationPermissionHintText,
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.black87,
+                                          elevation: 2,
+                                          child: Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              12,
+                                              10,
+                                              12,
+                                              10,
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  _locationPermissionHintText,
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.black87,
+                                                  ),
                                                 ),
-                                              ),
-                                              const SizedBox(height: 8),
-                                              SizedBox(
-                                                height: 34,
-                                                child: ElevatedButton(
-                                                  onPressed: () =>
-                                                      _ensureMapLocationPermission(
-                                                        triggeredByUser: true,
+                                                const SizedBox(height: 8),
+                                                SizedBox(
+                                                  height: 34,
+                                                  child: ElevatedButton(
+                                                    onPressed: () =>
+                                                        _ensureMapLocationPermission(
+                                                          triggeredByUser: true,
+                                                        ),
+                                                    style: ElevatedButton.styleFrom(
+                                                      backgroundColor:
+                                                          Colors.black,
+                                                      foregroundColor:
+                                                          Colors.white,
+                                                      elevation: 0,
+                                                      shape: RoundedRectangleBorder(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              9,
+                                                            ),
                                                       ),
-                                                  style: ElevatedButton.styleFrom(
-                                                    backgroundColor:
-                                                        Colors.black,
-                                                    foregroundColor:
-                                                        Colors.white,
-                                                    elevation: 0,
-                                                    shape: RoundedRectangleBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            9,
-                                                          ),
                                                     ),
-                                                  ),
-                                                  child: Text(
-                                                    _locationActionButtonText,
-                                                    style: const TextStyle(
-                                                      fontSize: 12,
-                                                      fontWeight:
-                                                          FontWeight.w500,
+                                                    child: Text(
+                                                      _locationActionButtonText,
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              )
-                            : Center(
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  padding: const EdgeInsets.fromLTRB(
-                                    14,
-                                    14,
-                                    14,
-                                    14,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.grey.shade300,
-                                    ),
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Text(
-                                        "Для отображения карты дайте доступ к геолокации",
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.black87,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      SizedBox(
-                                        height: 38,
-                                        child: ElevatedButton(
-                                          onPressed: () =>
-                                              _ensureMapLocationPermission(
-                                                triggeredByUser: true,
-                                              ),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.black,
-                                            foregroundColor: Colors.white,
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                            ),
-                                          ),
-                                          child: Text(
-                                            _locationActionButtonText,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500,
+                                              ],
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ),
-                              )),
-                ),
-                if (!isFocusedPointMode)
-                  NotificationListener<DraggableScrollableNotification>(
-                    onNotification: (notification) {
-                      if (notification.depth != 0) return false;
-                      final nextMapPause = _computeMapPauseBySheetExtent(
-                        notification.extent,
-                      );
-                      if (nextMapPause != _isMapPausedBySheet) {
-                        _isMapPausedBySheet = nextMapPause;
-                        _isMapPausedBySheetNotifier.value = nextMapPause;
-                      }
-                      final shouldFlattenTop =
-                          notification.extent >= _sheetTopFlatExtent;
-                      if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
-                        _isSheetTopFlatNotifier.value = shouldFlattenTop;
-                      }
-                      return false;
-                    },
-                    child: DraggableScrollableSheet(
-                      controller: _sheetController,
-                      initialChildSize: _sheetInitialChildSize,
-                      minChildSize: _sheetMinChildSize,
-                      maxChildSize: _sheetMaxChildSize,
-                      snap: true,
-                      snapSizes: const [_sheetMinChildSize, _sheetMaxChildSize],
-                      snapAnimationDuration: _sheetSnapDuration,
-                      builder: (context, scrollController) {
-                        return ValueListenableBuilder<bool>(
-                          valueListenable: _isSheetTopFlatNotifier,
-                          builder: (context, isTopFlat, _) {
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 90),
-                              curve: Curves.easeOutCubic,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: isTopFlat
-                                    ? BorderRadius.zero
-                                    : const BorderRadius.vertical(
-                                        top: Radius.circular(16),
+                                  ],
+                                )
+                              : Center(
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                    ),
+                                    padding: const EdgeInsets.fromLTRB(
+                                      14,
+                                      14,
+                                      14,
+                                      14,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.grey.shade300,
                                       ),
-                                boxShadow: isTopFlat
-                                    ? const []
-                                    : const [
-                                        BoxShadow(
-                                          color: Colors.black26,
-                                          blurRadius: 8,
-                                          offset: Offset(0, -2),
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text(
+                                          "Для отображения карты дайте доступ к геолокации",
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        SizedBox(
+                                          height: 38,
+                                          child: ElevatedButton(
+                                            onPressed: () =>
+                                                _ensureMapLocationPermission(
+                                                  triggeredByUser: true,
+                                                ),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.black,
+                                              foregroundColor: Colors.white,
+                                              elevation: 0,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
+                                            ),
+                                            child: Text(
+                                              _locationActionButtonText,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
                                         ),
                                       ],
-                              ),
-                              child: Stack(
-                                children: [
-                                  CustomScrollView(
-                                    controller: scrollController,
-                                    cacheExtent: 560,
-                                    physics:
-                                        const AlwaysScrollableScrollPhysics(
-                                          parent: BouncingScrollPhysics(),
+                                    ),
+                                  ),
+                                )),
+                  ),
+                  if (!isFocusedPointMode)
+                    NotificationListener<DraggableScrollableNotification>(
+                      onNotification: (notification) {
+                        if (notification.depth != 0) return false;
+                        final nextMapPause = _computeMapPauseBySheetExtent(
+                          notification.extent,
+                        );
+                        if (nextMapPause != _isMapPausedBySheet) {
+                          _isMapPausedBySheet = nextMapPause;
+                          _isMapPausedBySheetNotifier.value = nextMapPause;
+                        }
+                        final shouldFlattenTop =
+                            notification.extent >= _sheetTopFlatExtent;
+                        if (shouldFlattenTop != _isSheetTopFlatNotifier.value) {
+                          _isSheetTopFlatNotifier.value = shouldFlattenTop;
+                        }
+                        return false;
+                      },
+                      child: DraggableScrollableSheet(
+                        controller: _sheetController,
+                        initialChildSize: collapsedSheetChildSize,
+                        minChildSize: collapsedSheetChildSize,
+                        maxChildSize: _sheetMaxChildSize,
+                        snap: true,
+                        snapSizes: <double>[
+                          collapsedSheetChildSize,
+                          _sheetMaxChildSize,
+                        ],
+                        snapAnimationDuration: _sheetSnapDuration,
+                        builder: (context, scrollController) {
+                          return ValueListenableBuilder<bool>(
+                            valueListenable: _isSheetTopFlatNotifier,
+                            builder: (context, isTopFlat, _) {
+                              return AnimatedContainer(
+                                duration: const Duration(milliseconds: 90),
+                                curve: Curves.easeOutCubic,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: isTopFlat
+                                      ? BorderRadius.zero
+                                      : const BorderRadius.vertical(
+                                          top: Radius.circular(16),
                                         ),
-                                    slivers: [
-                                      SliverToBoxAdapter(
-                                        child: Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 8,
-                                            bottom: 10,
+                                  boxShadow: isTopFlat
+                                      ? const []
+                                      : const [
+                                          BoxShadow(
+                                            color: Colors.black26,
+                                            blurRadius: 8,
+                                            offset: Offset(0, -2),
                                           ),
-                                          child: Center(
-                                            child: Container(
-                                              width: 34,
-                                              height: 4,
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey.shade400,
-                                                borderRadius:
-                                                    BorderRadius.circular(999),
+                                        ],
+                                ),
+                                child: SafeArea(
+                                  top: false,
+                                  left: false,
+                                  right: false,
+                                  child: Stack(
+                                    children: [
+                                      CustomScrollView(
+                                        controller: scrollController,
+                                        cacheExtent: 560,
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(
+                                              parent: BouncingScrollPhysics(),
+                                            ),
+                                        slivers: [
+                                          SliverToBoxAdapter(
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 8,
+                                                bottom: 10,
+                                              ),
+                                              child: Center(
+                                                child: Container(
+                                                  width: 34,
+                                                  height: 4,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey.shade400,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          999,
+                                                        ),
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                      if (!isFocusedPointMode)
-                                        SliverPersistentHeader(
-                                          pinned: true,
-                                          delegate: _PinnedSheetHeaderDelegate(
-                                            height: 46,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.fromLTRB(
-                                                    5,
-                                                    0,
-                                                    5,
-                                                    10,
-                                                  ),
-                                              child: Row(
-                                                children: [
-                                                  Expanded(
-                                                    child: SizedBox(
-                                                      height: 36,
-                                                      child: TextField(
-                                                        controller:
-                                                            _searchController,
-                                                        focusNode:
-                                                            _searchFocusNode,
-                                                        onTap:
-                                                            _expandSheetToTop,
-                                                        onChanged: (value) {
-                                                          setState(
-                                                            () =>
-                                                                _query = value,
-                                                          );
-                                                          if (value
-                                                              .trim()
-                                                              .isNotEmpty) {
-                                                            _expandSheetToTop();
-                                                          }
-                                                        },
-                                                        style: const TextStyle(
-                                                          fontSize: 14,
-                                                        ),
-                                                        textAlignVertical:
-                                                            TextAlignVertical
-                                                                .center,
-                                                        decoration: InputDecoration(
-                                                          hintText: "Поиск",
-                                                          hintStyle:
-                                                              const TextStyle(
-                                                                fontSize: 14,
-                                                                color: Colors
-                                                                    .black54,
-                                                              ),
-                                                          prefixIcon:
-                                                              const Icon(
-                                                                Icons.search,
-                                                                size: 18,
-                                                                color: Colors
-                                                                    .black45,
-                                                              ),
-                                                          prefixIconConstraints:
-                                                              const BoxConstraints(
-                                                                minWidth: 34,
-                                                                minHeight: 34,
-                                                              ),
-                                                          suffixIcon:
-                                                              _query
+                                          if (!isFocusedPointMode)
+                                            SliverPersistentHeader(
+                                              pinned: true,
+                                              delegate: _PinnedSheetHeaderDelegate(
+                                                height: 46,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.fromLTRB(
+                                                        5,
+                                                        0,
+                                                        5,
+                                                        10,
+                                                      ),
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(
+                                                        child: SizedBox(
+                                                          height: 36,
+                                                          child: TextField(
+                                                            controller:
+                                                                _searchController,
+                                                            focusNode:
+                                                                _searchFocusNode,
+                                                            onTap:
+                                                                _expandSheetToTop,
+                                                            onChanged: (value) {
+                                                              setState(
+                                                                () => _query =
+                                                                    value,
+                                                              );
+                                                              if (value
                                                                   .trim()
-                                                                  .isEmpty
-                                                              ? null
-                                                              : IconButton(
-                                                                  onPressed: () {
-                                                                    _searchController
-                                                                        .clear();
-                                                                    setState(
-                                                                      () =>
-                                                                          _query =
-                                                                              '',
-                                                                    );
-                                                                  },
-                                                                  icon: const Icon(
+                                                                  .isNotEmpty) {
+                                                                _expandSheetToTop();
+                                                              }
+                                                            },
+                                                            style:
+                                                                const TextStyle(
+                                                                  fontSize: 14,
+                                                                ),
+                                                            textAlignVertical:
+                                                                TextAlignVertical
+                                                                    .center,
+                                                            decoration: InputDecoration(
+                                                              hintText: "Поиск",
+                                                              hintStyle:
+                                                                  const TextStyle(
+                                                                    fontSize:
+                                                                        14,
+                                                                    color: Colors
+                                                                        .black54,
+                                                                  ),
+                                                              prefixIcon:
+                                                                  const Icon(
                                                                     Icons
-                                                                        .cancel,
+                                                                        .search,
                                                                     size: 18,
                                                                     color: Colors
-                                                                        .black38,
+                                                                        .black45,
                                                                   ),
-                                                                ),
-                                                          filled: true,
-                                                          fillColor:
-                                                              const Color(
-                                                                0xFFF2F2F6,
-                                                              ),
-                                                          contentPadding:
-                                                              const EdgeInsets.symmetric(
-                                                                horizontal: 10,
-                                                                vertical: 0,
-                                                              ),
-                                                          border: OutlineInputBorder(
-                                                            borderRadius:
-                                                                BorderRadius.circular(
-                                                                  18,
-                                                                ),
-                                                            borderSide:
-                                                                BorderSide.none,
-                                                          ),
-                                                          enabledBorder:
-                                                              OutlineInputBorder(
+                                                              prefixIconConstraints:
+                                                                  const BoxConstraints(
+                                                                    minWidth:
+                                                                        34,
+                                                                    minHeight:
+                                                                        34,
+                                                                  ),
+                                                              suffixIcon:
+                                                                  _query
+                                                                      .trim()
+                                                                      .isEmpty
+                                                                  ? null
+                                                                  : IconButton(
+                                                                      onPressed: () {
+                                                                        _searchController
+                                                                            .clear();
+                                                                        setState(
+                                                                          () => _query =
+                                                                              '',
+                                                                        );
+                                                                      },
+                                                                      icon: const Icon(
+                                                                        Icons
+                                                                            .cancel,
+                                                                        size:
+                                                                            18,
+                                                                        color: Colors
+                                                                            .black38,
+                                                                      ),
+                                                                    ),
+                                                              filled: true,
+                                                              fillColor:
+                                                                  const Color(
+                                                                    0xFFF2F2F6,
+                                                                  ),
+                                                              contentPadding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        10,
+                                                                    vertical: 0,
+                                                                  ),
+                                                              border: OutlineInputBorder(
                                                                 borderRadius:
                                                                     BorderRadius.circular(
                                                                       18,
@@ -31728,276 +31805,308 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                                                     BorderSide
                                                                         .none,
                                                               ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  TextButton(
-                                                    onPressed: () {
-                                                      _searchController.clear();
-                                                      _searchFocusNode
-                                                          .unfocus();
-                                                      setState(
-                                                        () => _query = '',
-                                                      );
-                                                    },
-                                                    style: TextButton.styleFrom(
-                                                      minimumSize: const Size(
-                                                        0,
-                                                        36,
-                                                      ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 2,
+                                                              enabledBorder:
+                                                                  OutlineInputBorder(
+                                                                    borderRadius:
+                                                                        BorderRadius.circular(
+                                                                          18,
+                                                                        ),
+                                                                    borderSide:
+                                                                        BorderSide
+                                                                            .none,
+                                                                  ),
+                                                            ),
                                                           ),
-                                                      tapTargetSize:
-                                                          MaterialTapTargetSize
-                                                              .shrinkWrap,
-                                                    ),
-                                                    child: const Text(
-                                                      "Отмена",
-                                                      style: TextStyle(
-                                                        fontSize: 14,
-                                                        color: Color(
-                                                          0xFF606067,
                                                         ),
                                                       ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      if (!isFocusedPointMode)
-                                        SliverPersistentHeader(
-                                          pinned: true,
-                                          delegate: _PinnedSheetHeaderDelegate(
-                                            height: 38,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.fromLTRB(
-                                                    5,
-                                                    0,
-                                                    5,
-                                                    10,
-                                                  ),
-                                              child: Row(
-                                                children: [
-                                                  Expanded(
-                                                    child: SizedBox(
-                                                      height: 28,
-                                                      child: OutlinedButton(
+                                                      const SizedBox(width: 6),
+                                                      TextButton(
                                                         onPressed: () {
-                                                          setState(() {
-                                                            _pickupFilter =
-                                                                _pickupFilter ==
-                                                                    'today'
-                                                                ? 'all'
-                                                                : 'today';
-                                                          });
+                                                          _searchController
+                                                              .clear();
+                                                          _searchFocusNode
+                                                              .unfocus();
+                                                          setState(
+                                                            () => _query = '',
+                                                          );
                                                         },
-                                                        style: OutlinedButton.styleFrom(
-                                                          backgroundColor:
-                                                              _pickupFilter ==
-                                                                  'today'
-                                                              ? Colors.black
-                                                              : Colors.white,
-                                                          foregroundColor:
-                                                              _pickupFilter ==
-                                                                  'today'
-                                                              ? Colors.white
-                                                              : Colors.black87,
-                                                          side: BorderSide(
-                                                            color: Colors
-                                                                .grey
-                                                                .shade300,
-                                                          ),
-                                                          shape: RoundedRectangleBorder(
-                                                            borderRadius:
-                                                                BorderRadius.circular(
-                                                                  14,
-                                                                ),
-                                                          ),
+                                                        style: TextButton.styleFrom(
+                                                          minimumSize:
+                                                              const Size(0, 36),
                                                           padding:
                                                               const EdgeInsets.symmetric(
-                                                                horizontal: 6,
+                                                                horizontal: 2,
                                                               ),
                                                           tapTargetSize:
                                                               MaterialTapTargetSize
                                                                   .shrinkWrap,
                                                         ),
                                                         child: const Text(
-                                                          "Забрать сегодня",
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
+                                                          "Отмена",
                                                           style: TextStyle(
-                                                            fontSize: 13,
-                                                            fontWeight:
-                                                                FontWeight.w500,
+                                                            fontSize: 14,
+                                                            color: Color(
+                                                              0xFF606067,
+                                                            ),
                                                           ),
                                                         ),
                                                       ),
-                                                    ),
+                                                    ],
                                                   ),
-                                                  const SizedBox(width: 8),
-                                                  Expanded(
-                                                    child: SizedBox(
-                                                      height: 28,
-                                                      child: OutlinedButton(
-                                                        onPressed: () {
-                                                          setState(() {
-                                                            _pickupFilter =
-                                                                _pickupFilter ==
-                                                                    'preorder'
-                                                                ? 'all'
-                                                                : 'preorder';
-                                                          });
-                                                        },
-                                                        style: OutlinedButton.styleFrom(
-                                                          backgroundColor:
-                                                              _pickupFilter ==
-                                                                  'preorder'
-                                                              ? Colors.black
-                                                              : Colors.white,
-                                                          foregroundColor:
-                                                              _pickupFilter ==
-                                                                  'preorder'
-                                                              ? Colors.white
-                                                              : Colors.black87,
-                                                          side: BorderSide(
-                                                            color: Colors
-                                                                .grey
-                                                                .shade300,
-                                                          ),
-                                                          shape: RoundedRectangleBorder(
-                                                            borderRadius:
-                                                                BorderRadius.circular(
-                                                                  14,
-                                                                ),
-                                                          ),
-                                                          padding:
-                                                              const EdgeInsets.symmetric(
-                                                                horizontal: 6,
-                                                              ),
-                                                          tapTargetSize:
-                                                              MaterialTapTargetSize
-                                                                  .shrinkWrap,
-                                                        ),
-                                                        child: const Text(
-                                                          "Под заказ",
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style: TextStyle(
-                                                            fontSize: 13,
-                                                            fontWeight:
-                                                                FontWeight.w500,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      if (_isLoadingPoints &&
-                                          visiblePoints.isEmpty)
-                                        const SliverToBoxAdapter(
-                                          child: Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              vertical: 36,
-                                            ),
-                                            child: Center(
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                      else if (visiblePoints.isEmpty)
-                                        SliverToBoxAdapter(
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 36,
-                                            ),
-                                            child: Center(
-                                              child: Text(
-                                                "Ничего не найдено",
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  color: Colors.grey.shade700,
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        )
-                                      else
-                                        SliverPadding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            5,
-                                            4,
-                                            5,
-                                            12,
-                                          ),
-                                          sliver: SliverList(
-                                            delegate: SliverChildBuilderDelegate(
-                                              (context, index) {
-                                                final point =
-                                                    visiblePoints[index];
-                                                final id = point['id']
-                                                    ?.toString();
-                                                final isSelected =
-                                                    id == selectedId;
-                                                return Padding(
-                                                  key: ValueKey<String>(
-                                                    id ?? 'point_$index',
+                                          if (!isFocusedPointMode)
+                                            SliverPersistentHeader(
+                                              pinned: true,
+                                              delegate: _PinnedSheetHeaderDelegate(
+                                                height: 38,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.fromLTRB(
+                                                        5,
+                                                        0,
+                                                        5,
+                                                        10,
+                                                      ),
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(
+                                                        child: SizedBox(
+                                                          height: 28,
+                                                          child: OutlinedButton(
+                                                            onPressed: () {
+                                                              setState(() {
+                                                                _pickupFilter =
+                                                                    _pickupFilter ==
+                                                                        'today'
+                                                                    ? 'all'
+                                                                    : 'today';
+                                                              });
+                                                            },
+                                                            style: OutlinedButton.styleFrom(
+                                                              backgroundColor:
+                                                                  _pickupFilter ==
+                                                                      'today'
+                                                                  ? Colors.black
+                                                                  : Colors
+                                                                        .white,
+                                                              foregroundColor:
+                                                                  _pickupFilter ==
+                                                                      'today'
+                                                                  ? Colors.white
+                                                                  : Colors
+                                                                        .black87,
+                                                              side: BorderSide(
+                                                                color: Colors
+                                                                    .grey
+                                                                    .shade300,
+                                                              ),
+                                                              shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      14,
+                                                                    ),
+                                                              ),
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        6,
+                                                                  ),
+                                                              tapTargetSize:
+                                                                  MaterialTapTargetSize
+                                                                      .shrinkWrap,
+                                                            ),
+                                                            child: const Text(
+                                                              "Забрать сегодня",
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                              style: TextStyle(
+                                                                fontSize: 13,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w500,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      Expanded(
+                                                        child: SizedBox(
+                                                          height: 28,
+                                                          child: OutlinedButton(
+                                                            onPressed: () {
+                                                              setState(() {
+                                                                _pickupFilter =
+                                                                    _pickupFilter ==
+                                                                        'preorder'
+                                                                    ? 'all'
+                                                                    : 'preorder';
+                                                              });
+                                                            },
+                                                            style: OutlinedButton.styleFrom(
+                                                              backgroundColor:
+                                                                  _pickupFilter ==
+                                                                      'preorder'
+                                                                  ? Colors.black
+                                                                  : Colors
+                                                                        .white,
+                                                              foregroundColor:
+                                                                  _pickupFilter ==
+                                                                      'preorder'
+                                                                  ? Colors.white
+                                                                  : Colors
+                                                                        .black87,
+                                                              side: BorderSide(
+                                                                color: Colors
+                                                                    .grey
+                                                                    .shade300,
+                                                              ),
+                                                              shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius.circular(
+                                                                      14,
+                                                                    ),
+                                                              ),
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        6,
+                                                                  ),
+                                                              tapTargetSize:
+                                                                  MaterialTapTargetSize
+                                                                      .shrinkWrap,
+                                                            ),
+                                                            child: const Text(
+                                                              "Под заказ",
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                              style: TextStyle(
+                                                                fontSize: 13,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w500,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                  padding: EdgeInsets.only(
-                                                    bottom:
-                                                        index ==
-                                                            visiblePoints
-                                                                    .length -
-                                                                1
-                                                        ? 0
-                                                        : 10,
-                                                  ),
-                                                  child: _buildPickupPointCard(
-                                                    point,
-                                                    isSelected,
-                                                  ),
-                                                );
-                                              },
-                                              childCount: visiblePoints.length,
-                                              addAutomaticKeepAlives: false,
-                                              addRepaintBoundaries: true,
-                                              addSemanticIndexes: false,
+                                                ),
+                                              ),
                                             ),
-                                          ),
-                                        ),
+                                          if (_isLoadingPoints &&
+                                              visiblePoints.isEmpty)
+                                            const SliverToBoxAdapter(
+                                              child: Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                  vertical: 36,
+                                                ),
+                                                child: Center(
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                ),
+                                              ),
+                                            )
+                                          else if (visiblePoints.isEmpty)
+                                            SliverToBoxAdapter(
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 36,
+                                                    ),
+                                                child: Center(
+                                                  child: Text(
+                                                    "Ничего не найдено",
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          else
+                                            SliverPadding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    5,
+                                                    4,
+                                                    5,
+                                                    12,
+                                                  ),
+                                              sliver: SliverList(
+                                                delegate: SliverChildBuilderDelegate(
+                                                  (context, index) {
+                                                    final point =
+                                                        visiblePoints[index];
+                                                    final id = point['id']
+                                                        ?.toString();
+                                                    final isSelected =
+                                                        id == selectedId;
+                                                    return Padding(
+                                                      key: ValueKey<String>(
+                                                        id ?? 'point_$index',
+                                                      ),
+                                                      padding: EdgeInsets.only(
+                                                        bottom:
+                                                            index ==
+                                                                visiblePoints
+                                                                        .length -
+                                                                    1
+                                                            ? 0
+                                                            : 10,
+                                                      ),
+                                                      child:
+                                                          _buildPickupPointCard(
+                                                            point,
+                                                            isSelected,
+                                                          ),
+                                                    );
+                                                  },
+                                                  childCount:
+                                                      visiblePoints.length,
+                                                  addAutomaticKeepAlives: false,
+                                                  addRepaintBoundaries: true,
+                                                  addSemanticIndexes: false,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                     ],
                                   ),
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                      },
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                if (focusedPoint != null)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: SafeArea(
-                      top: false,
-                      left: false,
-                      right: false,
+                  if (bottomSystemInset > 0)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: bottomSystemInset,
+                      child: const IgnorePointer(
+                        child: ColoredBox(color: Colors.white),
+                      ),
+                    ),
+                  if (focusedPoint != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
                       child: Container(
                         decoration: BoxDecoration(
                           color: Colors.white,
@@ -32015,20 +32124,25 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                             ),
                           ],
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(5, 13, 5, 13),
-                          child: _buildPickupPointCard(
-                            focusedPoint,
-                            focusedPoint['id']?.toString() == selectedId,
+                        child: SafeArea(
+                          top: false,
+                          left: false,
+                          right: false,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(5, 13, 5, 13),
+                            child: _buildPickupPointCard(
+                              focusedPoint,
+                              focusedPoint['id']?.toString() == selectedId,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

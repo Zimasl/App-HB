@@ -61,6 +61,8 @@
 		<string>Нужно для корректной работы карты и функций, связанных с геолокацией.</string>
 		<key>YANDEX_MAPKIT_API_KEY</key>
 		<string>$(YANDEX_MAPKIT_API_KEY)</string>
+		<key>YANDEX_SUGGEST_API_KEY</key>
+		<string>$(YANDEX_SUGGEST_API_KEY)</string>
 		<key>CFBundleURLTypes</key>
 		<array>
 			<dict>
