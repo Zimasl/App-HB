@@ -134,6 +134,7 @@ private final class LocationPermissionBridge: NSObject, CLLocationManagerDelegat
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private var locationPermissionBridge: LocationPermissionBridge?
+  private var runtimeConfigChannel: FlutterMethodChannel?
 
   override func application(
     _ application: UIApplication,
@@ -157,6 +158,22 @@ private final class LocationPermissionBridge: NSObject, CLLocationManagerDelegat
       binaryMessenger: registrar.messenger()
     )
     locationPermissionBridge = LocationPermissionBridge(channel: channel)
+    let runtimeChannel = FlutterMethodChannel(
+      name: "hozyain/runtime_config",
+      binaryMessenger: registrar.messenger()
+    )
+    runtimeChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "getYandexSuggestApiKey":
+        let apiKey =
+          (Bundle.main.object(forInfoDictionaryKey: "YANDEX_SUGGEST_API_KEY") as? String)?
+          .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        result(apiKey.contains("$(") ? "" : apiKey)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    runtimeConfigChannel = runtimeChannel
 
     return didFinish
   }

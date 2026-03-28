@@ -21,6 +21,7 @@ import java.io.InputStream
 
 class MainActivity : FlutterActivity() {
     private val channelName = "native_image_picker"
+    private val runtimeConfigChannelName = "hozyain/runtime_config"
     private val requestPickImages = 5012
     private var pendingResult: MethodChannel.Result? = null
     private var pendingCameraUri: Uri? = null
@@ -46,6 +47,14 @@ class MainActivity : FlutterActivity() {
                     }
                     pendingResult = result
                     openImageChooser()
+                } else {
+                    result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, runtimeConfigChannelName)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "getYandexSuggestApiKey") {
+                    result.success(BuildConfig.YANDEX_SUGGEST_API_KEY)
                 } else {
                     result.notImplemented()
                 }

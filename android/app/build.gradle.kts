@@ -22,6 +22,13 @@ val yandexMapKitApiKey =
 val escapedYandexMapKitApiKey = yandexMapKitApiKey
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
+val yandexSuggestApiKey =
+    localProperties.getProperty("YANDEX_SUGGEST_API_KEY")
+        ?: providers.environmentVariable("YANDEX_SUGGEST_API_KEY").orNull
+        ?: ""
+val escapedYandexSuggestApiKey = yandexSuggestApiKey
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.example.hozyain_barin"
@@ -55,6 +62,11 @@ android {
             "String",
             "YANDEX_MAPKIT_API_KEY",
             "\"$escapedYandexMapKitApiKey\""
+        )
+        buildConfigField(
+            "String",
+            "YANDEX_SUGGEST_API_KEY",
+            "\"$escapedYandexSuggestApiKey\""
         )
     }
 
