@@ -87,7 +87,7 @@ const Color _starColor = Color(0xFFF4A21D);
 const String _deliveryAddressPinAssetPath = 'assets/images/map_address.png';
 const String _userPinAssetPath = 'assets/images/map_user_pin.png';
 const String _shopPinAssetPath = 'assets/images/map_shop.png';
-const String _shopManyPinAssetPath = 'assets/images/map_shop_many.png';
+const String _hbIconAssetPath = 'assets/images/hb_icon.png';
 const double _mapPlacemarkOpacity = 0.86;
 const MethodChannel _iosLocationPermissionChannel = MethodChannel(
   'hozyain/location_permission',
@@ -6169,7 +6169,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
   }
 
-  void _showCartToast(dynamic product) {
+  void _showCartToast(dynamic product, {bool nearScreenTop = false}) {
     if (!mounted) return;
     _cartOverlayTimer?.cancel();
     _cartOverlayEntry?.remove();
@@ -6180,7 +6180,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
     _cartOverlayEntry = OverlayEntry(
       builder: (context) => Positioned(
-        top: MediaQuery.of(context).padding.top + kToolbarHeight + 6,
+        top:
+            MediaQuery.of(context).padding.top +
+            (nearScreenTop ? 8 : (kToolbarHeight + 6)),
         left: 8,
         right: 8,
         child: TweenAnimationBuilder<double>(
@@ -6274,7 +6276,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     });
   }
 
-  void _addToCart(dynamic product) {
+  void _addToCart(dynamic product, {bool nearScreenTop = false}) {
     if (product is! Map) return;
     final productId = product['id']?.toString() ?? "";
     if (productId.isEmpty) return;
@@ -6298,7 +6300,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       (a, b) => a + b,
     );
     unawaited(_persistCartToPrefs());
-    _showCartToast(product);
+    _showCartToast(product, nearScreenTop: nearScreenTop);
     unawaited(
       _refreshCartProductActualData(
         productId,
@@ -9056,7 +9058,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
       isCompareResolver: _isCompared,
       onFavoriteTap: _toggleFavorite,
       onCompareTap: _toggleCompare,
-      onAddToCart: () => _addToCart(product),
+      onAddToCart: () => _addToCart(product, nearScreenTop: true),
       cartListenable: _cartCountNotifier,
       isInCartResolver: (id) => (_cartQuantityByProductId[id] ?? 0) > 0,
       onShare: () => _shareProduct(product),
@@ -11634,7 +11636,36 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           mainAxisExtent: itemHeight,
         ),
         delegate: SliverChildBuilderDelegate((context, index) {
-          return RepaintBoundary(child: _simpleProductCard(items[index]));
+          final product = items[index];
+          return RepaintBoundary(
+            child: Stack(
+              children: [
+                _simpleProductCard(product),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _toggleFavorite(product),
+                    child: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
         }, childCount: items.length),
       ),
     );
@@ -17947,9 +17978,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                         subtitle: defaultStore.isEmpty
                             ? "Изначально устанавливается при оформлении заказа"
                             : defaultStore,
-                        onTap: _isAuthorized
-                            ? () => _navigateToSimple("Профиль", "/my/")
-                            : _openProfilePickupStoreSelector,
+                        onTap: _openProfilePickupStoreSelector,
                       ),
                     ],
                   ),
@@ -22247,6 +22276,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
       caseSensitive: false,
       unicode: true,
     );
+    final houseRegex = RegExp(
+      r'^(?:(?:дом|д\.?)\s*)?\d+[а-яa-z]?(?:[/-]\d+[а-яa-z]?)?(?:\s*(?:корпус|корп\.?|к\.?|строение|стр\.?|литер|лит\.?)\s*[\w-]+)?$',
+      caseSensitive: false,
+      unicode: true,
+    );
 
     String? street;
     for (final part in parts.reversed) {
@@ -22279,9 +22313,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
       }
     }
 
+    String? house;
+    final streetAlreadyHasHouse = RegExp(r'\d').hasMatch(street);
+    if (!streetAlreadyHasHouse &&
+        streetIndex >= 0 &&
+        streetIndex + 1 < parts.length) {
+      final candidate = parts[streetIndex + 1].trim();
+      if (candidate.isNotEmpty && houseRegex.hasMatch(candidate)) {
+        house = candidate;
+      }
+    }
+
     final resultParts = <String>[];
     if (city.isNotEmpty) resultParts.add(city);
     if (street.isNotEmpty && street != city) resultParts.add(street);
+    if (house != null && house.isNotEmpty) resultParts.add(house);
     if (apartment.isNotEmpty) resultParts.add('кв. $apartment');
     return resultParts.join(', ');
   }
@@ -27716,9 +27762,11 @@ class _GeocodeLookupResult {
   const _GeocodeLookupResult({required this.point, required this.isPrecise});
 }
 
-class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
+class _DeliveryAddressPageState extends State<DeliveryAddressPage>
+    with WidgetsBindingObserver {
   static const double _deliverySheetDismissDragThreshold = 72;
   static const double _deliveryAddressSelectedZoom = 17.6;
+  static const double _deliveryInitialUserZoom = 16.0;
   static const double _deliveryMarkerShiftBySheetFactor = 0.38;
   static const Duration _deliverySheetAnimationDuration = Duration(
     milliseconds: 140,
@@ -27727,6 +27775,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _searchScrollController = ScrollController();
+  final GlobalKey _deliverySheetKey = GlobalKey();
   final TextEditingController _apartmentController = TextEditingController();
   final TextEditingController _commentController = TextEditingController();
   YandexMapController? _mapController;
@@ -27744,6 +27793,8 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   bool _isDeliverySheetDragging = false;
   final bool _renderDeliverySheetOnRoot = true;
   Uint8List? _deliveryPinBytes;
+  Uint8List? _deliveryUserPinBytes;
+  Point? _deliveryUserLocationPoint;
   bool _isPrivateHouse = false;
   bool _needLift = false;
   int _liftFloor = 1;
@@ -27751,6 +27802,9 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   String _deliveryDate = '';
   String _deliveryTime = '';
   int _suggestSelectionGeocodeSeq = 0;
+  bool _isResolvingInitialUserLocation = false;
+  bool _didInitialUserLocationAttempt = false;
+  bool _didCenterToUserLocation = false;
 
   static bool _toBoolFlag(dynamic value) {
     if (value is bool) return value;
@@ -27820,9 +27874,167 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restoreInitialDeliveryData();
     _searchController.addListener(_onSearchTextChanged);
     _loadDeliveryPinIcon();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        mounted &&
+        _deliveryUserLocationPoint == null) {
+      unawaited(_centerMapOnUserLocationIfNeeded());
+    }
+  }
+
+  Future<LocationPermission?> _resolveDeliveryGeolocationPermission({
+    bool requestPermissionIfNeeded = false,
+  }) async {
+    final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!isServiceEnabled) return null;
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied && requestPermissionIfNeeded) {
+      permission = await Geolocator.requestPermission();
+    }
+    return permission;
+  }
+
+  Future<void> _centerMapOnUserLocationIfNeeded({
+    bool requestPermissionIfNeeded = false,
+    bool forceRecenter = false,
+  }) async {
+    if (_mapController == null ||
+        _isResolvingInitialUserLocation ||
+        (!forceRecenter &&
+            _didCenterToUserLocation &&
+            _deliveryUserLocationPoint != null)) {
+      return;
+    }
+    _didInitialUserLocationAttempt = true;
+    _isResolvingInitialUserLocation = true;
+    try {
+      final permission = await _resolveDeliveryGeolocationPermission(
+        requestPermissionIfNeeded: requestPermissionIfNeeded,
+      );
+      if (permission == null ||
+          permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+      } catch (_) {}
+      position ??= await Geolocator.getLastKnownPosition();
+      if (!mounted || position == null) {
+        return;
+      }
+
+      final controller = _mapController;
+      if (controller == null) {
+        return;
+      }
+      final userPoint = Point(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      _deliveryUserPinBytes ??= await _buildDeliveryUserPinBytes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deliveryUserLocationPoint = userPoint;
+      });
+      if (!forceRecenter &&
+          (_selectedDeliveryPoint != null || _didCenterToUserLocation)) {
+        return;
+      }
+      await controller.moveCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: userPoint, zoom: _deliveryInitialUserZoom),
+        ),
+        animation: const MapAnimation(
+          type: MapAnimationType.smooth,
+          duration: 0.8,
+        ),
+      );
+      _didCenterToUserLocation = true;
+    } catch (_) {
+      // Keep the delivery map usable even if location is temporarily unavailable.
+    } finally {
+      _isResolvingInitialUserLocation = false;
+    }
+  }
+
+  Future<void> _centerDeliveryMapOnUser() async {
+    final controller = _mapController;
+    final userPoint = _deliveryUserLocationPoint;
+    if (controller != null && userPoint != null) {
+      await controller.moveCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: userPoint, zoom: _deliveryInitialUserZoom),
+        ),
+        animation: const MapAnimation(
+          type: MapAnimationType.smooth,
+          duration: 0.8,
+        ),
+      );
+      _didCenterToUserLocation = true;
+      return;
+    }
+    await _centerMapOnUserLocationIfNeeded(
+      requestPermissionIfNeeded: true,
+      forceRecenter: true,
+    );
+  }
+
+  Widget _buildDeliveryMapActionButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x140F172A)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: Center(
+              child: Icon(icon, size: 26, color: const Color(0xFF0F172A)),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _onDeliverySheetPointerDown(PointerDownEvent event) {
@@ -27959,9 +28171,19 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
         .toDouble();
   }
 
+  double? _currentDeliverySheetHeight() {
+    final renderObject = _deliverySheetKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) return null;
+    final height = renderObject.size.height;
+    if (!height.isFinite || height <= 0) return null;
+    return height;
+  }
+
   Point _deliveryCameraTargetWithSheetOffset(Point point, double zoom) {
     final mediaQuery = MediaQuery.of(context);
-    final sheetHeight = _deliverySheetTargetHeight();
+    final sheetHeight =
+        _currentDeliverySheetHeight() ??
+        math.min(_deliverySheetTargetHeight(), mediaQuery.size.height * 0.42);
     final shiftPx = (sheetHeight * _deliveryMarkerShiftBySheetFactor)
         .clamp(110.0, mediaQuery.size.height * 0.34)
         .toDouble();
@@ -28046,6 +28268,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
               child: Material(
                 color: Colors.transparent,
                 child: Container(
+                  key: _deliverySheetKey,
                   constraints: BoxConstraints(
                     maxHeight: deliverySheetMaxHeight,
                   ),
@@ -28742,6 +28965,128 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
         // Try next candidate asset.
       }
     }
+    final bytes = await _buildFallbackDeliveryAddressPinBytes();
+    if (mounted) {
+      setState(() => _deliveryPinBytes = bytes);
+    }
+  }
+
+  Future<Uint8List> _buildFallbackDeliveryAddressPinBytes() async {
+    const size = 160;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const headCenter = Offset(size / 2, 56);
+    const outerRadius = 36.0;
+    const innerRadius = 31.0;
+    const tipY = 146.0;
+
+    Path buildPinPath({
+      required Offset center,
+      required double radius,
+      required double tipY,
+    }) {
+      final shoulderX = radius * 1.05;
+      final shoulderY = center.dy + radius * 0.72;
+      return Path()
+        ..moveTo(center.dx, tipY)
+        ..quadraticBezierTo(
+          center.dx + radius * 0.22,
+          tipY - 18,
+          center.dx + shoulderX,
+          shoulderY,
+        )
+        ..arcToPoint(
+          Offset(center.dx - shoulderX, shoulderY),
+          radius: Radius.circular(radius + 6),
+          clockwise: false,
+        )
+        ..quadraticBezierTo(
+          center.dx - radius * 0.22,
+          tipY - 18,
+          center.dx,
+          tipY,
+        )
+        ..close();
+    }
+
+    final shadowPath = buildPinPath(
+      center: const Offset(size / 2, 59),
+      radius: outerRadius,
+      tipY: tipY + 3,
+    );
+    final outerPath = buildPinPath(
+      center: headCenter,
+      radius: outerRadius,
+      tipY: tipY,
+    );
+    final innerPath = buildPinPath(
+      center: headCenter,
+      radius: innerRadius,
+      tipY: tipY - 8,
+    );
+
+    final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.18);
+    final outerPaint = Paint()..color = Colors.white;
+    final innerPaint = Paint()..color = const Color(0xFFA4522A);
+
+    canvas.drawPath(shadowPath, shadowPaint);
+    canvas.drawPath(outerPath, outerPaint);
+    canvas.drawPath(innerPath, innerPaint);
+    canvas.drawCircle(
+      headCenter,
+      9.5,
+      Paint()..color = Colors.white.withValues(alpha: 0.96),
+    );
+
+    final image = await recorder.endRecording().toImage(size, size);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  Future<Uint8List> _buildDeliveryUserPinBytes() async {
+    if (_deliveryUserPinBytes != null) {
+      return _deliveryUserPinBytes!;
+    }
+
+    const size = 124;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const center = Offset(size / 2, size / 2);
+
+    final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.18);
+    final outerPaint = Paint()..color = Colors.white;
+    final innerPaint = Paint()..color = const Color(0xFFFFA237);
+
+    canvas.drawCircle(Offset(center.dx, center.dy + 3.0), 33.8, shadowPaint);
+    canvas.drawCircle(center, 32.0, outerPaint);
+    canvas.drawCircle(center, 27.4, innerPaint);
+
+    final iconPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(Icons.person_rounded.codePoint),
+        style: TextStyle(
+          inherit: false,
+          fontSize: 34,
+          color: Colors.white,
+          fontFamily: Icons.person_rounded.fontFamily,
+          package: Icons.person_rounded.fontPackage,
+        ),
+      ),
+    )..layout();
+    iconPainter.paint(
+      canvas,
+      Offset(
+        center.dx - (iconPainter.width / 2),
+        center.dy - (iconPainter.height / 2),
+      ),
+    );
+
+    final image = await recorder.endRecording().toImage(size, size);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = byteData!.buffer.asUint8List();
+    _deliveryUserPinBytes = bytes;
+    return bytes;
   }
 
   void _onSearchTextChanged() {
@@ -29005,24 +29350,42 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   }
 
   List<MapObject> _buildDeliveryMapObjects() {
-    if (_selectedDeliveryPoint == null || _deliveryPinBytes == null) {
-      return const [];
-    }
-    return [
-      PlacemarkMapObject(
-        mapId: const MapObjectId('delivery_address'),
-        point: _selectedDeliveryPoint!,
-        icon: PlacemarkIcon.single(
-          PlacemarkIconStyle(
-            image: BitmapDescriptor.fromBytes(_deliveryPinBytes!),
-            anchor: const Offset(0.5, 1.0),
-            scale: 0.9,
+    final objects = <MapObject>[];
+    if (_deliveryUserLocationPoint != null && _deliveryUserPinBytes != null) {
+      objects.add(
+        PlacemarkMapObject(
+          mapId: const MapObjectId('delivery_user_marker'),
+          point: _deliveryUserLocationPoint!,
+          icon: PlacemarkIcon.single(
+            PlacemarkIconStyle(
+              image: BitmapDescriptor.fromBytes(_deliveryUserPinBytes!),
+              anchor: const Offset(0.5, 0.5),
+              scale: 1.14,
+            ),
           ),
+          opacity: _mapPlacemarkOpacity,
+          zIndex: 900,
         ),
-        opacity: _mapPlacemarkOpacity,
-        zIndex: 1000,
-      ),
-    ];
+      );
+    }
+    if (_selectedDeliveryPoint != null && _deliveryPinBytes != null) {
+      objects.add(
+        PlacemarkMapObject(
+          mapId: const MapObjectId('delivery_address'),
+          point: _selectedDeliveryPoint!,
+          icon: PlacemarkIcon.single(
+            PlacemarkIconStyle(
+              image: BitmapDescriptor.fromBytes(_deliveryPinBytes!),
+              anchor: const Offset(0.5, 1.0),
+              scale: 1.02,
+            ),
+          ),
+          opacity: _mapPlacemarkOpacity,
+          zIndex: 1000,
+        ),
+      );
+    }
+    return objects;
   }
 
   Point? _parsePointFromGeoObject(Map<String, dynamic> geo) {
@@ -29091,6 +29454,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _suggestDebounce?.cancel();
     _searchController.removeListener(_onSearchTextChanged);
     _searchController.dispose();
@@ -29134,6 +29498,7 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final padding = mediaQuery.padding;
+    final bottomSystemInset = mediaQuery.viewPadding.bottom;
     final keyboardInset = mediaQuery.viewInsets.bottom;
     final deliverySheetMaxHeight =
         (mediaQuery.size.height - padding.top - keyboardInset - 8)
@@ -29148,467 +29513,517 @@ class _DeliveryAddressPageState extends State<DeliveryAddressPage> {
     final double deliverySheetOpacity = _deliverySheetVisible
         ? (1 - deliverySheetDragFraction * 0.15).clamp(0.0, 1.0).toDouble()
         : 0.0;
-    return Stack(
-      children: [
-        Scaffold(
-          resizeToAvoidBottomInset: false,
-          backgroundColor: Colors.white,
-          appBar: AppBar(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.white,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarDividerColor: Colors.white,
+        systemNavigationBarContrastEnforced: false,
+      ),
+      child: Stack(
+        children: [
+          Scaffold(
+            resizeToAvoidBottomInset: false,
             backgroundColor: Colors.white,
-            elevation: 0,
-            surfaceTintColor: Colors.white,
-            automaticallyImplyLeading: false,
-            titleSpacing: 0,
-            title: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(
-                    Icons.arrow_back_ios_new,
-                    color: Colors.black,
-                    size: 20,
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const Expanded(
-                  child: Text(
-                    "Детали доставки",
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
+            appBar: AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              surfaceTintColor: Colors.white,
+              automaticallyImplyLeading: false,
+              titleSpacing: 0,
+              title: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new,
                       color: Colors.black,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0,
+                      size: 20,
                     ),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    onPressed: () => Navigator.pop(context),
                   ),
-                ),
-                const SizedBox(width: 48),
-              ],
+                  const Expanded(
+                    child: Text(
+                      "Детали доставки",
+                      style: TextStyle(
+                        fontFamily: 'Roboto',
+                        color: Colors.black,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
             ),
-          ),
-          body: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
-                child: SizedBox(
-                  height: 34,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final indicatorWidth = (constraints.maxWidth - 4) / 2;
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF2F2F6),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Stack(
-                          children: [
-                            AnimatedPositioned(
-                              duration: const Duration(milliseconds: 180),
-                              curve: Curves.easeOutCubic,
-                              left: 2 + indicatorWidth,
-                              top: 2,
-                              bottom: 2,
-                              width: indicatorWidth,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
+            body: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(5, 8, 5, 10),
+                  child: SizedBox(
+                    height: 34,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final indicatorWidth = (constraints.maxWidth - 4) / 2;
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF2F2F6),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: Stack(
+                            children: [
+                              AnimatedPositioned(
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeOutCubic,
+                                left: 2 + indicatorWidth,
+                                top: 2,
+                                bottom: 2,
+                                width: indicatorWidth,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
                                 ),
                               ),
-                            ),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(16),
-                                    onTap: () {
-                                      if (widget.onSwitchToSamovyvoz != null) {
-                                        widget.onSwitchToSamovyvoz!();
-                                      } else {
-                                        Navigator.pushReplacement(
-                                          context,
-                                          _adaptivePageRoute(
-                                            builder: (_) =>
-                                                const PickupPointsPage(
-                                                  initialDeliveryMethod: 1,
-                                                  selectedPoint: null,
-                                                  productId: null,
-                                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () {
+                                        if (widget.onSwitchToSamovyvoz !=
+                                            null) {
+                                          widget.onSwitchToSamovyvoz!();
+                                        } else {
+                                          Navigator.pushReplacement(
+                                            context,
+                                            _adaptivePageRoute(
+                                              builder: (_) =>
+                                                  const PickupPointsPage(
+                                                    initialDeliveryMethod: 1,
+                                                    selectedPoint: null,
+                                                    productId: null,
+                                                  ),
+                                            ),
+                                          );
+                                        }
+                                      },
+                                      child: const Center(
+                                        child: Text(
+                                          "Самовывоз",
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black54,
                                           ),
-                                        );
-                                      }
-                                    },
-                                    child: const Center(
-                                      child: Text(
-                                        "Самовывоз",
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () {},
+                                      child: const Center(
+                                        child: Text(
+                                          "Доставка",
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: YandexMap(
+                          tiltGesturesEnabled: false,
+                          rotateGesturesEnabled: false,
+                          mode2DEnabled: true,
+                          onMapCreated: (controller) async {
+                            _mapController = controller;
+                            if (!_didInitialUserLocationAttempt) {
+                              await Future.delayed(
+                                const Duration(milliseconds: 220),
+                              );
+                              await _centerMapOnUserLocationIfNeeded(
+                                requestPermissionIfNeeded:
+                                    _selectedDeliveryPoint == null,
+                              );
+                              if (_selectedDeliveryPoint == null &&
+                                  _didCenterToUserLocation) {
+                                return;
+                              }
+                            }
+                            var target = const Point(
+                              latitude: 43.1150678,
+                              longitude: 131.8855768,
+                            );
+                            var zoom = 12.0;
+                            if (_selectedDeliveryPoint != null) {
+                              zoom = _deliveryAddressSelectedZoom;
+                              target =
+                                  (_deliverySheetVisible ||
+                                      widget.openSheetOnStart)
+                                  ? _deliveryCameraTargetWithSheetOffset(
+                                      _selectedDeliveryPoint!,
+                                      zoom,
+                                    )
+                                  : _selectedDeliveryPoint!;
+                            }
+                            await controller.moveCamera(
+                              CameraUpdate.newCameraPosition(
+                                CameraPosition(target: target, zoom: zoom),
+                              ),
+                              animation: const MapAnimation(
+                                type: MapAnimationType.linear,
+                                duration: 0.3,
+                              ),
+                            );
+                          },
+                          onMapTap: (Point point) async {
+                            setState(() {
+                              _selectedDeliveryPoint = point;
+                            });
+                            await _onDeliveryPointSelected(point);
+                          },
+                          mapObjects: _buildDeliveryMapObjects(),
+                        ),
+                      ),
+                      Positioned(
+                        left: 12,
+                        right: 12,
+                        top: 8,
+                        child: Material(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          elevation: 2,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                height: 40,
+                                child: TextField(
+                                  controller: _searchController,
+                                  focusNode: _searchFocusNode,
+                                  scrollController: _searchScrollController,
+                                  textAlignVertical: TextAlignVertical.center,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    color: Colors.black87,
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText: "Найти на карте",
+                                    hintStyle: const TextStyle(
+                                      fontSize: 15,
+                                      color: Colors.black38,
+                                    ),
+                                    isDense: true,
+                                    prefixIcon: const Icon(
+                                      Icons.search,
+                                      size: 22,
+                                      color: Colors.black38,
+                                    ),
+                                    suffixIcon:
+                                        _searchController.text.trim().isEmpty
+                                        ? null
+                                        : IconButton(
+                                            icon: const Icon(
+                                              Icons.close,
+                                              size: 20,
+                                              color: Colors.black54,
+                                            ),
+                                            onPressed: () {
+                                              _searchController.clear();
+                                              setState(() {
+                                                _suggestions = [];
+                                                _suggestionsMessage = null;
+                                              });
+                                            },
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 40,
+                                              minHeight: 40,
+                                            ),
+                                          ),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_isGeocoding)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: const BorderRadius.vertical(
+                                      bottom: Radius.circular(18),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.08,
+                                        ),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      SizedBox(width: 12),
+                                      Text(
+                                        'Ищем на карте...',
                                         style: TextStyle(
                                           fontSize: 14,
-                                          fontWeight: FontWeight.w500,
                                           color: Colors.black54,
                                         ),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 ),
-                                Expanded(
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(16),
-                                    onTap: () {},
-                                    child: const Center(
-                                      child: Text(
-                                        "Доставка",
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.black,
+                              if (!_isGeocoding &&
+                                  _searchFocusNode.hasFocus &&
+                                  (_suggestions.isNotEmpty ||
+                                      _suggestionsLoading ||
+                                      _suggestionsMessage != null)) ...[
+                                Container(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 260,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: const BorderRadius.vertical(
+                                      bottom: Radius.circular(18),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.08,
                                         ),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
                                       ),
-                                    ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: YandexMap(
-                        tiltGesturesEnabled: false,
-                        rotateGesturesEnabled: false,
-                        mode2DEnabled: true,
-                        onMapCreated: (controller) async {
-                          _mapController = controller;
-                          var target = const Point(
-                            latitude: 43.1150678,
-                            longitude: 131.8855768,
-                          );
-                          var zoom = 12.0;
-                          if (_selectedDeliveryPoint != null) {
-                            zoom = _deliveryAddressSelectedZoom;
-                            target =
-                                (_deliverySheetVisible ||
-                                    widget.openSheetOnStart)
-                                ? _deliveryCameraTargetWithSheetOffset(
-                                    _selectedDeliveryPoint!,
-                                    zoom,
-                                  )
-                                : _selectedDeliveryPoint!;
-                          }
-                          await controller.moveCamera(
-                            CameraUpdate.newCameraPosition(
-                              CameraPosition(target: target, zoom: zoom),
-                            ),
-                            animation: const MapAnimation(
-                              type: MapAnimationType.linear,
-                              duration: 0.3,
-                            ),
-                          );
-                        },
-                        onMapTap: (Point point) async {
-                          setState(() {
-                            _selectedDeliveryPoint = point;
-                          });
-                          await _onDeliveryPointSelected(point);
-                        },
-                        mapObjects: _buildDeliveryMapObjects(),
-                      ),
-                    ),
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      top: 8,
-                      child: Material(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        elevation: 2,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              height: 40,
-                              child: TextField(
-                                controller: _searchController,
-                                focusNode: _searchFocusNode,
-                                scrollController: _searchScrollController,
-                                textAlignVertical: TextAlignVertical.center,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  color: Colors.black87,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: "Найти на карте",
-                                  hintStyle: const TextStyle(
-                                    fontSize: 15,
-                                    color: Colors.black38,
-                                  ),
-                                  isDense: true,
-                                  prefixIcon: const Icon(
-                                    Icons.search,
-                                    size: 22,
-                                    color: Colors.black38,
-                                  ),
-                                  suffixIcon:
-                                      _searchController.text.trim().isEmpty
-                                      ? null
-                                      : IconButton(
-                                          icon: const Icon(
-                                            Icons.close,
-                                            size: 20,
-                                            color: Colors.black54,
-                                          ),
-                                          onPressed: () {
-                                            _searchController.clear();
-                                            setState(() {
-                                              _suggestions = [];
-                                              _suggestionsMessage = null;
-                                            });
-                                          },
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(
-                                            minWidth: 40,
-                                            minHeight: 40,
-                                          ),
-                                        ),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (_isGeocoding)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: const BorderRadius.vertical(
-                                    bottom: Radius.circular(18),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.08,
-                                      ),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                    SizedBox(width: 12),
-                                    Text(
-                                      'Ищем на карте...',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.black54,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (!_isGeocoding &&
-                                _searchFocusNode.hasFocus &&
-                                (_suggestions.isNotEmpty ||
-                                    _suggestionsLoading ||
-                                    _suggestionsMessage != null)) ...[
-                              Container(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 260,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: const BorderRadius.vertical(
-                                    bottom: Radius.circular(18),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.08,
-                                      ),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: _suggestionsLoading
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(20),
-                                        child: Center(
-                                          child: SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
+                                  child: _suggestionsLoading
+                                      ? const Padding(
+                                          padding: EdgeInsets.all(20),
+                                          child: Center(
+                                            child: SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      )
-                                    : _suggestionsMessage != null
-                                    ? Padding(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Center(
-                                          child: Text(
-                                            _suggestionsMessage!,
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              color: Colors.grey.shade700,
+                                        )
+                                      : _suggestionsMessage != null
+                                      ? Padding(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Center(
+                                            child: Text(
+                                              _suggestionsMessage!,
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.grey.shade700,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      )
-                                    : ListView.builder(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 10,
-                                          left: 4,
-                                          right: 4,
-                                          top: 4,
-                                        ),
-                                        shrinkWrap: true,
-                                        physics: const ClampingScrollPhysics(),
-                                        itemCount: _suggestions.length,
-                                        itemBuilder: (context, index) {
-                                          final s = _suggestions[index];
-                                          final title =
-                                              s['title'] as String? ?? '';
-                                          final subtitle =
-                                              s['subtitle'] as String?;
-                                          return Material(
-                                            color: Colors.transparent,
-                                            child: InkWell(
-                                              onTap: () =>
-                                                  _onSuggestionSelected(s),
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                              child: ConstrainedBox(
-                                                constraints:
-                                                    const BoxConstraints(
-                                                      minHeight: 48,
-                                                    ),
-                                                child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 10,
+                                        )
+                                      : ListView.builder(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 10,
+                                            left: 4,
+                                            right: 4,
+                                            top: 4,
+                                          ),
+                                          shrinkWrap: true,
+                                          physics:
+                                              const ClampingScrollPhysics(),
+                                          itemCount: _suggestions.length,
+                                          itemBuilder: (context, index) {
+                                            final s = _suggestions[index];
+                                            final title =
+                                                s['title'] as String? ?? '';
+                                            final subtitle =
+                                                s['subtitle'] as String?;
+                                            return Material(
+                                              color: Colors.transparent,
+                                              child: InkWell(
+                                                onTap: () =>
+                                                    _onSuggestionSelected(s),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                                child: ConstrainedBox(
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                        minHeight: 48,
                                                       ),
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Text(
-                                                        title,
-                                                        style: const TextStyle(
-                                                          fontSize: 15,
-                                                          color: Colors.black87,
+                                                  child: Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 12,
+                                                          vertical: 10,
                                                         ),
-                                                        maxLines: 2,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                      ),
-                                                      if (subtitle != null &&
-                                                          subtitle
-                                                              .isNotEmpty) ...[
-                                                        const SizedBox(
-                                                          height: 2,
-                                                        ),
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
                                                         Text(
-                                                          subtitle,
-                                                          style: TextStyle(
-                                                            fontSize: 13,
-                                                            color: Colors
-                                                                .grey
-                                                                .shade600,
-                                                          ),
-                                                          maxLines: 1,
+                                                          title,
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 15,
+                                                                color: Colors
+                                                                    .black87,
+                                                              ),
+                                                          maxLines: 2,
                                                           overflow: TextOverflow
                                                               .ellipsis,
                                                         ),
+                                                        if (subtitle != null &&
+                                                            subtitle
+                                                                .isNotEmpty) ...[
+                                                          const SizedBox(
+                                                            height: 2,
+                                                          ),
+                                                          Text(
+                                                            subtitle,
+                                                            style: TextStyle(
+                                                              fontSize: 13,
+                                                              color: Colors
+                                                                  .grey
+                                                                  .shade600,
+                                                            ),
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                          ),
+                                                        ],
                                                       ],
-                                                    ],
+                                                    ),
                                                   ),
                                                 ),
                                               ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                              ),
+                                            );
+                                          },
+                                        ),
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                    if (_selectedDeliveryPoint != null &&
-                        !_renderDeliverySheetOnRoot)
-                      _buildDeliverySheetPositioned(
-                        padding: padding,
-                        keyboardInset: keyboardInset,
-                        deliverySheetMaxHeight: deliverySheetMaxHeight,
-                        deliverySheetDragFraction: deliverySheetDragFraction,
-                        deliverySheetOpacity: deliverySheetOpacity,
-                      ),
-                  ],
+                      if (!_deliverySheetVisible)
+                        Positioned(
+                          right: 12,
+                          bottom: 28 + padding.bottom,
+                          child: _buildDeliveryMapActionButton(
+                            icon: Icons.near_me_outlined,
+                            onTap: () {
+                              unawaited(_centerDeliveryMapOnUser());
+                            },
+                          ),
+                        ),
+                      if (_selectedDeliveryPoint != null &&
+                          !_renderDeliverySheetOnRoot)
+                        _buildDeliverySheetPositioned(
+                          padding: padding,
+                          keyboardInset: keyboardInset,
+                          deliverySheetMaxHeight: deliverySheetMaxHeight,
+                          deliverySheetDragFraction: deliverySheetDragFraction,
+                          deliverySheetOpacity: deliverySheetOpacity,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        if (_selectedDeliveryPoint != null && _renderDeliverySheetOnRoot) ...[
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: !_deliverySheetVisible,
-              child: AnimatedOpacity(
-                opacity: _deliverySheetVisible ? 1 : 0,
-                duration: _deliverySheetAnimationDuration,
-                curve: _deliverySheetAnimationCurve,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _dismissDeliverySheet,
-                  child: ColoredBox(
-                    color: Colors.black.withValues(alpha: 0.14),
+          if (bottomSystemInset > 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: bottomSystemInset,
+              child: const IgnorePointer(
+                child: ColoredBox(color: Colors.white),
+              ),
+            ),
+          if (_selectedDeliveryPoint != null && _renderDeliverySheetOnRoot) ...[
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !_deliverySheetVisible,
+                child: AnimatedOpacity(
+                  opacity: _deliverySheetVisible ? 1 : 0,
+                  duration: _deliverySheetAnimationDuration,
+                  curve: _deliverySheetAnimationCurve,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _dismissDeliverySheet,
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.14),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          _buildDeliverySheetPositioned(
-            padding: padding,
-            keyboardInset: keyboardInset,
-            deliverySheetMaxHeight: deliverySheetMaxHeight,
-            deliverySheetDragFraction: deliverySheetDragFraction,
-            deliverySheetOpacity: deliverySheetOpacity,
-          ),
+            _buildDeliverySheetPositioned(
+              padding: padding,
+              keyboardInset: keyboardInset,
+              deliverySheetMaxHeight: deliverySheetMaxHeight,
+              deliverySheetDragFraction: deliverySheetDragFraction,
+              deliverySheetOpacity: deliverySheetOpacity,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -29778,7 +30193,6 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   Point? _userLocationPoint;
   Uint8List? _userPinBytes;
   Uint8List? _shopSinglePinBytes;
-  Uint8List? _shopManyBaseBytes;
   final Map<int, Uint8List> _shopMarkerBytesByCount = {};
   int _mapObjectsBuildSeq = 0;
   final DraggableScrollableController _sheetController =
@@ -30092,7 +30506,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
             PlacemarkIconStyle(
               image: BitmapDescriptor.fromBytes(markerBytes),
               anchor: const Offset(0.5, 0.5),
-              scale: 0.88,
+              scale: 1.14,
             ),
           ),
           opacity: _mapPlacemarkOpacity,
@@ -30126,7 +30540,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
             PlacemarkIconStyle(
               image: BitmapDescriptor.fromBytes(_userPinBytes!),
               anchor: const Offset(0.5, 0.5),
-              scale: 0.88,
+              scale: 1.14,
             ),
           ),
           opacity: _mapPlacemarkOpacity,
@@ -30153,7 +30567,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
           PlacemarkIconStyle(
             image: BitmapDescriptor.fromBytes(markerBytes),
             anchor: const Offset(0.5, 0.5),
-            scale: 0.82,
+            scale: 1.04,
           ),
         ),
         consumeTapEvents: true,
@@ -30216,6 +30630,74 @@ class _PickupPointsPageState extends State<PickupPointsPage>
       if (!mounted) return;
       unawaited(_expandSheetToTop());
     });
+  }
+
+  Future<void> _centerPickupMapOnUser() async {
+    if (_focusedPointId != null && mounted) {
+      setState(() => _focusedPointId = null);
+    }
+    await _ensureMapLocationPermission(triggeredByUser: true);
+    if (!_hasLocationPermission) return;
+
+    final controller = _mapController;
+    if (controller == null) return;
+
+    final userPoint = _userLocationPoint;
+    if (userPoint != null) {
+      await controller.moveCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: userPoint, zoom: _focusUserZoom),
+        ),
+        animation: const MapAnimation(
+          type: MapAnimationType.smooth,
+          duration: 0.7,
+        ),
+      );
+      return;
+    }
+
+    _didCenterToUser = false;
+    await _enableUserLocationLayerAndCenter();
+  }
+
+  Widget _buildPickupMapActionButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x140F172A)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: Center(
+              child: Icon(icon, size: 26, color: const Color(0xFF0F172A)),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openNavigationAppChooser(Map<String, dynamic> point) async {
@@ -30451,38 +30933,45 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     return filteredPoints;
   }
 
-  Future<Uint8List?> _loadMarkerAssetBytes(String assetPath) async {
-    try {
-      final data = await rootBundle.load(assetPath);
-      final bytes = data.buffer.asUint8List();
-      if (bytes.isNotEmpty) return bytes;
-    } catch (_) {}
-    return null;
-  }
-
   Future<Uint8List> _buildUserPinBytes() async {
     if (_userPinBytes != null) return _userPinBytes!;
-    final assetBytes = await _loadMarkerAssetBytes(_userPinAssetPath);
-    if (assetBytes != null) {
-      _userPinBytes = assetBytes;
-      return assetBytes;
-    }
     return _buildFallbackUserPinBytes();
   }
 
   Future<Uint8List> _buildFallbackUserPinBytes() async {
-    const size = 74;
+    const size = 124;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const center = Offset(size / 2, size / 2);
 
-    final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.22);
+    final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.18);
     final outerPaint = Paint()..color = Colors.white;
-    final innerPaint = Paint()..color = const Color(0xFF1F78FF);
+    final innerPaint = Paint()..color = const Color(0xFFFFA237);
 
-    canvas.drawCircle(Offset(center.dx, center.dy + 1.3), 19.8, shadowPaint);
-    canvas.drawCircle(center, 19.0, outerPaint);
-    canvas.drawCircle(center, 14.2, innerPaint);
+    canvas.drawCircle(Offset(center.dx, center.dy + 3.0), 33.8, shadowPaint);
+    canvas.drawCircle(center, 32.0, outerPaint);
+    canvas.drawCircle(center, 27.4, innerPaint);
+
+    final iconPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(Icons.person_rounded.codePoint),
+        style: TextStyle(
+          inherit: false,
+          fontSize: 34,
+          color: Colors.white,
+          fontFamily: Icons.person_rounded.fontFamily,
+          package: Icons.person_rounded.fontPackage,
+        ),
+      ),
+    )..layout();
+    iconPainter.paint(
+      canvas,
+      Offset(
+        center.dx - (iconPainter.width / 2),
+        center.dy - (iconPainter.height / 2),
+      ),
+    );
 
     final image = await recorder.endRecording().toImage(size, size);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -30493,11 +30982,6 @@ class _PickupPointsPageState extends State<PickupPointsPage>
 
   Future<Uint8List> _getShopSingleMarkerBytes() async {
     if (_shopSinglePinBytes != null) return _shopSinglePinBytes!;
-    final assetBytes = await _loadMarkerAssetBytes(_shopPinAssetPath);
-    if (assetBytes != null) {
-      _shopSinglePinBytes = assetBytes;
-      return assetBytes;
-    }
     _shopSinglePinBytes = await _buildFallbackShopMarkerBytes();
     return _shopSinglePinBytes!;
   }
@@ -30516,86 +31000,54 @@ class _PickupPointsPageState extends State<PickupPointsPage>
   }
 
   Future<Uint8List> _buildManyShopMarkerBytes(int count) async {
-    _shopManyBaseBytes ??= await _loadMarkerAssetBytes(_shopManyPinAssetPath);
-    final base = _shopManyBaseBytes;
-    if (base == null) {
-      return _buildFallbackShopMarkerBytes(count: count);
-    }
-
-    final label = count > 999 ? '999+' : count.toString();
-    final baseImage = await _decodeUiImage(base);
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    canvas.drawImage(baseImage, Offset.zero, Paint());
-
-    final w = baseImage.width.toDouble();
-    final h = baseImage.height.toDouble();
-    final fontSize = w * 0.28 + 2;
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-      text: TextSpan(
-        text: label,
-        style: TextStyle(
-          fontFamily: 'Roboto',
-          color: const Color(0xFF111111),
-          fontSize: fontSize,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0,
-        ),
-      ),
-    )..layout(maxWidth: w * 0.8);
-    textPainter.paint(
-      canvas,
-      Offset(
-        (w - textPainter.width) / 2,
-        (h - textPainter.height) / 2 - (h * 0.06) - 4,
-      ),
-    );
-
-    final image = await recorder.endRecording().toImage(
-      baseImage.width,
-      baseImage.height,
-    );
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    return byteData!.buffer.asUint8List();
+    return _buildFallbackShopMarkerBytes(count: count);
   }
 
-  Future<ui.Image> _decodeUiImage(Uint8List bytes) async {
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    return frame.image;
+  Future<ui.Image?> _loadHbIconImage() async {
+    try {
+      final data = await rootBundle.load(_hbIconAssetPath);
+      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+      final frame = await codec.getNextFrame();
+      return frame.image;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Uint8List> _buildFallbackShopMarkerBytes({int count = 1}) async {
     final safeCount = math.max(1, count);
-    const size = 116;
-    const radius = 38.5;
-    const strokeWidth = 7.2;
+    final bool isCluster = safeCount > 1;
+    const size = 136;
+    final double radius = isCluster ? 44.0 : 31.0;
+    final double shadowRadius = radius + 3.8;
+    final logoImage = isCluster ? null : await _loadHbIconImage();
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const center = Offset(size / 2, size / 2);
 
-    final fillPaint = Paint()..color = const Color(0xFF08090B);
-    final strokePaint = Paint()
-      ..color = const Color(0xFFBA7240)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth;
+    final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.18);
+    final outerPaint = Paint()..color = Colors.white;
+    final fillPaint = Paint()..color = const Color(0xFFA4522A);
 
+    canvas.drawCircle(
+      Offset(center.dx, center.dy + 2.4),
+      shadowRadius,
+      shadowPaint,
+    );
+    canvas.drawCircle(center, radius + 3.2, outerPaint);
     canvas.drawCircle(center, radius, fillPaint);
-    canvas.drawCircle(center, radius, strokePaint);
 
-    if (safeCount > 1) {
+    if (isCluster) {
       final label = safeCount > 999 ? '999+' : safeCount.toString();
-      const fontSize = 30.0;
+      final fontSize = label.length >= 4 ? 27.0 : 36.0;
       final textPainter = TextPainter(
         textDirection: TextDirection.ltr,
         text: TextSpan(
           text: label,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Roboto',
-            color: Color(0xFF111111),
+            color: Colors.white,
             fontSize: fontSize,
             fontWeight: FontWeight.w800,
           ),
@@ -30605,9 +31057,33 @@ class _PickupPointsPageState extends State<PickupPointsPage>
         canvas,
         Offset(
           center.dx - (textPainter.width / 2),
-          center.dy - (textPainter.height / 2) - 8,
+          center.dy - (textPainter.height / 2),
         ),
       );
+    } else {
+      if (logoImage != null) {
+        final srcRect = Rect.fromLTWH(
+          0,
+          0,
+          logoImage.width.toDouble(),
+          logoImage.height.toDouble(),
+        );
+        final dstRect = Rect.fromCenter(center: center, width: 40, height: 40);
+        canvas.drawImageRect(
+          logoImage,
+          srcRect,
+          dstRect,
+          Paint()
+            ..blendMode = BlendMode.screen
+            ..filterQuality = FilterQuality.high,
+        );
+      } else {
+        canvas.drawCircle(
+          center,
+          8.8,
+          Paint()..color = Colors.white.withValues(alpha: 0.96),
+        );
+      }
     }
 
     final image = await recorder.endRecording().toImage(size, size);
@@ -31235,6 +31711,9 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     final focusedPoint = isFocusedPointMode && visiblePoints.isNotEmpty
         ? visiblePoints.first
         : null;
+    final double mapActionBottom = focusedPoint != null
+        ? 178 + bottomSystemInset
+        : (screenHeight * collapsedSheetChildSize) + 18;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -31545,6 +32024,16 @@ class _PickupPointsPageState extends State<PickupPointsPage>
                                           ),
                                         ),
                                       ),
+                                    Positioned(
+                                      right: 12,
+                                      bottom: mapActionBottom,
+                                      child: _buildPickupMapActionButton(
+                                        icon: Icons.near_me_outlined,
+                                        onTap: () {
+                                          unawaited(_centerPickupMapOnUser());
+                                        },
+                                      ),
+                                    ),
                                   ],
                                 )
                               : Center(
@@ -35680,7 +36169,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
                         children: [
                           Expanded(
                             child: Text(
-                              "Артикул: ${article.isEmpty ? "-" : article}",
+                              "Код товара: ${article.isEmpty ? "-" : article}",
                               style: _subMenuStyle.copyWith(
                                 fontSize: 13,
                                 color: Colors.black54,
@@ -35756,12 +36245,15 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            border: Border.all(color: Colors.grey.shade200),
+            border: Border(
+              top: BorderSide(color: Colors.grey.shade300, width: 1),
+            ),
             boxShadow: const [
               BoxShadow(
-                color: Color(0x14000000),
-                blurRadius: 6,
-                offset: Offset(0, 2),
+                color: Color(0x16000000),
+                blurRadius: 10,
+                spreadRadius: -2,
+                offset: Offset(0, -4),
               ),
             ],
           ),

@@ -19,9 +19,11 @@ class AppConfig {
     'YOOKASSA_CLIENT_KEY',
   );
 
-  /// OneSignal app id for the current build.
+  /// Public OneSignal app id for the current build.
+  /// Defaults to the production app id and can be overridden via dart-define.
   static const String oneSignalAppId = String.fromEnvironment(
     'ONESIGNAL_APP_ID',
+    defaultValue: '0f2f4f43-c8b4-475c-be74-9ed6045bae52',
   );
 
   /// API key used for Yandex geocoder and suggest endpoints.

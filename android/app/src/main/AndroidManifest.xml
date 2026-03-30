@@ -12,7 +12,10 @@
     <application
         android:label="Хозяин Барин"
         android:name=".MainApplication"
-        android:icon="@mipmap/launcher_icon">
+        android:icon="@mipmap/launcher_icon"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <meta-data
             android:name="com.yandex.maps.api_key"
             android:value="${YANDEX_MAPKIT_API_KEY}" />
@@ -51,7 +54,6 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" android:host="hozyain-barin.ru" />
                 <data android:scheme="https" android:host="hozyain-barin.ru" />
             </intent-filter>
 
