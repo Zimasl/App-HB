@@ -1498,6 +1498,8 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
 
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
+  String? _lastIncomingAppLinkUrl;
+  DateTime? _lastIncomingAppLinkAt;
   bool _isCheckingNotificationsPermission = false;
   bool _isStartupPermissionsFlowRunning = false;
 
@@ -8652,7 +8654,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
               url,
             ),
             onOpenLink: (nextTitle, link) {
-              _navigateToSimple(nextTitle, link);
+              unawaited(_openDocumentSiteLink(nextTitle, link));
             },
           ),
         ),
@@ -9520,7 +9522,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           onOpenOrderWeb: (id) {
             final clean = id.trim();
             if (clean.isEmpty) return;
-            _launchUrl('https://hozyain-barin.ru/my/orders/$clean/');
+            _launchUrl(
+              'https://hozyain-barin.ru/my/orders/$clean/',
+              mode: LaunchMode.inAppBrowserView,
+            );
           },
         ),
       ),
@@ -9775,7 +9780,49 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
-  Future<void> _logoutProfile() async {
+  String _deleteAccountMessageFromData(
+    Map<String, dynamic>? data,
+    String fallback,
+  ) {
+    final raw =
+        data?['message']?.toString() ??
+        data?['error_description']?.toString() ??
+        data?['error']?.toString() ??
+        '';
+    final normalized = _normalizeOrderError(raw).trim();
+    return normalized.isNotEmpty ? normalized : fallback;
+  }
+
+  Future<Map<String, dynamic>> _postDeleteAccountRequest(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final dio = _getAuthDio();
+      final response = await dio.post(
+        '/native/delete_account.php',
+        data: payload,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          validateStatus: (_) => true,
+        ),
+      );
+      final decoded = _parseAuthResponse(response.data);
+      if (decoded != null) return decoded;
+      final raw = _normalizeOrderError(
+        _responseDataToString(response.data).trim(),
+      );
+      throw StateError(
+        raw.isNotEmpty ? raw : 'Сервер вернул некорректный ответ',
+      );
+    } on DioException catch (e) {
+      final raw = _normalizeOrderError(
+        _responseDataToString(e.response?.data).trim(),
+      );
+      throw StateError(raw.isNotEmpty ? raw : 'Ошибка сети');
+    }
+  }
+
+  Future<void> _clearAuthSessionLocally() async {
     _authContactId = null;
     _authUserName = null;
     _authPhone = null;
@@ -9789,6 +9836,252 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     _authDio = null;
     await _persistAuthSessionToPrefs();
     _reloadProfileData();
+  }
+
+  Future<void> _clearLocalDataAfterAccountDeletion() async {
+    final previousContactId = (_authContactId ?? '').trim();
+    final prefs = await SharedPreferences.getInstance();
+
+    if (previousContactId.isNotEmpty) {
+      await prefs.remove(_checkoutStateStorageKey(previousContactId));
+      await prefs.remove(_profileBonusStorageKey(previousContactId));
+    }
+
+    _clearCart();
+    _clearFavorites();
+    _clearCompare();
+
+    await prefs.remove(_prefsCartStateKey);
+    await prefs.remove(_prefsFavoritesStateKey);
+    await prefs.remove(_prefsCompareStateKey);
+    await prefs.remove(_prefsViewedProductsKey);
+    await prefs.remove(_prefsSearchHistoryKey);
+
+    _viewedProducts.clear();
+    _searchHistory = [];
+
+    await _clearAuthSessionLocally();
+
+    if (!mounted) return;
+    _goHome();
+    setState(() {});
+  }
+
+  Future<String> _requestDeleteAccountCode() async {
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) {
+      throw StateError('Аккаунт не найден. Войдите заново.');
+    }
+
+    final data = await _postDeleteAccountRequest({
+      'action': 'send_delete_code',
+      'contact_id': contactId,
+    });
+    final status = data['status']?.toString().toLowerCase() ?? '';
+    if (status != 'ok') {
+      throw StateError(
+        _deleteAccountMessageFromData(
+          data,
+          'Не удалось отправить код подтверждения',
+        ),
+      );
+    }
+
+    final maskedPhone = data['phone_masked']?.toString().trim() ?? '';
+    return maskedPhone.isNotEmpty
+        ? maskedPhone
+        : _formatPhoneMasked(_authPhone ?? '');
+  }
+
+  Future<void> _confirmDeleteAccountCode(String code) async {
+    final contactId = (_authContactId ?? '').trim();
+    if (contactId.isEmpty) {
+      throw StateError('Аккаунт не найден. Войдите заново.');
+    }
+
+    final data = await _postDeleteAccountRequest({
+      'action': 'delete_account',
+      'contact_id': contactId,
+      'code': code.trim(),
+    });
+    final status = data['status']?.toString().toLowerCase() ?? '';
+    if (status != 'ok') {
+      throw StateError(
+        _deleteAccountMessageFromData(data, 'Не удалось удалить аккаунт'),
+      );
+    }
+  }
+
+  Future<bool> _showDeleteAccountCodeDialog(String phoneMasked) async {
+    final codeController = TextEditingController();
+    var isSubmitting = false;
+    String? errorText;
+
+    final deleted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> submit() async {
+              final code = codeController.text.trim();
+              if (code.isEmpty) {
+                setDialogState(() => errorText = 'Введите код из SMS');
+                return;
+              }
+
+              setDialogState(() {
+                isSubmitting = true;
+                errorText = null;
+              });
+
+              try {
+                await _confirmDeleteAccountCode(code);
+                if (!dialogContext.mounted) return;
+                Navigator.pop(dialogContext, true);
+              } catch (e) {
+                final text = _normalizeOrderError(
+                  e is StateError ? e.message.toString() : e.toString(),
+                ).replaceFirst('Bad state: ', '').trim();
+                if (!dialogContext.mounted) return;
+                setDialogState(() {
+                  errorText = text.isNotEmpty
+                      ? text
+                      : 'Не удалось удалить аккаунт';
+                });
+              } finally {
+                if (dialogContext.mounted) {
+                  setDialogState(() => isSubmitting = false);
+                }
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Подтвердите удаление'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    phoneMasked.isNotEmpty
+                        ? 'Введите код из SMS, отправленный на $phoneMasked.'
+                        : 'Введите код из SMS, чтобы подтвердить удаление аккаунта.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: codeController,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => isSubmitting ? null : submit(),
+                    decoration: const InputDecoration(
+                      labelText: 'Код из SMS',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (errorText != null && errorText!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      errorText!,
+                      style: TextStyle(
+                        color: Colors.red.shade700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.pop(dialogContext, false),
+                  child: const Text('Отмена'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting ? null : submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(isSubmitting ? 'Удаление...' : 'Удалить аккаунт'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    codeController.dispose();
+    return deleted == true;
+  }
+
+  Future<void> _startDeleteAccountFlow() async {
+    if (!_isAuthorized) {
+      await _openProfileAuthPage();
+      return;
+    }
+
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Удалить аккаунт?'),
+          content: const Text(
+            'После подтверждения аккаунт будет удалён, а локальные данные на устройстве очищены. '
+            'Заказы и платежи могут сохраняться в системе по требованиям законодательства.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Продолжить'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (approved != true) return;
+
+    try {
+      final maskedPhone = await _requestDeleteAccountCode();
+      if (!mounted) return;
+
+      final deleted = await _showDeleteAccountCodeDialog(maskedPhone);
+      if (!deleted || !mounted) return;
+
+      await _clearLocalDataAfterAccountDeletion();
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Аккаунт удалён')));
+    } catch (e) {
+      if (!mounted) return;
+      final text = _normalizeOrderError(
+        e is StateError ? e.message.toString() : e.toString(),
+      ).replaceFirst('Bad state: ', '').trim();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            text.isNotEmpty ? text : 'Не удалось начать удаление аккаунта',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _logoutProfile() async {
+    await _clearAuthSessionLocally();
     if (!mounted) return;
     _goHome();
     setState(() {});
@@ -10652,12 +10945,110 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     return _nativeRequestEpochs[key] ?? 0;
   }
 
-  void _initDeepLinks() async {
+  String _normalizeIncomingSiteLink(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (RegExp(
+      r'^(?:id|category_id)\s*=\s*[0-9]+$',
+      caseSensitive: false,
+    ).hasMatch(trimmed)) {
+      return trimmed;
+    }
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return trimmed;
+    if (!uri.hasScheme) return trimmed;
+
+    final path = uri.path.trim();
+    if (path.isEmpty || path == '/') {
+      return uri.hasQuery ? '/?${uri.query}' : '/';
+    }
+    return uri.hasQuery ? '$path?${uri.query}' : path;
+  }
+
+  bool _isInternalSearchLink(String path) {
+    if (!path.startsWith('/search/') || path.contains('wishlist=true')) {
+      return false;
+    }
+    final query = Uri.tryParse(
+      'https://hozyain-barin.ru$path',
+    )?.queryParameters['query']?.trim();
+    return (query ?? '').isNotEmpty;
+  }
+
+  bool _canHandleSiteLinkInternally(String raw) {
+    final normalized = _normalizeIncomingSiteLink(raw);
+    if (normalized.isEmpty) return false;
+    if (_extractCategoryIdFromLink(normalized) != null) return true;
+    if (_isInternalSearchLink(normalized)) return true;
+    return _resolveNativeCategory(null, normalized) != null;
+  }
+
+  String _siteUrlForLaunch(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null && uri.hasScheme) return trimmed;
+    if (trimmed.startsWith('/')) return 'https://hozyain-barin.ru$trimmed';
+    return 'https://hozyain-barin.ru/$trimmed';
+  }
+
+  String _titleForIncomingSiteLink(String normalizedPath) {
+    if (normalizedPath.contains('wishlist=true')) return 'Избранное';
+    if (normalizedPath.startsWith('/compare')) return 'Сравнение';
+    if (normalizedPath.startsWith('/cart')) return 'Корзина';
+    if (normalizedPath.startsWith('/my') ||
+        normalizedPath.startsWith('/signup')) {
+      return 'Профиль';
+    }
+    if (_isInternalSearchLink(normalizedPath)) return 'Поиск';
+    return 'Категория';
+  }
+
+  Future<void> _openDocumentSiteLink(String title, String raw) async {
+    final normalized = _normalizeIncomingSiteLink(raw);
+    if (normalized.isEmpty) return;
+    if (_canHandleSiteLinkInternally(normalized)) {
+      _navigateToSimple(title, normalized);
+      return;
+    }
+
+    final url = _siteUrlForLaunch(raw);
+    if (url.isEmpty) return;
+    await _launchUrl(url, mode: LaunchMode.inAppBrowserView);
+  }
+
+  bool _shouldSkipIncomingAppLink(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return true;
+    final now = DateTime.now();
+    final isDuplicate =
+        _lastIncomingAppLinkUrl == trimmed &&
+        _lastIncomingAppLinkAt != null &&
+        now.difference(_lastIncomingAppLinkAt!) < const Duration(seconds: 2);
+    if (isDuplicate) return true;
+    _lastIncomingAppLinkUrl = trimmed;
+    _lastIncomingAppLinkAt = now;
+    return false;
+  }
+
+  Future<void> _handleIncomingAppLink(Uri uri) async {
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return;
+    final url = uri.toString();
+    if (_shouldSkipIncomingAppLink(url)) return;
+    final normalized = _normalizeIncomingSiteLink(url);
+    if (_canHandleSiteLinkInternally(normalized)) {
+      if (!mounted) return;
+      _navigateToSimple(_titleForIncomingSiteLink(normalized), normalized);
+      return;
+    }
+    await _launchUrl(url, mode: LaunchMode.inAppBrowserView);
+  }
+
+  void _initDeepLinks() {
     _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
-      final scheme = uri.scheme.toLowerCase();
-      if (scheme == 'http' || scheme == 'https') {
-        _launchUrl(uri.toString());
-      }
+      unawaited(_handleIncomingAppLink(uri));
     });
   }
 
@@ -12055,6 +12446,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                                   unawaited(
                                     _launchUrl(
                                       'https://hozyain-barin.ru/cart/',
+                                      mode: LaunchMode.inAppBrowserView,
                                     ),
                                   );
                                 });
@@ -17561,6 +17953,9 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     required String title,
     String? subtitle,
     String? badge,
+    Color? iconColor,
+    Color? titleColor,
+    Color? trailingColor,
     VoidCallback? onTap,
   }) {
     return InkWell(
@@ -17569,7 +17964,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         child: Row(
           children: [
-            Icon(icon, size: 22, color: Colors.black45),
+            Icon(icon, size: 22, color: iconColor ?? Colors.black45),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -17577,10 +17972,10 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w400,
-                      color: Colors.black87,
+                      color: titleColor ?? Colors.black87,
                     ),
                   ),
                   if (subtitle != null && subtitle.trim().isNotEmpty) ...[
@@ -17613,7 +18008,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                   ),
                 ),
               ),
-            const Icon(Icons.chevron_right, color: Colors.black38),
+            Icon(Icons.chevron_right, color: trailingColor ?? Colors.black38),
           ],
         ),
       ),
@@ -18046,6 +18441,15 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
                           icon: Icons.logout,
                           title: "Выйти",
                           onTap: _logoutProfile,
+                        ),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                        _profileMenuTile(
+                          icon: Icons.delete_outline,
+                          title: "Удалить аккаунт",
+                          iconColor: const Color(0xFFB3261E),
+                          titleColor: const Color(0xFFB3261E),
+                          trailingColor: const Color(0xFFB3261E),
+                          onTap: () => unawaited(_startDeleteAccountFlow()),
                         ),
                       ],
                       Divider(height: 1, color: Colors.grey.shade200),
@@ -20918,7 +21322,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     );
   }
 
-  Future<void> _launchUrl(String url) async {
+  Future<void> _launchUrl(String url, {LaunchMode? mode}) async {
     final Uri uri = Uri.parse(url);
     final scheme = uri.scheme.toLowerCase();
     final allowed =
@@ -20928,7 +21332,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
         scheme == 'mailto';
     if (!allowed) return;
     if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(uri, mode: mode ?? LaunchMode.externalApplication);
     }
   }
 }
@@ -25217,8 +25621,11 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
         scheme == 'tel' ||
         scheme == 'mailto';
     if (!allowed) return;
+    final launchMode = scheme == 'http' || scheme == 'https'
+        ? LaunchMode.inAppBrowserView
+        : LaunchMode.externalApplication;
     if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(uri, mode: launchMode);
     }
   }
 
@@ -27553,6 +27960,7 @@ class _NativeJsonDocumentPageState extends State<_NativeJsonDocumentPage> {
           ),
           child: Html(
             data: _htmlBody,
+            onLinkTap: (url, _, __) => _openDocumentLink(url ?? ''),
             style: {
               'body': Style(
                 margin: Margins.zero,
