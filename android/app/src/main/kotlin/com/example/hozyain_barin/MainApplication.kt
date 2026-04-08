@@ -1,4 +1,4 @@
-package com.example.hozyain_barin
+package ru.hozyainbarin.app
 
 import android.app.Application
 import com.yandex.mapkit.MapKitFactory

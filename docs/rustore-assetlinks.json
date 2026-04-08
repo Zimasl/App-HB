@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ru.hozyainbarin.app",
+      "sha256_cert_fingerprints": [
+        "12:9D:C4:13:2F:AC:40:A4:74:C7:B5:04:38:4B:2C:10:A7:FA:8A:F6:A8:06:BC:CC:1A:A2:71:31:A1:8A:1A:51"
+      ]
+    }
+  }
+]

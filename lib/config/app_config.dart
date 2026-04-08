@@ -19,6 +19,18 @@ class AppConfig {
     'YOOKASSA_CLIENT_KEY',
   );
 
+  /// Online payments are enabled by default after the first public release.
+  /// Use `--dart-define=ENABLE_ONLINE_PAYMENTS=false` as an emergency kill
+  /// switch, while still requiring real production YooKassa keys in the build.
+  static const bool _enableOnlinePaymentsFlag = bool.fromEnvironment(
+    'ENABLE_ONLINE_PAYMENTS',
+    defaultValue: true,
+  );
+  static bool get enableOnlinePayments =>
+      _enableOnlinePaymentsFlag &&
+      yookassaShopId.isNotEmpty &&
+      yookassaClientKey.isNotEmpty;
+
   /// Public OneSignal app id for the current build.
   /// Defaults to the production app id and can be overridden via dart-define.
   static const String oneSignalAppId = String.fromEnvironment(

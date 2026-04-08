@@ -3,8 +3,6 @@ import 'package:yookassa_payments_flutter/yookassa_payments_flutter.dart';
 
 import '../config/app_config.dart';
 
-enum OnlinePaymentMethod { yooMoney, bankCard }
-
 class YookassaPaymentException implements Exception {
   final String message;
   const YookassaPaymentException(this.message);
@@ -37,16 +35,11 @@ class YookassaPaymentService {
     required String amountRub,
     required String title,
     required String subtitle,
-    required OnlinePaymentMethod onlinePaymentMethod,
+    required List<Map<String, dynamic>> receiptItems,
     String? userPhoneNumber,
     bool enableLogging = false,
   }) async {
     AppConfig.validatePayments();
-
-    final paymentMethodTypes = switch (onlinePaymentMethod) {
-      OnlinePaymentMethod.bankCard => PaymentMethodTypes.bankCard,
-      OnlinePaymentMethod.yooMoney => PaymentMethodTypes.yooMoney,
-    };
 
     final tokenizationInput = TokenizationModuleInputData(
       clientApplicationKey: AppConfig.yookassaClientKey,
@@ -54,7 +47,9 @@ class YookassaPaymentService {
       subtitle: subtitle,
       amount: Amount(value: amountRub, currency: Currency.rub),
       shopId: AppConfig.yookassaShopId,
-      tokenizationSettings: TokenizationSettings(paymentMethodTypes),
+      tokenizationSettings: const TokenizationSettings(
+        PaymentMethodTypes.bankCard,
+      ),
       savePaymentMethod: SavePaymentMethod.off,
       isLoggingEnabled: enableLogging,
       userPhoneNumber: userPhoneNumber,
@@ -87,6 +82,8 @@ class YookassaPaymentService {
         'payment_token': paymentToken,
         'payment_method_type': paymentMethodType,
         'amount': amountRub,
+        'customer_phone': userPhoneNumber,
+        'receipt_items': receiptItems,
       },
       options: Options(contentType: Headers.jsonContentType),
     );
@@ -94,6 +91,11 @@ class YookassaPaymentService {
     final payStatus = payData['status']?.toString() ?? '';
     final paymentId = payData['payment_id']?.toString() ?? '';
     final confirmationUrl = payData['confirmation_url']?.toString();
+    final payError = payData['error_description']?.toString().trim() ?? '';
+
+    if (payError.isNotEmpty) {
+      throw YookassaPaymentException(payError);
+    }
 
     if (payStatus.isEmpty || paymentId.isEmpty) {
       throw const YookassaPaymentException(
@@ -141,6 +143,11 @@ class YookassaPaymentService {
           data['payment_status']?.toString().toLowerCase() ??
           data['status']?.toString().toLowerCase() ??
           '';
+      final errorDescription =
+          data['error_description']?.toString().trim() ?? '';
+      if (errorDescription.isNotEmpty) {
+        throw YookassaPaymentException(errorDescription);
+      }
       if (status == 'succeeded' ||
           status == 'canceled' ||
           status == 'pending') {

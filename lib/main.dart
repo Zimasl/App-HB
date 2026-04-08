@@ -6433,6 +6433,7 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
           items: payloadItems,
           total: totalSum,
           contactId: _authContactId,
+          onAuthSuccess: _handleSuccessfulAuthSession,
           onOrderSuccess: _clearCart,
         ),
       ),
@@ -9768,15 +9769,19 @@ class _HozyainBarinAppState extends State<HozyainBarinApp>
     }
   }
 
+  Future<void> _handleSuccessfulAuthSession() async {
+    await _restoreProfileBonusFromPrefs();
+    _reloadProfileData();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openProfileAuthPage() async {
     final ok = await Navigator.push<bool>(
       context,
       _adaptivePageRoute(builder: (_) => const AuthPage()),
     );
     if (ok == true && mounted) {
-      await _restoreProfileBonusFromPrefs();
-      _reloadProfileData();
-      setState(() {});
+      await _handleSuccessfulAuthSession();
     }
   }
 
@@ -22255,12 +22260,14 @@ class CheckoutPage extends StatefulWidget {
   final List<Map<String, dynamic>> items;
   final double total;
   final String? contactId;
+  final Future<void> Function()? onAuthSuccess;
   final VoidCallback? onOrderSuccess;
   const CheckoutPage({
     super.key,
     required this.items,
     required this.total,
     this.contactId,
+    this.onAuthSuccess,
     this.onOrderSuccess,
   });
 
@@ -22276,8 +22283,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final _addressController = TextEditingController();
   final _bonusAmountController = TextEditingController();
   int _deliveryMethod = 1; // 0 - доставка, 1 - самовывоз
-  int _paymentMethod = 0; // 0 - онлайн, 1 - при получении
-  int _onlinePaymentOption = 0; // 0 - YooKassa, 1 - банковская карта
+  int _paymentMethod = 1; // 0 - онлайн, 1 - при получении
   bool _useBonuses = true;
   double _bonusBalance = 0;
   bool _isBonusLoading = false;
@@ -22292,6 +22298,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _orderError;
   late final TapGestureRecognizer _privacyPolicyTapRecognizer;
   late final TapGestureRecognizer _termsOfSaleTapRecognizer;
+
+  bool get _onlinePaymentsEnabled => AppConfig.enableOnlinePayments;
+  bool get _bonusWriteOffEnabled => false;
 
   @override
   void initState() {
@@ -22310,20 +22319,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
     if (!mounted || saved == null) return;
     setState(() {
+      final restoredPaymentMethod =
+          int.tryParse(saved['paymentMethod']?.toString() ?? '1') ?? 1;
       _deliveryMethod =
           int.tryParse(saved['deliveryMethod']?.toString() ?? '1') ?? 1;
-      _paymentMethod =
-          int.tryParse(saved['paymentMethod']?.toString() ?? '0') ?? 0;
-      _onlinePaymentOption =
-          int.tryParse(saved['onlinePaymentOption']?.toString() ?? '0') ?? 0;
-      final hasSavedUseBonuses = saved.containsKey('useBonuses');
-      _useBonuses = hasSavedUseBonuses
-          ? (saved['useBonuses'] == true ||
-                saved['useBonuses']?.toString() == '1' ||
-                saved['useBonuses']?.toString().toLowerCase() == 'true')
-          : true;
-      _bonusAmountController.text =
-          saved['bonusAmount']?.toString().trim() ?? '';
+      _paymentMethod = _onlinePaymentsEnabled && restoredPaymentMethod == 0
+          ? 0
+          : 1;
+      if (_bonusWriteOffEnabled) {
+        final hasSavedUseBonuses = saved.containsKey('useBonuses');
+        _useBonuses = hasSavedUseBonuses
+            ? (saved['useBonuses'] == true ||
+                  saved['useBonuses']?.toString() == '1' ||
+                  saved['useBonuses']?.toString().toLowerCase() == 'true')
+            : true;
+        _bonusAmountController.text =
+            saved['bonusAmount']?.toString().trim() ?? '';
+      } else {
+        _useBonuses = false;
+        _bonusAmountController.clear();
+      }
 
       final pickupRaw = saved['selectedPickupPoint'];
       if (pickupRaw is Map) {
@@ -22350,9 +22365,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
     await _persistCheckoutStateToPrefs(widget.contactId ?? _authContactId, {
       'deliveryMethod': _deliveryMethod,
       'paymentMethod': _paymentMethod,
-      'onlinePaymentOption': _onlinePaymentOption,
-      'useBonuses': _useBonuses,
-      'bonusAmount': _bonusAmountController.text.trim(),
+      'useBonuses': _bonusWriteOffEnabled ? _useBonuses : false,
+      'bonusAmount': _bonusWriteOffEnabled
+          ? _bonusAmountController.text.trim()
+          : '',
       'selectedPickupPoint': _selectedPickupPoint,
       'selectedDeliveryData': _selectedDeliveryData,
       'selectedDeliveryAddress': _selectedDeliveryAddress,
@@ -22384,6 +22400,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   double get _bonusWriteOffValue {
+    if (!_bonusWriteOffEnabled) return 0;
     if (!_useBonuses) return 0;
     final parsed =
         double.tryParse(
@@ -22657,6 +22674,98 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return total;
   }
 
+  int _checkoutItemQuantity(Map<String, dynamic> item) {
+    final qtyRaw = item['quantity'] ?? item['count'] ?? item['qty'];
+    final parsed = qtyRaw is num
+        ? qtyRaw.toDouble()
+        : double.tryParse(qtyRaw?.toString() ?? '');
+    if (parsed == null || parsed <= 0) return 1;
+    return math.max(1, parsed.floor());
+  }
+
+  String _checkoutReceiptItemName(Map<String, dynamic> item) {
+    final rawName =
+        (item['name'] ?? item['product_name'] ?? item['title'] ?? 'Товар')
+            .toString()
+            .trim();
+    return rawName.isNotEmpty ? rawName : 'Товар';
+  }
+
+  List<Map<String, dynamic>> _buildYookassaReceiptItems({
+    required double payableAmount,
+  }) {
+    final targetTotalCents = (payableAmount * 100).round();
+    if (targetTotalCents <= 0) return const [];
+
+    final units = <Map<String, dynamic>>[];
+    for (final item in widget.items) {
+      final qty = _checkoutItemQuantity(item);
+      final unitPriceCents = (_parseCheckoutPriceValue(item['price']) * 100)
+          .round();
+      if (unitPriceCents <= 0) continue;
+
+      final description = _checkoutReceiptItemName(item);
+      for (var i = 0; i < qty; i++) {
+        units.add({'description': description, 'base_cents': unitPriceCents});
+      }
+    }
+
+    List<Map<String, dynamic>> fallbackReceipt() => [
+      {
+        'description': 'Заказ Хозяин Барин',
+        'quantity': '1.00',
+        'amount': (targetTotalCents / 100).toStringAsFixed(2),
+      },
+    ];
+
+    if (units.isEmpty) return fallbackReceipt();
+
+    final originalTotalCents = units.fold<int>(
+      0,
+      (sum, unit) => sum + ((unit['base_cents'] as int?) ?? 0),
+    );
+    if (originalTotalCents <= 0) return fallbackReceipt();
+
+    final allocatedCents = List<int>.filled(units.length, 0);
+    final remainders = <Map<String, dynamic>>[];
+    var distributedCents = 0;
+
+    for (var i = 0; i < units.length; i++) {
+      final baseCents = (units[i]['base_cents'] as int?) ?? 0;
+      final rawShare = baseCents * targetTotalCents / originalTotalCents;
+      final cents = rawShare.floor();
+      allocatedCents[i] = cents;
+      distributedCents += cents;
+      remainders.add({'index': i, 'remainder': rawShare - cents});
+    }
+
+    remainders.sort(
+      (a, b) => ((b['remainder'] as double?) ?? 0).compareTo(
+        (a['remainder'] as double?) ?? 0,
+      ),
+    );
+
+    var remainingCents = targetTotalCents - distributedCents;
+    for (var i = 0; i < remainingCents && i < remainders.length; i++) {
+      final index = (remainders[i]['index'] as int?) ?? 0;
+      allocatedCents[index] += 1;
+    }
+
+    final receiptItems = <Map<String, dynamic>>[];
+    for (var i = 0; i < units.length; i++) {
+      final amountCents = allocatedCents[i];
+      if (amountCents <= 0) continue;
+
+      receiptItems.add({
+        'description': units[i]['description'],
+        'quantity': '1.00',
+        'amount': (amountCents / 100).toStringAsFixed(2),
+      });
+    }
+
+    return receiptItems.isNotEmpty ? receiptItems : fallbackReceipt();
+  }
+
   String _buildDeliveryShortAddress({
     required String fullAddress,
     required String apartment,
@@ -22788,6 +22897,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
       setState(() => _orderError = "Корзина пуста");
       return;
     }
+    if (!_onlinePaymentsEnabled && _paymentMethod == 0) {
+      setState(() {
+        _paymentMethod = 1;
+        _orderError = 'Онлайн-оплата временно недоступна';
+      });
+      unawaited(_persistCheckoutState());
+      return;
+    }
     setState(() {
       _orderError = null;
       _isSubmittingOrder = true;
@@ -22843,16 +22960,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (_paymentMethod == 0) {
         final service = YookassaPaymentService(dio: dio);
         final phone = _authPhone?.toString();
+        final payableAmountRub = (widget.total - _bonusWriteOffValue)
+            .clamp(0.0, double.infinity)
+            .toDouble();
+        if (payableAmountRub <= 0) {
+          throw const YookassaPaymentException(
+            'Сумма онлайн-оплаты должна быть больше 0 ₽. Уменьшите списание бонусов или выберите оплату при получении.',
+          );
+        }
+
+        final receiptItems = _buildYookassaReceiptItems(
+          payableAmount: payableAmountRub,
+        );
         final tempOrderId = 'prepay-${DateTime.now().millisecondsSinceEpoch}';
         final result = await service.payOrder(
           orderId: tempOrderId,
           orderNumber: null,
-          amountRub: widget.total.toStringAsFixed(2),
+          amountRub: payableAmountRub.toStringAsFixed(2),
           title: 'Хозяин Барин',
           subtitle: 'Оплата заказа',
-          onlinePaymentMethod: _onlinePaymentOption == 1
-              ? OnlinePaymentMethod.bankCard
-              : OnlinePaymentMethod.yooMoney,
+          receiptItems: receiptItems,
           userPhoneNumber: (phone != null && phone.trim().isNotEmpty)
               ? phone.trim()
               : null,
@@ -22965,7 +23092,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _adaptivePageRoute(builder: (_) => const AuthPage()),
     );
     if (result == true && mounted) {
+      final authRefresh = widget.onAuthSuccess?.call();
       setState(() {});
+      await _restoreCheckoutState();
+      if (!mounted) return;
+      await _loadBonusBalance();
+      if (authRefresh != null) {
+        await authRefresh;
+      }
     }
   }
 
@@ -23793,136 +23927,40 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ],
               ]),
               _section("Способ оплаты", [
-                Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          setState(() => _paymentMethod = 0);
-                          unawaited(_persistCheckoutState());
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          decoration: BoxDecoration(
-                            color: _paymentMethod == 0
-                                ? Colors.black
-                                : const Color(0xFFF3F3F4),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: _paymentMethod == 0
-                                  ? Colors.black
-                                  : const Color(0xFFE5E5E7),
-                            ),
-                          ),
-                          child: Text(
-                            "Онлайн",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _paymentMethod == 0
-                                  ? Colors.white
-                                  : Colors.black87,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          setState(() => _paymentMethod = 1);
-                          unawaited(_persistCheckoutState());
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          decoration: BoxDecoration(
-                            color: _paymentMethod == 1
-                                ? Colors.black
-                                : const Color(0xFFF3F3F4),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: _paymentMethod == 1
-                                  ? Colors.black
-                                  : const Color(0xFFE5E5E7),
-                            ),
-                          ),
-                          child: Text(
-                            "При получении",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _paymentMethod == 1
-                                  ? Colors.white
-                                  : Colors.black87,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_paymentMethod == 0) ...[
-                  const SizedBox(height: 12),
+                if (_onlinePaymentsEnabled) ...[
                   Row(
                     children: [
                       Expanded(
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           onTap: () {
-                            setState(() => _onlinePaymentOption = 0);
+                            setState(() => _paymentMethod = 0);
                             unawaited(_persistCheckoutState());
                           },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.symmetric(vertical: 11),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
+                              color: _paymentMethod == 0
+                                  ? Colors.black
+                                  : const Color(0xFFF3F3F4),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                width: 2,
-                                color: _onlinePaymentOption == 0
+                                color: _paymentMethod == 0
                                     ? Colors.black
                                     : const Color(0xFFE5E5E7),
                               ),
-                              color: Colors.white,
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.account_balance_wallet_rounded,
-                                      size: 18,
-                                      color: _onlinePaymentOption == 0
-                                          ? Colors.black
-                                          : Colors.black54,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    const Text(
-                                      "YooKassa",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  "Через YooKassa",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              "Онлайн",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _paymentMethod == 0
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
                             ),
                           ),
                         ),
@@ -23930,60 +23968,117 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           onTap: () {
-                            setState(() => _onlinePaymentOption = 1);
+                            setState(() => _paymentMethod = 1);
                             unawaited(_persistCheckoutState());
                           },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.symmetric(vertical: 11),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
+                              color: _paymentMethod == 1
+                                  ? Colors.black
+                                  : const Color(0xFFF3F3F4),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                width: 2,
-                                color: _onlinePaymentOption == 1
+                                color: _paymentMethod == 1
                                     ? Colors.black
                                     : const Color(0xFFE5E5E7),
                               ),
-                              color: Colors.white,
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.credit_card_rounded,
-                                      size: 18,
-                                      color: _onlinePaymentOption == 1
-                                          ? Colors.black
-                                          : Colors.black54,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    const Text(
-                                      "Карта",
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  "Банковская карта",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              "При получении",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _paymentMethod == 1
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ],
+                  ),
+                  if (_paymentMethod == 0) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(width: 2, color: Colors.black),
+                        color: Colors.white,
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.credit_card_rounded,
+                                size: 18,
+                                color: Colors.black,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                "Карта",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            "Банковская карта",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        "Оплата пройдет банковской картой через YooKassa.",
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black),
+                    ),
+                    child: const Text(
+                      "При получении",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Container(
@@ -23996,19 +24091,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       color: const Color(0xFFF5F5F5),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text(
-                      _onlinePaymentOption == 0
-                          ? "Оплата пройдет через YooKassa."
-                          : "Оплата пройдет банковской картой через YooKassa.",
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54,
-                      ),
+                    child: const Text(
+                      "Онлайн-оплата временно недоступна.",
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                   ),
                 ],
-                const SizedBox(height: 10),
-                _buildBonusWriteOffPanel(),
+                if (_bonusWriteOffEnabled) ...[
+                  const SizedBox(height: 10),
+                  _buildBonusWriteOffPanel(),
+                ],
               ], bottomMargin: 0),
               const SizedBox(height: 12),
               Container(
@@ -30985,26 +31077,7 @@ class _PickupPointsPageState extends State<PickupPointsPage>
     );
   }
 
-  void _onShopClusterTap(ClusterizedPlacemarkCollection _, Cluster cluster) {
-    () async {
-      final controller = _mapController;
-      if (controller == null) return;
-      final current = await controller.getCameraPosition();
-      final nextZoom = math.min(
-        math.max(current.zoom + 2.6, _focusStoreZoom - 0.4),
-        19.0,
-      );
-      await controller.moveCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: cluster.appearance.point, zoom: nextZoom),
-        ),
-        animation: const MapAnimation(
-          type: MapAnimationType.smooth,
-          duration: 0.35,
-        ),
-      );
-    }();
-  }
+  void _onShopClusterTap(ClusterizedPlacemarkCollection _, Cluster __) {}
 
   void _showPointDetails(Map<String, dynamic> point) {
     final pointId = point['id']?.toString();
