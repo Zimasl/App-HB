@@ -4,14 +4,38 @@
  * POST (JSON): order_id, payment_id
  * Ответ: payment_status (pending|succeeded|canceled), status
  *
- * Настройка: YOOKASSA — в начале файла; для отметки «оплачен» — API_BASE_URL и API_TOKEN (как в create_order.php).
+ * Настройка: ключи YooKassa читаются из yookassa_config.php; для отметки
+ * «оплачен» задайте API_BASE_URL и API_TOKEN, как в create_order.php.
  */
 
 header('Content-Type: application/json; charset=utf-8');
 
+function hb_load_yookassa_config()
+{
+    $candidates = [
+        dirname(__DIR__, 2) . '/config/yookassa_config.php',
+        __DIR__ . '/config/yookassa_config.php',
+    ];
+
+    foreach ($candidates as $path) {
+        if (!is_file($path)) {
+            continue;
+        }
+
+        $config = require $path;
+        if (is_array($config)) {
+            return $config;
+        }
+    }
+
+    return [];
+}
+
+$yookassa_config = hb_load_yookassa_config();
+$shop_id = trim((string) ($yookassa_config['shop_id'] ?? ''));
+$secret_key = trim((string) ($yookassa_config['secret_key'] ?? ''));
+
 // ========== НАСТРОЙКА ==========
-define('YOOKASSA_SHOP_ID',   'ВСТАВЬТЕ_SHOP_ID');
-define('YOOKASSA_SECRET_KEY', 'ВСТАВЬТЕ_SECRET_KEY');
 define('API_BASE_URL',        'https://hozyain-barin.ru');
 define('API_TOKEN',           'ВСТАВЬТЕ_ТОТ_ЖЕ_ТОКЕН_ЧТО_В_CREATE_ORDER');
 // ==============================
@@ -35,7 +59,16 @@ if ($payment_id === '') {
     exit;
 }
 
-$auth = base64_encode(YOOKASSA_SHOP_ID . ':' . YOOKASSA_SECRET_KEY);
+if ($shop_id === '' || $secret_key === '') {
+    echo json_encode([
+        'payment_status' => 'pending',
+        'status' => 'error',
+        'error_description' => 'Не найден yookassa_config.php или в нем не заполнены shop_id/secret_key',
+    ]);
+    exit;
+}
+
+$auth = base64_encode($shop_id . ':' . $secret_key);
 $ch = curl_init('https://api.yookassa.ru/v3/payments/' . $payment_id);
 curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
@@ -61,6 +94,7 @@ if ($payment_status === 'succeeded' && $order_id !== '' && ctype_digit((string) 
         'access_token' => API_TOKEN,
         'id'           => $order_id,
         'action'       => 'pay',
+        'text'         => 'Оплата YooKassa подтверждена, payment_id=' . $payment_id,
     ];
     $ctx = stream_context_create([
         'http' => [

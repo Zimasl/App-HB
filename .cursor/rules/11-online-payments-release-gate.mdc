@@ -1,0 +1,11 @@
+---
+description: Temporary online payment release gate
+alwaysApply: true
+---
+
+# Temporary Online Payment Gate
+
+- Online checkout payment is intentionally disabled until the first store release is published and production YooKassa keys are issued by the bank.
+- Preserve `lib/services/yookassa_payment_service.dart` and the existing YooKassa server scripts; do not remove them while this gate is active.
+- Keep checkout defaulting to `При получении` while online payment is disabled.
+- Re-enable online payment only when the user explicitly asks and confirms that working production YooKassa keys are available.

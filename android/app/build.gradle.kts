@@ -13,6 +13,18 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
+// Локальная release-подпись не хранится в git.
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
+val releaseStoreFile = keystoreProperties.getProperty("storeFile")?.trim().orEmpty()
+val releaseStorePassword = keystoreProperties.getProperty("storePassword")?.trim().orEmpty()
+val releaseKeyAlias = keystoreProperties.getProperty("keyAlias")?.trim().orEmpty()
+val releaseKeyPassword = keystoreProperties.getProperty("keyPassword")?.trim().orEmpty()
+
 val flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
 val yandexMapKitApiKey =
@@ -31,8 +43,19 @@ val escapedYandexSuggestApiKey = yandexSuggestApiKey
     .replace("\"", "\\\"")
 
 android {
-    namespace = "com.example.hozyain_barin"
+    namespace = "ru.hozyainbarin.app"
     compileSdk = flutter.compileSdkVersion
+
+    signingConfigs {
+        create("release") {
+            if (releaseStoreFile.isNotEmpty()) {
+                storeFile = file(releaseStoreFile)
+            }
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
 
     buildFeatures {
         buildConfig = true
@@ -48,7 +71,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.hozyain_barin"
+        applicationId = "ru.hozyainbarin.app"
         // YooKassa Flutter plugin requires minSdkVersion 24+
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
@@ -72,7 +95,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
