@@ -45,6 +45,7 @@ val escapedYandexSuggestApiKey = yandexSuggestApiKey
 android {
     namespace = "ru.hozyainbarin.app"
     compileSdk = flutter.compileSdkVersion
+    ndkVersion = "28.2.13676358"
 
     signingConfigs {
         create("release") {
