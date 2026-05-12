@@ -1009,10 +1009,10 @@ void _configureAndroidImagePicker() {
   if (!Platform.isAndroid) return;
   final instance = ImagePickerPlatform.instance;
   if (instance is ImagePickerAndroid) {
-    instance.useAndroidPhotoPicker = false;
+    instance.useAndroidPhotoPicker = true;
     return;
   }
-  final android = ImagePickerAndroid()..useAndroidPhotoPicker = false;
+  final android = ImagePickerAndroid()..useAndroidPhotoPicker = true;
   ImagePickerPlatform.instance = android;
 }
 
@@ -36914,10 +36914,8 @@ class _ReviewFormPageState extends State<_ReviewFormPage> {
       return status.isGranted || status.isLimited;
     }
     if (Platform.isAndroid) {
-      final photos = await Permission.photos.request();
-      final storage = await Permission.storage.request();
-      final camera = await Permission.camera.request();
-      return photos.isGranted || storage.isGranted || camera.isGranted;
+      // Android photo pickers and camera intents manage access per selection.
+      return true;
     }
     return true;
   }
