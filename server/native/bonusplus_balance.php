@@ -18,7 +18,8 @@ if (!defined('BONUSPLUS_API_BASE')) {
     define('BONUSPLUS_API_BASE', 'https://bonusplus.pro/api');
 }
 if (!defined('BONUSPLUS_API_KEY')) {
-    define('BONUSPLUS_API_KEY', 'CF8291C0-8DC3-4FB2-A5F9-2E501E2107A7');
+    // Must be set in server/config/bonusplus_config.php — never hardcode live keys.
+    define('BONUSPLUS_API_KEY', '');
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
