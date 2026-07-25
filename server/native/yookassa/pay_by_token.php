@@ -11,6 +11,8 @@
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_once dirname(__DIR__) . '/lib/order_pricing.php';
+
 function hb_load_yookassa_config()
 {
     $candidates = [
@@ -236,7 +238,8 @@ if ($request_json === false) {
     exit;
 }
 
-$idempotence_key = md5($order_id . '|' . $payment_token . '|' . time());
+// Stable key: retries with the same token/amount must not create duplicate charges.
+$idempotence_key = hb_yookassa_idempotence_key($order_id, $payment_token, $amount);
 $auth = base64_encode($shop_id . ':' . $secret_key);
 
 hb_log_yookassa_debug('create_payment_request', [

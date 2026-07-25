@@ -10,6 +10,8 @@ ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/yookassa/yookassa_status.log');
 header('Content-Type: application/json; charset=utf-8');
 
+require_once __DIR__ . '/lib/order_pricing.php';
+
 function hb_log_create_order($stage, array $payload = [])
 {
     $entry = date('Y-m-d H:i:s') . ' ' . $stage;
@@ -50,22 +52,6 @@ function hb_get_input()
 
     $decoded = json_decode($raw, true);
     return is_array($decoded) ? $decoded : [];
-}
-
-function hb_parse_money($value)
-{
-    if (is_int($value) || is_float($value)) {
-        return (float) $value;
-    }
-
-    $text = trim((string) $value);
-    if ($text === '') {
-        return 0.0;
-    }
-
-    $normalized = preg_replace('/[^\d,\.\-]/u', '', $text);
-    $normalized = str_replace(',', '.', (string) $normalized);
-    return is_numeric($normalized) ? (float) $normalized : 0.0;
 }
 
 function hb_bootstrap_webasyst()
@@ -112,91 +98,81 @@ function hb_can_assign_item_stock($sku_id, $stock_id)
     return !empty($stock_row);
 }
 
-function hb_allocate_discounts(array $items, float $discount_total)
+function hb_load_yookassa_config()
 {
-    if ($discount_total <= 0 || empty($items)) {
-        foreach ($items as &$item) {
-            $item['total_discount'] = 0.0;
+    $candidates = [
+        dirname(__DIR__) . '/config/yookassa_config.php',
+        __DIR__ . '/yookassa/config/yookassa_config.php',
+    ];
+
+    foreach ($candidates as $path) {
+        if (!is_file($path)) {
+            continue;
         }
-        unset($item);
-        return $items;
+
+        $config = require $path;
+        if (is_array($config)) {
+            return $config;
+        }
     }
 
-    $discount_cents = (int) round($discount_total * 100);
-    $weights = [];
-    $total_weight = 0;
-    foreach ($items as $index => $item) {
-        $weight = (int) round(hb_parse_money($item['price']) * hb_parse_money($item['quantity']) * 100);
-        if ($weight <= 0) {
-            $weight = 1;
-        }
-        $weights[$index] = $weight;
-        $total_weight += $weight;
+    return [];
+}
+
+/**
+ * Confirm a YooKassa payment is succeeded and covers expected_amount.
+ */
+function hb_verify_yookassa_payment($payment_id, $expected_amount)
+{
+    $payment_id = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $payment_id);
+    if ($payment_id === '') {
+        return ['ok' => false, 'reason' => 'empty_payment_id'];
     }
 
-    if ($total_weight <= 0) {
-        $total_weight = count($items);
+    $config = hb_load_yookassa_config();
+    $shop_id = trim((string) ($config['shop_id'] ?? ''));
+    $secret_key = trim((string) ($config['secret_key'] ?? ''));
+    if ($shop_id === '' || $secret_key === '') {
+        return ['ok' => false, 'reason' => 'missing_yookassa_config'];
     }
 
-    $allocated = array_fill(0, count($items), 0);
-    $remainders = [];
-    $distributed = 0;
+    $auth = base64_encode($shop_id . ':' . $secret_key);
+    $ch = curl_init('https://api.yookassa.ru/v3/payments/' . $payment_id);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Authorization: Basic ' . $auth],
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $response = curl_exec($ch);
+    $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
 
-    foreach ($items as $index => $item) {
-        $raw_share = $weights[$index] * $discount_cents / $total_weight;
-        $share = (int) floor($raw_share);
-        $line_total_cents = (int) round(hb_parse_money($item['price']) * hb_parse_money($item['quantity']) * 100);
-        if ($share > $line_total_cents) {
-            $share = $line_total_cents;
-        }
-        $allocated[$index] = $share;
-        $distributed += $share;
-        $remainders[] = [
-            'index' => $index,
-            'remainder' => $raw_share - floor($raw_share),
-            'max_cents' => $line_total_cents,
+    if ($response === false || $http_code >= 400) {
+        return ['ok' => false, 'reason' => 'yookassa_lookup_failed', 'http_code' => $http_code];
+    }
+
+    $data = json_decode($response, true);
+    if (!is_array($data)) {
+        return ['ok' => false, 'reason' => 'invalid_yookassa_response'];
+    }
+
+    $status = strtolower(trim((string) ($data['status'] ?? '')));
+    if ($status !== 'succeeded') {
+        return ['ok' => false, 'reason' => 'payment_not_succeeded', 'payment_status' => $status];
+    }
+
+    $paid_amount = hb_parse_money($data['amount']['value'] ?? 0);
+    $expected = round(hb_parse_money($expected_amount), 2);
+    if (abs($paid_amount - $expected) > 0.011) {
+        return [
+            'ok' => false,
+            'reason' => 'amount_mismatch',
+            'paid_amount' => $paid_amount,
+            'expected_amount' => $expected,
         ];
     }
 
-    usort($remainders, function ($a, $b) {
-        $a_remainder = isset($a['remainder']) ? (float) $a['remainder'] : 0.0;
-        $b_remainder = isset($b['remainder']) ? (float) $b['remainder'] : 0.0;
-        if ($a_remainder === $b_remainder) {
-            return 0;
-        }
-        return ($a_remainder < $b_remainder) ? 1 : -1;
-    });
-
-    $remaining = $discount_cents - $distributed;
-    while ($remaining > 0) {
-        $progress = false;
-        foreach ($remainders as $remainder) {
-            $index = isset($remainder['index']) ? (int) $remainder['index'] : -1;
-            if ($index < 0 || !isset($allocated[$index])) {
-                continue;
-            }
-            $max_cents = isset($remainder['max_cents']) ? (int) $remainder['max_cents'] : 0;
-            if ($allocated[$index] >= $max_cents) {
-                continue;
-            }
-            $allocated[$index]++;
-            $remaining--;
-            $progress = true;
-            if ($remaining <= 0) {
-                break;
-            }
-        }
-        if (!$progress) {
-            break;
-        }
-    }
-
-    foreach ($items as $index => &$item) {
-        $item['total_discount'] = round(($allocated[$index] ?? 0) / 100, 4);
-    }
-    unset($item);
-
-    return $items;
+    return ['ok' => true, 'paid_amount' => $paid_amount];
 }
 
 try {
@@ -219,16 +195,23 @@ try {
     $payment_status = isset($input['payment_status']) ? strtolower(trim((string) $input['payment_status'])) : '';
     $payment_id = isset($input['payment_id']) ? trim((string) $input['payment_id']) : '';
     $use_bonus = !empty($input['use_bonus']) || !empty($input['bonus_amount']);
-    $bonus_amount = max(0.0, hb_parse_money($input['bonus_amount'] ?? 0));
-    if ($bonus_amount > $total) {
-        $bonus_amount = $total;
+    $requested_bonus_amount = max(0.0, hb_parse_money($input['bonus_amount'] ?? 0));
+    // Refuse unverified bonus write-offs. Trusting client bonus_amount would let
+    // anyone zero the payable total without a BonusPlus balance check.
+    if ($use_bonus || $requested_bonus_amount > 0) {
+        hb_respond([
+            'status' => 'error',
+            'error_description' => 'Списание бонусов временно недоступно при оформлении. Уберите списание бонусов и повторите заказ.',
+        ], 400);
     }
+    $bonus_amount = 0.0;
 
     hb_bootstrap_webasyst();
 
     $sku_model = new shopProductSkusModel();
     $order_items = [];
     $base_subtotal = 0.0;
+    $catalog_selling_subtotal = 0.0;
     $ignore_stock_validate = ($pickup_stock_id <= 0);
     $invalid_item_stock = [];
 
@@ -243,15 +226,6 @@ try {
             continue;
         }
 
-        $client_price = hb_parse_money($row['price'] ?? 0);
-        $compare_price = max(
-            $client_price,
-            hb_parse_money($row['compare_price'] ?? 0),
-            hb_parse_money($row['old_price'] ?? 0),
-            hb_parse_money($row['raw_compare_price'] ?? 0)
-        );
-        $base_price = $compare_price > 0 ? $compare_price : $client_price;
-
         $sku_rows = $sku_model->getByField('product_id', $product_id, true);
         if (empty($sku_rows) || !is_array($sku_rows)) {
             hb_respond(['status' => 'error', 'error_description' => 'Товар или SKU не найден: ' . $product_id], 400);
@@ -262,6 +236,18 @@ try {
         if ($sku_id <= 0) {
             hb_respond(['status' => 'error', 'error_description' => 'Товар или SKU не найден: ' . $product_id], 400);
         }
+
+        // Catalog SKU prices are authoritative. Client-supplied prices must not
+        // undercut shop price (regression from trusting checkout payload).
+        $resolved_prices = hb_resolve_sku_prices(is_array($sku_row) ? $sku_row : []);
+        if ($resolved_prices === null) {
+            hb_respond([
+                'status' => 'error',
+                'error_description' => 'У товара не задана цена в каталоге: ' . $product_id,
+            ], 400);
+        }
+        $base_price = $resolved_prices['list'];
+        $selling_price = $resolved_prices['selling'];
 
         $order_item = [
             'type' => 'product',
@@ -285,6 +271,7 @@ try {
 
         $order_items[] = $order_item;
         $base_subtotal += $base_price * $quantity;
+        $catalog_selling_subtotal += $selling_price * $quantity;
     }
 
     if (empty($order_items)) {
@@ -298,7 +285,12 @@ try {
         unset($order_item);
     }
 
-    $target_total_after_discount = max(0.0, round($total - $bonus_amount, 4));
+    $catalog_selling_subtotal = round($catalog_selling_subtotal, 4);
+    $target_total_after_discount = hb_clamp_payable_total(
+        $total,
+        $catalog_selling_subtotal,
+        $bonus_amount
+    );
     $required_discount_total = 0.0;
     if ($base_subtotal > $target_total_after_discount) {
         $required_discount_total = round($base_subtotal - $target_total_after_discount, 4);
@@ -310,6 +302,23 @@ try {
         $allocated_discount_total += hb_parse_money($item['total_discount'] ?? 0);
     }
     $allocated_discount_total = round($allocated_discount_total, 4);
+
+    // Verify online payment against YooKassa before creating/marking the order.
+    if ($payment_method === 0 && $payment_status === 'succeeded') {
+        $verification = hb_verify_yookassa_payment($payment_id, $target_total_after_discount);
+        if (empty($verification['ok'])) {
+            hb_log_create_order('payment_verify_rejected', [
+                'payment_id' => $payment_id,
+                'verification' => $verification,
+                'expected_amount' => $target_total_after_discount,
+            ]);
+            hb_respond([
+                'status' => 'error',
+                'error_description' => 'Не удалось подтвердить оплату YooKassa',
+                'payment_verified' => false,
+            ], 402);
+        }
+    }
 
     $storefront = trim((string) ($_SERVER['HTTP_HOST'] ?? 'hozyain-barin.ru'));
     if ($storefront === '') {
